@@ -15,14 +15,14 @@ const blobToBase64 = (blob: Blob): Promise<string> => {
   });
 };
 
-export async function sharePdfFile(blob: Blob, filename: string, message: string, category: 'invoice' | 'report' = 'invoice'): Promise<boolean> {
+export async function sharePdfFile(blob: Blob, filename: string, message: string, category: 'invoice' | 'report' | 'voucher' = 'invoice'): Promise<boolean> {
   console.log('Attempting to share file:', filename, 'category:', category, 'isNative:', Capacitor.isNativePlatform());
   
   if (Capacitor.isNativePlatform()) {
     try {
       const base64Data = await blobToBase64(blob);
       
-      const subFolder = category === 'invoice' ? 'فواتير' : 'تقارير';
+      const subFolder = category === 'invoice' ? 'فواتير' : category === 'voucher' ? 'سندات' : 'تقارير';
       const appFolder = 'SND_App';
       const fullPath = `${appFolder}/${subFolder}/${filename}`;
       

@@ -2,11 +2,11 @@ import { CustomerAutocomplete } from '../CustomerAutocomplete';
 import { resolveEntryDateString } from '../../lib/dateUtils';
 import { sharePdfFile, openWhatsApp } from '../../lib/shareHelper';
 import { useState, useEffect, useRef, ChangeEvent, KeyboardEvent } from 'react';
-import { collection, onSnapshot, doc, writeBatch, getDoc, setDoc, serverTimestamp } from '../../firebase';
+import { collection, onSnapshot, doc, writeBatch, getDoc, setDoc, updateDoc, serverTimestamp } from '../../firebase';
 import { db } from '../../firebase';
 import { Invoice, InvoiceItem, User, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../../types';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle, Search, Save, X, Info, HardDrive, User as UserIcon, ArrowLeft, ArrowRight, Phone, MapPin, Facebook, Smartphone, ChevronLeft, ChevronRight, SlidersHorizontal, MessageCircle, Wallet, Settings, ArrowUpDown, Scissors, Layers } from 'lucide-react';
+import { CheckCircle, Search, Save, X, Info, HardDrive, User as UserIcon, ArrowLeft, ArrowRight, Phone, MapPin, Facebook, Smartphone, ChevronLeft, ChevronRight, SlidersHorizontal, MessageCircle, Wallet, Settings, ArrowUpDown, Scissors, Layers, AlertTriangle } from 'lucide-react';
 import { localDb } from '../../lib/local-db';
 import { ProviderFactory } from '../../data/ProviderFactory';
 import ReportActions from '../ReportActions';
@@ -268,6 +268,10 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
     }
   }, [modalSelectedFundId, showOtherPaymentModal, selectedInvoice?.currency, funds]);
 
+  const [isPayOnly, setIsPayOnly] = useState<boolean>(false);
+  const [showPayOnlyConfirmModal, setShowPayOnlyConfirmModal] = useState<boolean>(false);
+  const [prepaymentSuccessMsg, setPrepaymentSuccessMsg] = useState<string | null>(null);
+
   const [activePrintData, setActivePrintData] = useState<{
     sessionId?: string;
     timestamp?: string;
@@ -278,6 +282,8 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
     taxAmount: number;
     remainingAmount: number;
     selectedCost: number;
+    isPayOnly?: boolean;
+    voucherData?: any;
   } | null>(null);
   const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
   const isFinalizingRef = useRef<boolean>(false);
@@ -390,6 +396,8 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
 
   const openInvoice = (invoice: Invoice) => {
     setSelectedInvoice(invoice);
+    setIsPayOnly(false);
+    setPrepaymentSuccessMsg(null);
     const cleanInvNo = String(invoice.invoiceNumber || '').replace('#', '');
     const invoiceReadyItems = items.filter(i => {
       const itClean = String(i.invoiceNumber || '').replace('#', '');
@@ -656,6 +664,37 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         heightLeft -= pdf.internal.pageSize.getHeight();
       }
       
+      if (activePrintData.isPayOnly) {
+        const formattedDate = new Date().toISOString().split('T')[0];
+        const filename = `سند_قبض_مسبق_${invoice.customerName}_${invoice.invoiceNumber}_${formattedDate}.pdf`;
+        pdf.save(filename);
+
+        let message = `*سند قبض مالي - سداد مسبق* 📄\n\n`;
+        message += `عزيزي العميل *${invoice.customerName}* المحترم،\n`;
+        message += `تم استلام دفعة مالية على حساب فاتورة صيانة أجهزتكم رقم *#${invoice.invoiceNumber}*:\n\n`;
+        message += `- *رقم السند:* #${activePrintData.voucherData?.voucherNumber || ''}\n`;
+        message += `- *المبلغ المستلم:* ${Number(activePrintData.paidAmount).toLocaleString('en-US')} ${currency}\n`;
+        message += `- *إجمالي تكلفة الفاتورة:* ${selectedCost.toLocaleString('en-US')} ${currency}\n`;
+        message += `- *إجمالي المسدد حتى الآن:* ${(Number(invoice.amountPaid || 0) + Number(activePrintData.paidAmount)).toLocaleString('en-US')} ${currency}\n`;
+        message += `- *المبلغ المتبقي:* ${activePrintData.remainingAmount.toLocaleString('en-US')} ${currency}\n`;
+        message += `\n*ملاحظة:* أجهزتكم ما زالت في مركز الصيانة وبإمكانكم استلامها في أي وقت.\n`;
+        message += `يسعدنا خدمتكم دائمًا. شكرًا لتعاملكم معنا!`;
+
+        let sharedNatively = false;
+        try {
+          const pdfBlob = pdf.output('blob');
+          sharedNatively = await sharePdfFile(pdfBlob, filename, message, 'voucher');
+        } catch (err) {
+          console.warn('Native sharing failed or was cancelled', err);
+        }
+
+        if (!sharedNatively) {
+          const targetPhone = selectedInvoice.customerPhone || getCustomerPhone(selectedInvoice.customerId);
+          openWhatsApp(message, targetPhone);
+        }
+        return;
+      }
+
       const formattedDate = new Date().toISOString().split('T')[0];
       const filename = `فاتورة تسليم أجهزة_${invoice.customerName}_${formattedDate}.pdf`;
       pdf.save(filename);
@@ -717,7 +756,8 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
 
   const subtotal = selectedCost;
   const discount = exitDiscountAmount;
-  const total = subtotal - discount;
+  const previousPaid = Number(selectedInvoice?.amountPaid || 0);
+  const total = Math.max(0, subtotal - discount - previousPaid);
 
   const remainingCostForSelection = Math.max(0, total - exitPaidAmount);
 
@@ -739,14 +779,76 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
     }
   }
   
-  const handleShowPreview = () => {
-    if (!selectedInvoice || selectedItemIds.size === 0 || exitPaidAmount > total) return;
+  const handleShowPreview = async () => {
+    if (!selectedInvoice || selectedItemIds.size === 0) return;
+
+    if (isPayOnly) {
+      const payAmount = otherPayment?.isActive ? otherPayment.amount : exitPaidAmount;
+      if (payAmount <= 0) {
+        alert('يرجى كتابة المبلغ الواصل أو تحديد طريقة الدفع أولاً لإنشاء سند القبض.');
+        return;
+      }
+      if (exitPaidAmount > total && !otherPayment?.isActive) {
+        alert('المبلغ الواصل أكبر من المبلغ المستحق على الفاتورة!');
+        return;
+      }
+
+      let nextNum = 1000;
+      try {
+        const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
+        nextNum = (resNum.values?.[0]?.maxNum || 1000) + 1;
+      } catch (e) {
+        nextNum = 1001;
+      }
+
+      const printItems = invoiceItems.filter(i => selectedItemIds.has(i.id!));
+      const sessionId = `prepay-sess-${selectedInvoice.id}-${Date.now()}`;
+      const timestampIso = new Date().toISOString();
+
+      const voucherData = {
+        id: `preview-vtx-${selectedInvoice.id}`,
+        type: 'receipt',
+        voucherNumber: nextNum,
+        amount: otherPayment?.isActive ? otherPayment.amount : exitPaidAmount,
+        currency: otherPayment?.isActive ? otherPayment.currency : (selectedInvoice.currency || 'USD'),
+        details: `سداد مسبق على فاتورة صيانة رقم #${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة)`,
+        category: 'سداد مسبق أجهزة',
+        notes: otherPayment?.isActive 
+          ? `طريقة الدفع: ${otherPayment.fundName} - ما يعادل ${exitPaidAmount} ${selectedInvoice.currency || 'USD'}${otherPayment.notes ? ' - ' + otherPayment.notes : ''}`
+          : `سداد نقدي في الصندوق`,
+        customerName: selectedInvoice.customerName || 'عميل نقدي',
+        customerId: selectedInvoice.customerId || '',
+        customerPhone: selectedInvoice.customerPhone || getCustomerPhone(selectedInvoice.customerId),
+        date: new Date().toLocaleDateString('ar-EG'),
+        timestamp: timestampIso,
+        userName: user?.name || user?.username || 'مدير النظام',
+        fundName: otherPayment?.isActive ? otherPayment.fundName : (funds.find(f => f.type === 'cash')?.name || 'الصندوق الرئيسي')
+      };
+
+      setActivePrintData({
+        isPayOnly: true,
+        voucherData,
+        sessionId,
+        timestamp: timestampIso,
+        invoice: selectedInvoice,
+        items: printItems,
+        paidAmount: exitPaidAmount,
+        discountAmount: 0,
+        taxAmount: 0,
+        remainingAmount: remainingCostForSelection,
+        selectedCost: selectedCost
+      });
+      return;
+    }
+
+    if (exitPaidAmount > total) return;
     
     const printItems = invoiceItems.filter(i => selectedItemIds.has(i.id!));
     const sessionId = `exit-sess-${selectedInvoice.id}-${Date.now()}`;
     const timestampIso = new Date().toISOString();
 
     setActivePrintData({
+      isPayOnly: false,
       sessionId,
       timestamp: timestampIso,
       invoice: selectedInvoice,
@@ -757,6 +859,160 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
       remainingAmount: remainingCostForSelection,
       selectedCost: selectedCost
     });
+  };
+
+  const finalizePrepaymentReceipt = async (): Promise<boolean> => {
+    if (!activePrintData || !selectedInvoice) {
+      console.warn("finalizePrepaymentReceipt: missing activePrintData or selectedInvoice");
+      return false;
+    }
+    
+    const sessionId = activePrintData.sessionId || `prepay-sess-${selectedInvoice.id}-${Date.now()}`;
+    if (finalizedSessionIds.current.has(sessionId) || isFinalizingRef.current) {
+      return true;
+    }
+
+    isFinalizingRef.current = true;
+    setIsFinalizing(true);
+
+    try {
+      const paidAmount = Number(activePrintData.paidAmount);
+      if (paidAmount <= 0) {
+        alert('المبلغ الواصل يجب أن يكون أكبر من الصفر لإنشاء سند القبض.');
+        return false;
+      }
+
+      // Generate the voucher number
+      let nextNum = 1000;
+      try {
+        const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
+        nextNum = (resNum.values?.[0]?.maxNum || 1000) + 1;
+      } catch (e) {
+        nextNum = 1001;
+      }
+
+      const txId = `vtx-${selectedInvoice.id}-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+      const timestampIso = activePrintData.timestamp || new Date().toISOString();
+
+      if (otherPayment && otherPayment.isActive) {
+        const bankDetailsJson = otherPayment.type === 'bank' && otherPayment.bankDetails
+          ? JSON.stringify(otherPayment.bankDetails)
+          : '';
+
+        const exchangeRateText = otherPayment.invoiceRate && otherPayment.paymentRate
+          ? ` [سعر الصرف: ${otherPayment.invoiceRate} لعملة الفاتورة مقابل ${otherPayment.paymentRate} لعملة الدفع]`
+          : '';
+
+        const finalNotes = otherPayment.notes 
+          ? `سداد مسبق لفاتورة صيانة رقم ${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة) - ${otherPayment.notes}${exchangeRateText}` 
+          : `سداد مسبق لفاتورة صيانة رقم ${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة)${exchangeRateText}`;
+
+        await ProviderFactory.getProvider().setDoc('vault_transactions', txId, {
+          id: txId,
+          currency: otherPayment.currency,
+          amount: otherPayment.amount,
+          customerName: selectedInvoice.customerName || 'عميل نقدي',
+          invoiceNumber: String(selectedInvoice.invoiceNumber),
+          invoiceId: selectedInvoice.id || '',
+          userName: user?.name || user?.username || 'مدير النظام',
+          userNumber: 1,
+          userId: user?.id || 'admin',
+          timestamp: timestampIso,
+          type: 'receipt',
+          notes: finalNotes,
+          updatedAt: timestampIso,
+          voucherNumber: nextNum,
+          transactionCategory: 'سداد مسبق أجهزة',
+          tag: `PREPAY_INV_${selectedInvoice.invoiceNumber}`,
+          fundId: otherPayment.fundId,
+          fundName: otherPayment.fundName,
+          customerId: selectedInvoice.customerId || '',
+          isReversed: 0,
+          isReversal: 0,
+          reversalOf: '',
+          paymentType: 2,
+          liabilityCurrency: selectedInvoice.currency || 'USD',
+          liabilityAmount: paidAmount,
+          receiptCurrency: otherPayment.currency,
+          receiptAmount: otherPayment.amount,
+          bankDetails: bankDetailsJson
+        });
+
+        await ProviderFactory.getProvider().updateDoc('fin_funds', otherPayment.fundId, { 
+          balance: { type: 'increment', value: otherPayment.amount } 
+        });
+      } else {
+        const defaultFund = funds.find(f => f.type === 'cash' && f.currency === (selectedInvoice.currency || 'USD')) || funds.find(f => f.type === 'cash');
+        if (defaultFund) {
+          await ProviderFactory.getProvider().setDoc('vault_transactions', txId, {
+            id: txId,
+            currency: selectedInvoice.currency || 'USD',
+            amount: paidAmount,
+            customerName: selectedInvoice.customerName || 'عميل نقدي',
+            invoiceNumber: String(selectedInvoice.invoiceNumber),
+            invoiceId: selectedInvoice.id || '',
+            userName: user?.name || user?.username || 'مدير النظام',
+            userNumber: 1,
+            userId: user?.id || 'admin',
+            timestamp: timestampIso,
+            type: 'receipt',
+            notes: `سداد مسبق لفاتورة صيانة رقم ${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة)`,
+            updatedAt: timestampIso,
+            voucherNumber: nextNum,
+            transactionCategory: 'سداد مسبق أجهزة',
+            tag: `PREPAY_INV_${selectedInvoice.invoiceNumber}`,
+            fundId: defaultFund.id,
+            fundName: defaultFund.name,
+            customerId: selectedInvoice.customerId || '',
+            isReversed: 0,
+            isReversal: 0,
+            reversalOf: '',
+            paymentType: 1,
+            liabilityCurrency: selectedInvoice.currency || 'USD',
+            liabilityAmount: paidAmount,
+            receiptCurrency: selectedInvoice.currency || 'USD',
+            receiptAmount: paidAmount,
+            bankDetails: ''
+          });
+
+          await ProviderFactory.getProvider().updateDoc('fin_funds', defaultFund.id, { 
+            balance: { type: 'increment', value: paidAmount } 
+          });
+        }
+      }
+
+      // Update invoice amountPaid
+      const newAmountPaid = Number(selectedInvoice.amountPaid || 0) + paidAmount;
+      const invoiceRef = doc(db, 'invoices', selectedInvoice.id!);
+      await updateDoc(invoiceRef, {
+        amountPaid: newAmountPaid,
+        updatedAt: serverTimestamp()
+      });
+
+      try {
+        await localDb.run("UPDATE invoices SET amountPaid = ? WHERE id = ?", [newAmountPaid, selectedInvoice.id]);
+      } catch (e) {}
+
+      setSelectedInvoice(prev => prev ? { ...prev, amountPaid: newAmountPaid } : null);
+      finalizedSessionIds.current.add(sessionId);
+
+      setPrepaymentSuccessMsg(`تم ترحيل وحفظ سند القبض رقم #${nextNum} بنجاح بمبلغ ${paidAmount} ${selectedInvoice.currency || 'USD'}. تم تحديث حساب الفاتورة (الأجهزة ما زالت في المحل جاهزة للاستلام).`);
+      setTimeout(() => setPrepaymentSuccessMsg(null), 9000);
+
+      // Reset payment fields
+      setExitPaidAmount(0);
+      setOtherPayment(null);
+      setIsPayOnly(false);
+
+      return true;
+    } catch (err) {
+      console.error("Error in finalizePrepaymentReceipt:", err);
+      alert('حدث خطأ أثناء حفظ سند القبض. يرجى المحاولة مرة أخرى.');
+      return false;
+    } finally {
+      isFinalizingRef.current = false;
+      setIsFinalizing(false);
+    }
   };
 
   const finalizeExit = async (currentItems: InvoiceItem[]): Promise<boolean> => {
@@ -988,7 +1244,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
 
   return (
     <div className="w-full max-w-full space-y-0 pb-0 m-0 p-0 text-right font-sans" dir="rtl">
-      {activePrintData && (
+      {activePrintData && !activePrintData.isPayOnly && (
         <PrintPreviewOverlay
           type="invoice"
           isSaving={isFinalizing}
@@ -996,7 +1252,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
             invoice: {
               ...activePrintData.invoice,
               totalCost: activePrintData.selectedCost,
-              amountPaid: activePrintData.paidAmount,
+              amountPaid: Number(activePrintData.invoice.amountPaid || 0) + Number(activePrintData.paidAmount),
               discount: activePrintData.discountAmount,
               tax: activePrintData.taxAmount,
               printCount: activePrintData.invoice.printCount || 0
@@ -1014,6 +1270,43 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
           onPrint={handlePrintAndFinalize}
           onWhatsApp={handleExportAndFinalize}
           onSave={handleSaveAndFinalize}
+        />
+      )}
+
+      {activePrintData && activePrintData.isPayOnly && (
+        <PrintPreviewOverlay
+          type="voucher"
+          isSaving={isFinalizing}
+          data={{
+            voucher: activePrintData.voucherData
+          }}
+          onClose={() => {
+            if (!isFinalizing) {
+              setActivePrintData(null);
+            }
+          }}
+          shopConfig={shopConfig}
+          user={user}
+          onPrint={async () => {
+            const ok = await finalizePrepaymentReceipt();
+            if (ok) {
+              handlePrintDirect();
+              setActivePrintData(null);
+            }
+          }}
+          onWhatsApp={async () => {
+            const ok = await finalizePrepaymentReceipt();
+            if (ok) {
+              await handleExportPDFAndWhatsApp();
+              setActivePrintData(null);
+            }
+          }}
+          onSave={async () => {
+            const ok = await finalizePrepaymentReceipt();
+            if (ok) {
+              setActivePrintData(null);
+            }
+          }}
         />
       )}
       {false && activePrintData && (
@@ -1431,6 +1724,49 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         </div>
       )}
       
+      {showPayOnlyConfirmModal && (
+        <div className="fixed inset-0 z-[160] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fadeIn" dir="rtl">
+          <div className="bg-[#1f1f1f] border border-amber-500/40 rounded-2xl p-5 max-w-md w-full shadow-2xl space-y-4 text-right">
+            <div className="flex items-center gap-3 text-amber-400">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/20 flex items-center justify-center shrink-0 border border-amber-500/30">
+                <AlertTriangle size={22} className="text-amber-400" />
+              </div>
+              <div>
+                <h4 className="font-black text-sm text-white">تأكيد خيار (سداد فقط)</h4>
+                <p className="text-[11px] text-gray-400 mt-0.5">تسجيل دفعة مالية لحساب الفاتورة</p>
+              </div>
+            </div>
+
+            <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 text-xs text-gray-200 leading-relaxed font-bold">
+              سوف يتم انشاء سند قبض فقط دون تنفيذ خروج أجهزة
+            </div>
+
+            <div className="flex items-center justify-end gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPayOnlyConfirmModal(false);
+                  setIsPayOnly(false);
+                }}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-gray-300 hover:text-white bg-white/5 hover:bg-white/10 transition-all border border-white/10 cursor-pointer"
+              >
+                إلغاء
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPayOnlyConfirmModal(false);
+                  setIsPayOnly(true);
+                }}
+                className="px-5 py-2 rounded-xl text-xs font-black text-white bg-emerald-600 hover:bg-emerald-500 transition-all shadow-lg shadow-emerald-600/20 cursor-pointer"
+              >
+                موافق
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {selectedInvoice && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-2 sm:p-4 pointer-events-auto text-right" dir="rtl">
           <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => setSelectedInvoice(null)}></div>
@@ -1443,6 +1779,15 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                  <X size={16} />
               </button>
             </div>
+
+            {prepaymentSuccessMsg && (
+              <div className="mb-3 p-3 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 text-xs font-bold flex items-center justify-between animate-fadeIn">
+                <span>{prepaymentSuccessMsg}</span>
+                <button onClick={() => setPrepaymentSuccessMsg(null)} className="text-emerald-400 hover:text-white cursor-pointer mr-2">
+                  <X size={14} />
+                </button>
+              </div>
+            )}
 
             <div className="space-y-3 flex-1 flex flex-col justify-between overflow-hidden">
               {/* بيانات العميل في الأعلى */}
@@ -1648,8 +1993,8 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
               <div className="pt-2 mt-2 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-3 flex-shrink-0">
                 {/* Financial panel on the right (RTL) */}
                 <div className="flex flex-col gap-2.5 w-full md:w-auto">
-                  {/* Top row: اجمالي الفاتورة، المبلغ المستحق */}
-                  <div className="flex flex-wrap items-center gap-4 justify-between md:justify-start">
+                  {/* Top row: اجمالي الفاتورة، سداد سابق، المبلغ المستحق، خيار سداد فقط */}
+                  <div className="flex flex-wrap items-center gap-3 sm:gap-4 justify-between md:justify-start">
                     {/* 1. Invoice Total (اجمالي الفاتورة) */}
                     <div className="text-right">
                       <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest block mb-0.5">اجمالي الفاتورة</p>
@@ -1661,12 +2006,62 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                     {/* Vertical Separator */}
                     <div className="hidden sm:block w-px h-6 bg-white/10" />
 
-                    {/* 2. Amount Due (المبلغ المستحق) */}
+                    {/* 2. Previous Payment (سداد سابق) */}
+                    <div className="text-right">
+                      <p className="text-[10px] text-cyan-400 uppercase font-black tracking-widest block mb-0.5 flex items-center gap-1 justify-end">
+                        {previousPaid > 0 && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />}
+                        سداد سابق
+                      </p>
+                      <p className={`text-sm font-black font-mono text-right w-full ${previousPaid > 0 ? 'text-cyan-300 font-bold' : 'text-gray-500'}`}>
+                        {previousPaid.toFixed(2)} <span className="text-xs text-gray-400 font-sans">{selectedInvoice.currency || 'USD'}</span>
+                      </p>
+                    </div>
+
+                    {/* Vertical Separator */}
+                    <div className="hidden sm:block w-px h-6 bg-white/10" />
+
+                    {/* 3. Amount Due (المبلغ المستحق) */}
                     <div className="text-right">
                       <p className="text-[10px] text-purple-400 uppercase font-black tracking-widest block mb-0.5">المبلغ المستحق</p>
                       <p className="text-sm font-black font-mono text-purple-300 text-right w-full">
                         {total.toFixed(2)} <span className="text-xs text-purple-400 font-sans">{selectedInvoice.currency || 'USD'}</span>
                       </p>
+                    </div>
+
+                    {/* Vertical Separator */}
+                    <div className="hidden sm:block w-px h-6 bg-white/10" />
+
+                    {/* 4. Pay Only Checkbox (سداد فقط) */}
+                    <div className="text-right flex items-center">
+                      <label 
+                        className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold font-cairo cursor-pointer transition-all select-none shadow-sm ${
+                          isPayOnly 
+                            ? 'bg-emerald-950/60 border-emerald-500/80 text-emerald-300 ring-1 ring-emerald-500/50' 
+                            : 'bg-white/5 border-white/15 text-gray-300 hover:bg-white/10 hover:border-white/25'
+                        }`}
+                        title="إنشاء سند قبض مالي فقط دون إخراج الأجهزة من المحل"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isPayOnly}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setShowPayOnlyConfirmModal(true);
+                            } else {
+                              setIsPayOnly(false);
+                            }
+                          }}
+                          className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-white/20 bg-black/40 cursor-pointer accent-emerald-600"
+                        />
+                        <div className="flex items-center gap-1.5">
+                          <span className="font-black text-xs">سداد فقط</span>
+                          {isPayOnly ? (
+                            <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-md font-mono border border-emerald-500/30">سند قبض</span>
+                          ) : (
+                            <span className="text-[10px] text-gray-400">(دون خروج)</span>
+                          )}
+                        </div>
+                      </label>
                     </div>
                   </div>
 
@@ -1830,18 +2225,26 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                   </div>
 
                   <div className="flex flex-col items-end gap-1.5 w-full md:w-auto mt-2 sm:mt-0">
-                    {exitPaidAmount > total && (
+                    {exitPaidAmount > total && !otherPayment?.isActive && (
                       <span className="text-[10px] text-rose-400 font-bold font-cairo text-right">
                         ⚠️ مبلغ الواصل أكبر من الإجمالي المستحق!
                       </span>
                     )}
                     <button 
                       onClick={handleShowPreview}
-                      disabled={selectedItemIds.size === 0 || exitPaidAmount > total || (otherPayment?.isActive && (Number(exitPaidAmount) + Number(exitDiscountAmount)) === 0)}
-                      className="w-full md:w-auto bg-orange-600 hover:bg-orange-700 text-white font-black px-6 py-2 rounded-xl transition-all shadow-lg shadow-orange-600/20 active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2 text-xs font-cairo"
+                      disabled={
+                        isPayOnly
+                          ? (selectedItemIds.size === 0 || (exitPaidAmount <= 0 && (!otherPayment?.isActive || otherPayment.amount <= 0)))
+                          : (selectedItemIds.size === 0 || (total > 0 && exitPaidAmount > total) || (otherPayment?.isActive && (Number(exitPaidAmount) + Number(exitDiscountAmount)) === 0))
+                      }
+                      className={`w-full md:w-auto text-white font-black px-6 py-2 rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2 text-xs font-cairo cursor-pointer ${
+                        isPayOnly 
+                          ? 'bg-emerald-600 hover:bg-emerald-700 shadow-emerald-600/20' 
+                          : 'bg-orange-600 hover:bg-orange-700 shadow-orange-600/20'
+                      }`}
                     >
                       <Save size={14} />
-                      <span>عرض الفاتورة للمراجعة</span>
+                      <span>{isPayOnly ? 'عرض السند للترحيل' : 'عرض الفاتورة للمراجعة'}</span>
                     </button>
                   </div>
                 </div>

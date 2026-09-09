@@ -1292,17 +1292,6 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                         <Printer size={16} className="mb-1" />
                         <span className="text-[10px] font-bold block font-cairo">عرض التقرير</span>
                       </button>
-
-                      {canDeleteInvoice && (
-                        <button 
-                          onClick={() => setShowDeleteInvoiceModal(true)}
-                          className="flex flex-col items-center justify-center px-4 py-2 bg-rose-600/10 hover:bg-rose-600 text-rose-500 hover:text-white border border-rose-500/20 rounded-xl min-w-[100px] transition-all cursor-pointer"
-                          title="حذف الفاتورة بالكامل مع مزامنة المخزون"
-                        >
-                          <Trash2 size={16} className="mb-1" />
-                          <span className="text-[10px] font-bold block font-cairo">حذف الفاتورة</span>
-                        </button>
-                      )}
                     </div>
                   </div>
 
