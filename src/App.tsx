@@ -299,6 +299,15 @@ export default function App() {
         return;
       }
 
+      if (state.activeTab === 'other-services') {
+        const storedTab = localStorage.getItem('otherServicesTab');
+        if (storedTab && storedTab !== 'hub') {
+          localStorage.setItem('otherServicesTab', 'hub');
+          window.dispatchEvent(new CustomEvent('changeOtherServicesTab', { detail: 'hub' }));
+          return;
+        }
+      }
+
       if (state.activeTab === 'settings' && (window as any).isSettingsDeepView) {
         window.dispatchEvent(new Event('closeSettingsDeepView'));
         return;
@@ -1234,8 +1243,10 @@ export default function App() {
 
               {activeTab !== 'dashboard' && (
                 (() => {
+                  const storedOtherTab = activeTab === 'other-services' ? localStorage.getItem('otherServicesTab') : null;
                   const isSubView = (activeTab === 'device-movement' && movementView !== 'hub') || 
-                                    (activeTab === 'entry-exit' && entryExitView !== 'hub');
+                                    (activeTab === 'entry-exit' && entryExitView !== 'hub') ||
+                                    (activeTab === 'other-services' && storedOtherTab && storedOtherTab !== 'hub');
                   return (
                     <button 
                       onClick={() => {
@@ -1249,6 +1260,9 @@ export default function App() {
                           setMovementView('hub');
                         } else if (activeTab === 'entry-exit' && entryExitView !== 'hub') {
                           setEntryExitView('hub');
+                        } else if (activeTab === 'other-services' && storedOtherTab && storedOtherTab !== 'hub') {
+                          localStorage.setItem('otherServicesTab', 'hub');
+                          window.dispatchEvent(new CustomEvent('changeOtherServicesTab', { detail: 'hub' }));
                         } else {
                           goToDashboard();
                         }

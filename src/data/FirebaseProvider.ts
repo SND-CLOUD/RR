@@ -30,7 +30,7 @@ let app: FirebaseApp | null = null;
 let db: Firestore | null = null;
 
 try {
-  setLogLevel('error');
+  setLogLevel('silent');
 } catch (e) {}
 
 try {

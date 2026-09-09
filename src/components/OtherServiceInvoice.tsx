@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { CustomerAutocomplete } from './CustomerAutocomplete';
 import AddCustomerModal from './AddCustomerModal';
 import { PartsAutocomplete } from './PartsAutocomplete';
@@ -6,10 +6,11 @@ import PartsCatalogTable from './PartsCatalogTable';
 import ShopPartsStockView from './ShopPartsStockView';
 import { db, collection, doc, query, onSnapshot, serverTimestamp, writeBatch, runTransaction, getDocs, getDoc, increment, setDoc } from '../firebase';
 import { Customer, ShopConfig, User, ShopPartItem, DisassemblyBatch } from '../types';
-import { Tag, Wrench, Cpu, CheckCircle, Plus, Trash2, ArrowRight, ArrowLeft, Save, CircleDollarSign, AlertTriangle, Eye, ShoppingCart, Layers, Package, BookOpen, User as UserIcon } from 'lucide-react';
+import { Tag, Wrench, Cpu, CheckCircle, Plus, Trash2, ArrowRight, ArrowLeft, Save, CircleDollarSign, AlertTriangle, Eye, ShoppingCart, Layers, Package, BookOpen, User as UserIcon, RotateCcw } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import PrintPreviewOverlay from './PrintPreviewOverlay';
 import { formatMoney, parseFundBalance } from '../lib/fundUtils';
+import { useBackHandler } from '../hooks/useBackHandler';
 
 type ServiceType = 'hub' | 'software' | 'maintenance' | 'parts' | 'purchase' | 'catalog' | 'stock';
 
@@ -29,10 +30,6 @@ export default function OtherServiceInvoice({
   // Tab State
   const [activeTab, setActiveTab] = useState<ServiceType>(initialType);
 
-  useEffect(() => {
-    setActiveTab(initialType);
-  }, [initialType]);
-
   // General Customer & Currency State
   const [customer, setCustomer] = useState({ name: '', phone1: '', phone2: '', notes: '' });
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
@@ -46,29 +43,6 @@ export default function OtherServiceInvoice({
   
   const [currency, setCurrency] = useState<'USD' | 'SAR' | 'YER'>(shopConfig?.liabilityCurrency as any || 'USD');
 
-  // Auto-detect customer liability currency
-  useEffect(() => {
-    let matchedCustomer: Customer | undefined;
-    if (selectedCustomerId) {
-      matchedCustomer = existingCustomers.find(c => c.id === selectedCustomerId);
-    } else if (customer.name && String(customer.name).trim()) {
-      matchedCustomer = existingCustomers.find(c => String(c.name || '').trim().toLowerCase() === String(customer.name).trim().toLowerCase());
-    } else if (supplierName && String(supplierName).trim()) {
-      matchedCustomer = existingCustomers.find(c => String(c.name || '').trim().toLowerCase() === String(supplierName).trim().toLowerCase());
-    }
-
-    if (matchedCustomer && matchedCustomer.liabilityCurrency) {
-      const uCurrency = String(matchedCustomer.liabilityCurrency).trim().toUpperCase();
-      if (['SAR', 'ريال سعودي'].includes(uCurrency)) {
-        setCurrency('SAR');
-      } else if (['YER', 'ريال يمني'].includes(uCurrency)) {
-        setCurrency('YER');
-      } else if (['USD', 'دولار'].includes(uCurrency)) {
-        setCurrency('USD');
-      }
-    }
-  }, [customer.name, supplierName, selectedCustomerId, existingCustomers]);
-  
   // Items State for Sales
   const [items, setItems] = useState<{ id: string; name: string; quantity: number; unitCost: number; notes: string; partInventoryId?: string; batchId?: string; batchName?: string; batchTotalCost?: number }[]>([]);
   
@@ -110,6 +84,111 @@ export default function OtherServiceInvoice({
   const [successInfo, setSuccessInfo] = useState<{ invoiceNumber: string } | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [currentOutput, setCurrentOutput] = useState<any>(null);
+
+  // Reset all sales input fields to default
+  const resetSalesForm = useCallback(() => {
+    setCustomer({ name: '', phone1: '', phone2: '', notes: '' });
+    setSelectedCustomerId(null);
+    setNoPhone(false);
+    setItems([]);
+    setCurrentItem({ id: '', name: '', quantity: 1, unitCost: 0, notes: '', partInventoryId: '', batchId: '', batchName: '', batchTotalCost: 0 });
+    setEditingIndex(null);
+    setAmountPaid('');
+    setInvoiceNotes('');
+    setPaymentInvoiceRate('1');
+    setPaymentFundRate('1');
+    setPaymentType('cash');
+    setDepositorName('');
+    setReferenceNumber('');
+    setError(null);
+    setShowPreview(false);
+    setCurrentOutput(null);
+    setCurrency(shopConfig?.liabilityCurrency as any || 'USD');
+  }, [shopConfig]);
+
+  // Reset all purchase input fields to default
+  const resetPurchaseForm = useCallback(() => {
+    setSupplierName('');
+    setSupplierPhone('');
+    setSelectedCustomerId(null);
+    setPurchaseType('direct');
+    setBatchName('');
+    setTotalBatchCost('');
+    setPurchaseItems([]);
+    setCurrentPurchaseItem({ id: '', name: '', category: 'قطع غيار وملحقات', quantity: 1, unitCost: 0, salePrice: 0, notes: '' });
+    setEditingPurchaseIdx(null);
+    setAmountPaidPurchase('');
+    setInvoiceNotes('');
+    setPaymentInvoiceRate('1');
+    setPaymentFundRate('1');
+    setPaymentType('cash');
+    setDepositorName('');
+    setReferenceNumber('');
+    setError(null);
+    setCurrency(shopConfig?.liabilityCurrency as any || 'USD');
+  }, [shopConfig]);
+
+  // Reset all forms completely
+  const resetAllForms = useCallback(() => {
+    resetSalesForm();
+    resetPurchaseForm();
+    setSuccessInfo(null);
+    setError(null);
+  }, [resetSalesForm, resetPurchaseForm]);
+
+  // Navigation handlers that cleanly reset input fields
+  const handleSwitchTab = useCallback((newTab: ServiceType) => {
+    resetAllForms();
+    setActiveTab(newTab);
+    localStorage.setItem('otherServicesTab', newTab);
+  }, [resetAllForms]);
+
+  const handleGoBackToMain = useCallback(() => {
+    resetAllForms();
+    onBack();
+  }, [resetAllForms, onBack]);
+
+  useEffect(() => {
+    resetAllForms();
+    setActiveTab(initialType);
+  }, [initialType, resetAllForms]);
+
+  // Listen to custom tab change events (e.g. from global back button)
+  useEffect(() => {
+    const handleTabChange = (e: any) => {
+      if (e.detail) {
+        resetAllForms();
+        setActiveTab(e.detail as ServiceType);
+      }
+    };
+    window.addEventListener('changeOtherServicesTab', handleTabChange);
+    return () => {
+      window.removeEventListener('changeOtherServicesTab', handleTabChange);
+    };
+  }, [resetAllForms]);
+
+  // Android hardware back button handler
+  const handleInternalBack = useCallback(() => {
+    if (showPreview) {
+      setShowPreview(false);
+      return;
+    }
+    if (showAddCustomerModal) {
+      setShowAddCustomerModal(false);
+      return;
+    }
+    if (successInfo) {
+      resetAllForms();
+      return;
+    }
+    if (activeTab !== 'hub') {
+      resetAllForms();
+      setActiveTab('hub');
+      localStorage.setItem('otherServicesTab', 'hub');
+    }
+  }, [showPreview, showAddCustomerModal, successInfo, activeTab, resetAllForms]);
+
+  useBackHandler(Boolean(showPreview || showAddCustomerModal || successInfo || activeTab !== 'hub'), handleInternalBack);
 
   // Load Funds
   useEffect(() => {
@@ -172,6 +251,29 @@ export default function OtherServiceInvoice({
     });
     return () => unsubscribe();
   }, []);
+
+  // Auto-detect customer liability currency
+  useEffect(() => {
+    let matchedCustomer: Customer | undefined;
+    if (selectedCustomerId) {
+      matchedCustomer = existingCustomers.find(c => c.id === selectedCustomerId);
+    } else if (customer.name && String(customer.name).trim()) {
+      matchedCustomer = existingCustomers.find(c => String(c.name || '').trim().toLowerCase() === String(customer.name).trim().toLowerCase());
+    } else if (supplierName && String(supplierName).trim()) {
+      matchedCustomer = existingCustomers.find(c => String(c.name || '').trim().toLowerCase() === String(supplierName).trim().toLowerCase());
+    }
+
+    if (matchedCustomer && matchedCustomer.liabilityCurrency) {
+      const uCurrency = String(matchedCustomer.liabilityCurrency).trim().toUpperCase();
+      if (['SAR', 'ريال سعودي'].includes(uCurrency)) {
+        setCurrency('SAR');
+      } else if (['YER', 'ريال يمني'].includes(uCurrency)) {
+        setCurrency('YER');
+      } else if (['USD', 'دولار'].includes(uCurrency)) {
+        setCurrency('USD');
+      }
+    }
+  }, [customer.name, supplierName, selectedCustomerId, existingCustomers]);
 
   // Load shop parts stock and disassembly batches for live matching & inventory deductions
   const [shopPartsList, setShopPartsList] = useState<any[]>([]);
@@ -421,12 +523,15 @@ export default function OtherServiceInvoice({
       // 4. Add/Update items in parts_catalog & shop_parts_inventory
       for (const item of purchaseItems) {
         // Master Catalog update
-        const catDocId = item.name.trim().replace(/\//g, '_');
+        const cleanName = item.name.trim();
+        const catDocId = cleanName.replace(/\//g, '_');
         batchOp.set(doc(db, 'parts_catalog', catDocId), {
-          name: item.name.trim(),
+          id: cleanName,
+          name: cleanName,
           category: item.category || 'قطع غيار وملحقات',
           defaultCost: item.unitCost || 0,
           defaultSalePrice: item.salePrice || 0,
+          createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         }, { merge: true });
 
@@ -541,17 +646,11 @@ export default function OtherServiceInvoice({
       await batchOp.commit();
 
       // Reset Purchase Form & Show Success Alert
+      resetPurchaseForm();
       setSuccessInfo({ invoiceNumber: assignedPurchaseNumber });
       alert(`تم إتمام عملية الشراء وسند الصرف بنجاح وتحديث مخزون المحل والخزينة!\nالقيمة الإجمالية: ${formatMoney(totalPurchaseCost, currency)}`);
-      setSupplierName('');
-      setSupplierPhone('');
-      setSelectedCustomerId(null);
-      setBatchName('');
-      setTotalBatchCost('');
-      setPurchaseItems([]);
-      setAmountPaidPurchase('');
-      setInvoiceNotes('');
       setActiveTab('stock');
+      localStorage.setItem('otherServicesTab', 'stock');
     } catch (err: any) {
       console.error("Error saving purchase:", err);
       setError(err.message || 'حدث خطأ أثناء حفظ عملية الشراء');
@@ -851,7 +950,8 @@ export default function OtherServiceInvoice({
       }
 
       await batch.commit();
-      setSuccessInfo({ invoiceNumber: finalAssignedInvoiceNumber });
+      resetSalesForm();
+      setSuccessInfo({ invoiceNumber: String(finalAssignedInvoiceNumber) });
 
       if (action === 'save') {
         setShowPreview(false);
@@ -875,8 +975,9 @@ export default function OtherServiceInvoice({
             خدمات أخرى
           </h2>
           <button 
-            onClick={onBack}
-            className="p-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all border border-white/5 flex items-center gap-2"
+            type="button"
+            onClick={handleGoBackToMain}
+            className="p-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all border border-white/5 flex items-center gap-2 cursor-pointer"
           >
             <span className="text-sm font-bold">رجوع للرئيسية</span>
             <ArrowRight size={20} />
@@ -885,8 +986,9 @@ export default function OtherServiceInvoice({
 
         <div className="grid grid-cols-1 gap-4">
           <button 
-            onClick={() => setActiveTab('software')}
-            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group"
+            type="button"
+            onClick={() => handleSwitchTab('software')}
+            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group cursor-pointer"
           >
             <div className="flex items-center gap-4">
               <div className="p-4 bg-cyan-500/10 rounded-xl group-hover:bg-cyan-500/20 transition-colors">
@@ -901,8 +1003,9 @@ export default function OtherServiceInvoice({
           </button>
 
           <button 
-            onClick={() => setActiveTab('maintenance')}
-            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group"
+            type="button"
+            onClick={() => handleSwitchTab('maintenance')}
+            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group cursor-pointer"
           >
             <div className="flex items-center gap-4">
               <div className="p-4 bg-amber-500/10 rounded-xl group-hover:bg-amber-500/20 transition-colors">
@@ -917,8 +1020,9 @@ export default function OtherServiceInvoice({
           </button>
 
           <button 
-            onClick={() => setActiveTab('parts')}
-            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group"
+            type="button"
+            onClick={() => handleSwitchTab('parts')}
+            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group cursor-pointer"
           >
             <div className="flex items-center gap-4">
               <div className="p-4 bg-emerald-500/10 rounded-xl group-hover:bg-emerald-500/20 transition-colors">
@@ -933,8 +1037,9 @@ export default function OtherServiceInvoice({
           </button>
 
           <button 
-            onClick={() => setActiveTab('purchase')}
-            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group"
+            type="button"
+            onClick={() => handleSwitchTab('purchase')}
+            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group cursor-pointer"
           >
             <div className="flex items-center gap-4">
               <div className="p-4 bg-purple-500/10 rounded-xl group-hover:bg-purple-500/20 transition-colors">
@@ -949,8 +1054,9 @@ export default function OtherServiceInvoice({
           </button>
 
           <button 
-            onClick={() => setActiveTab('catalog')}
-            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group"
+            type="button"
+            onClick={() => handleSwitchTab('catalog')}
+            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group cursor-pointer"
           >
             <div className="flex items-center gap-4">
               <div className="p-4 bg-blue-500/10 rounded-xl group-hover:bg-blue-500/20 transition-colors">
@@ -965,8 +1071,9 @@ export default function OtherServiceInvoice({
           </button>
 
           <button 
-            onClick={() => setActiveTab('stock')}
-            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group"
+            type="button"
+            onClick={() => handleSwitchTab('stock')}
+            className="w-full flex items-center justify-between bg-white/5 hover:bg-white/10 border border-white/10 text-white p-6 rounded-2xl transition-all hover:scale-[1.01] shadow-lg group cursor-pointer"
           >
             <div className="flex items-center gap-4">
               <div className="p-4 bg-indigo-500/10 rounded-xl group-hover:bg-indigo-500/20 transition-colors">
@@ -997,13 +1104,28 @@ export default function OtherServiceInvoice({
           {activeTab === 'stock' && <><Package className="text-indigo-400" size={24} /> مخزون ودفوعات المحل</>}
         </h2>
         
-        <button
-          onClick={() => setActiveTab('hub')}
-          className="p-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all border border-white/5 flex items-center gap-2"
-        >
-          <span className="text-sm font-bold">العودة للخدمات</span>
-          <ArrowRight size={20} />
-        </button>
+        <div className="flex items-center gap-2">
+          {['software', 'maintenance', 'parts', 'purchase'].includes(activeTab) && !successInfo && (
+            <button
+              type="button"
+              onClick={resetAllForms}
+              className="px-3 py-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all border border-white/5 flex items-center gap-1.5 text-xs font-bold font-cairo cursor-pointer"
+              title="إعادة تهيئة وتفريغ جميع حقول الإدخال"
+            >
+              <RotateCcw size={14} />
+              <span>إعادة تهيئة الحقول</span>
+            </button>
+          )}
+
+          <button
+            type="button"
+            onClick={() => handleSwitchTab('hub')}
+            className="p-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all border border-white/5 flex items-center gap-2 cursor-pointer"
+          >
+            <span className="text-sm font-bold">العودة للخدمات</span>
+            <ArrowRight size={20} />
+          </button>
+        </div>
       </div>
 
       {/* SUCCESS SCREEN */}
@@ -1017,13 +1139,8 @@ export default function OtherServiceInvoice({
 
           <div className="flex justify-center gap-3 pt-2">
             <button
-              onClick={() => {
-                setSuccessInfo(null);
-                setCustomer({ name: '', phone1: '', phone2: '', notes: '' });
-                setItems([]);
-                setAmountPaid('');
-                setInvoiceNotes('');
-              }}
+              type="button"
+              onClick={resetAllForms}
               className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-lg shadow-emerald-900/20"
             >
               إجراء عملية جديدة
@@ -1046,11 +1163,22 @@ export default function OtherServiceInvoice({
             <div className="lg:col-span-2 space-y-6">
               {/* Supplier Details */}
               <div className="bg-[#141414] border border-white/5 rounded-3xl p-6 shadow-2xl space-y-4">
-                <div className="flex flex-row items-center justify-between pb-3 border-b border-white/5 gap-2">
-                  <h3 className="text-xs font-black text-white flex items-center gap-2 shrink-0">
-                    <UserIcon size={16} className="text-purple-400" />
-                    <span>تفاصيل المورد</span>
-                  </h3>
+                <div className="flex flex-row items-center justify-between pb-3 border-b border-white/5 gap-2 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xs font-black text-white flex items-center gap-2 shrink-0">
+                      <UserIcon size={16} className="text-purple-400" />
+                      <span>تفاصيل المورد</span>
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={resetPurchaseForm}
+                      className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg border border-white/5 text-[10px] font-bold font-cairo flex items-center gap-1 transition-all cursor-pointer"
+                      title="إعادة تهيئة وتفريغ حقول الشراء"
+                    >
+                      <RotateCcw size={11} />
+                      <span>تفريغ الحقول</span>
+                    </button>
+                  </div>
 
                   <div className="flex flex-row items-center justify-end gap-3 shrink-0 flex-wrap" title="تحديد عملة الشراء">
                     <label className="flex items-center gap-1 cursor-pointer group">
@@ -1475,16 +1603,27 @@ export default function OtherServiceInvoice({
 
       {/* TAB 4: SALES OF SERVICES & PARTS ("خدمات برمجية / صيانة خارجية / بيع قطع غيار") */}
       {['software', 'maintenance', 'parts'].includes(activeTab) && !successInfo && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pb-32 md:pb-16">
           {/* Main Input Form */}
           <div className="lg:col-span-2 space-y-6">
             {/* Customer Details */}
             <div className="bg-[#141414] border border-white/5 rounded-3xl p-6 shadow-2xl space-y-4">
-              <div className="flex flex-row items-center justify-between pb-3 border-b border-white/5 gap-2">
-                <h3 className="text-xs font-black text-white flex items-center gap-2 shrink-0">
-                  <UserIcon size={16} className="text-emerald-400" />
-                  <span>تفاصيل العميل</span>
-                </h3>
+              <div className="flex flex-row items-center justify-between pb-3 border-b border-white/5 gap-2 flex-wrap">
+                <div className="flex items-center gap-2">
+                  <h3 className="text-xs font-black text-white flex items-center gap-2 shrink-0">
+                    <UserIcon size={16} className="text-emerald-400" />
+                    <span>تفاصيل العميل</span>
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={resetSalesForm}
+                    className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg border border-white/5 text-[10px] font-bold font-cairo flex items-center gap-1 transition-all cursor-pointer"
+                    title="إعادة تهيئة وتفريغ حقول الفاتورة"
+                  >
+                    <RotateCcw size={11} />
+                    <span>تفريغ الحقول</span>
+                  </button>
+                </div>
 
                 <div className="flex flex-row items-center justify-end gap-3 shrink-0 flex-wrap" title="تتغير العملة تلقائياً حسب عملة حساب العميل">
                   <label className="flex items-center gap-1 cursor-pointer group">

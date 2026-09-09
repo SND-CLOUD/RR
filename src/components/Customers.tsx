@@ -6,7 +6,8 @@ import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
 import { collection, onSnapshot, query, orderBy, doc, getDoc, setDoc, updateDoc, writeBatch, serverTimestamp } from '../firebase';
 import { db } from '../firebase';
-import { User, Phone, Smartphone, AlertTriangle, CheckCircle, Package, ArrowLeft, ArrowUpRight, ArrowRight, LogOut, Search, FileText, ChevronLeft, Eye, Clock, DollarSign, X, Users, ArrowUpDown, Plus, Edit2, Check, Building, Mail, Printer, UserPlus, MessageCircle, MapPin, Facebook, Trash2 } from 'lucide-react';
+import { User, Phone, Smartphone, AlertTriangle, CheckCircle, Package, ArrowLeft, ArrowUpRight, ArrowRight, LogOut, Search, FileText, ChevronLeft, Eye, Clock, DollarSign, X, Users, ArrowUpDown, Plus, Edit2, Check, Building, Mail, Printer, UserPlus, MessageCircle, MapPin, Facebook, Trash2, Contact } from 'lucide-react';
+import { pickCustomerContact } from '../lib/contactPicker';
 import { Customer, Invoice, InvoiceItem, User as SystemUser, ShopConfig, isPurchaseInvoice, isShopMaintenanceItem, isSaleInvoice } from '../types';
 import { deleteInvoiceWithCascade } from '../lib/invoiceCascadeService';
 import { useBackHandler } from '../hooks/useBackHandler';
@@ -87,6 +88,72 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
   const [isSavingInProcess, setIsSavingInProcess] = useState(false);
   const [customerToDelete, setCustomerToDelete] = useState<Customer | null>(null);
 
+  // Contact Picker for Android & Web
+  const [isPickingContact, setIsPickingContact] = useState(false);
+  const [contactPickerNotice, setContactPickerNotice] = useState<{
+    title: string;
+    message: string;
+    type: 'info' | 'warning' | 'success';
+  } | null>(null);
+
+  const handleContactPicker = async () => {
+    setIsPickingContact(true);
+    setContactPickerNotice(null);
+    try {
+      const res = await pickCustomerContact();
+      if (res.success && res.contact) {
+        const pickedName = res.contact.name?.trim() || '';
+        const pickedPhone = res.contact.phone?.trim() || '';
+
+        if (!pickedName && !pickedPhone) {
+          setContactPickerNotice({
+            title: 'تنبيه جهة الاتصال',
+            message: 'جهة الاتصال المحددة لا تحتوي على اسم أو رقم هاتف صالح.',
+            type: 'warning'
+          });
+          return;
+        }
+
+        if (pickedName) {
+          setEditName(pickedName);
+        }
+        if (pickedPhone) {
+          setEditPhone1(pickedPhone);
+        }
+
+        const details: string[] = [];
+        if (pickedName) details.push(`الاسم: ${pickedName}`);
+        if (pickedPhone) details.push(`الهاتف: ${pickedPhone}`);
+
+        setContactPickerNotice({
+          title: 'تم استرجاع بيانات جهة الاتصال بنجاح',
+          message: `تم تحديث حقل اسم العميل وحقل الهاتف الرئيسي:\n${details.join(' | ')}`,
+          type: 'success'
+        });
+
+        setTimeout(() => {
+          setContactPickerNotice(prev => prev?.type === 'success' ? null : prev);
+        }, 5000);
+      } else if (res.cancelled) {
+        // User closed or dismissed the contact picker
+      } else {
+        setContactPickerNotice({
+          title: 'ميزة جلب جهات الاتصال',
+          message: res.message || 'المتصفح أو الجهاز الحالي لا يوفر صلاحية الوصول المباشر لسجل الهاتف. يرجى التأكد من تشغيل التطبيق على أندرويد ومنح إذن "جهات الاتصال" (Contacts) من إعدادات الهاتف.',
+          type: 'warning'
+        });
+      }
+    } catch (err: any) {
+      setContactPickerNotice({
+        title: 'تنبيه',
+        message: err?.message || 'حدث خطأ أثناء محاولة جلب جهة الاتصال من سجل الهاتف.',
+        type: 'warning'
+      });
+    } finally {
+      setIsPickingContact(false);
+    }
+  };
+
   useBackHandler(customerToDelete !== null, () => setCustomerToDelete(null));
   useBackHandler(showAddCustomer, () => setShowAddCustomer(false));
   useBackHandler(showLogModal, () => {
@@ -97,7 +164,10 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
     }
   });
   useBackHandler(showDetailsModal, () => setShowDetailsModal(false));
-  useBackHandler(isEditingMode, () => setIsEditingMode(false));
+  useBackHandler(isEditingMode, () => {
+    setIsEditingMode(false);
+    setContactPickerNotice(null);
+  });
   useBackHandler(selectedCustomer !== null && !showAddCustomer && !showLogModal && !showDetailsModal && !isEditingMode, () => {
     if (activeCustomerTab !== 'menu') {
       setActiveCustomerTab('menu');
@@ -1231,6 +1301,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                           type="button"
                           onClick={() => {
                             setIsEditingMode(true);
+                            setContactPickerNotice(null);
                             setUpdatePastTransactions(true);
                             setEditName(selectedCustomer.name || '');
                             setEditCompanyName(selectedCustomer.companyName || '');
@@ -1249,7 +1320,10 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                   ) : (
                     <button
                       type="button"
-                      onClick={() => setIsEditingMode(false)}
+                      onClick={() => {
+                        setIsEditingMode(false);
+                        setContactPickerNotice(null);
+                      }}
                       className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-400 rounded-md text-[10px] font-bold font-cairo border border-white/10 transition-all"
                     >
                       إلغاء التعديل
@@ -1257,22 +1331,121 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                   )}
                 </div>
 
+                {/* Contact Picker Quick Action Card - Only visible when editing */}
+                {isEditingMode && (
+                  <div className="p-3.5 bg-gradient-to-r from-orange-500/10 via-amber-500/5 to-transparent border border-orange-500/25 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+                    <div className="flex items-center gap-2.5 text-right">
+                      <div className="p-2 bg-orange-600/20 text-orange-400 rounded-xl border border-orange-500/25 shrink-0">
+                        <Contact size={18} />
+                      </div>
+                      <div>
+                        <div className="text-xs font-black text-white font-cairo flex items-center gap-1.5">
+                          <span>جلب الاسم والرقم من جهات الاتصال</span>
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 font-bold">Android</span>
+                        </div>
+                        <div className="text-[10px] text-gray-400 font-bold font-cairo mt-0.5">
+                          تعبئة حقل اسم العميل ورقم الهاتف الرئيسي تلقائياً من سجل الهاتف
+                        </div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={handleContactPicker}
+                      disabled={isPickingContact}
+                      className="w-full sm:w-auto px-3.5 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-xs font-black font-cairo transition-all flex items-center justify-center gap-1.5 shadow-md active:scale-95 disabled:opacity-50 cursor-pointer shrink-0"
+                    >
+                      {isPickingContact ? (
+                        <>
+                          <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          <span>جاري الفحص...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Contact size={14} />
+                          <span>فتح سجل الهاتف</span>
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                {/* Contact Picker Alert/Confirmation Notice */}
+                {isEditingMode && contactPickerNotice && (
+                  <div className={`p-3 rounded-xl border text-right transition-all flex items-start justify-between gap-2.5 text-xs font-cairo ${
+                    contactPickerNotice.type === 'success'
+                      ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                      : contactPickerNotice.type === 'warning'
+                      ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                      : 'bg-sky-500/10 border-sky-500/30 text-sky-300'
+                  }`}>
+                    <div className="flex items-start gap-2">
+                      {contactPickerNotice.type === 'success' ? (
+                        <CheckCircle size={16} className="text-emerald-400 mt-0.5 shrink-0" />
+                      ) : (
+                        <AlertTriangle size={16} className="text-amber-400 mt-0.5 shrink-0" />
+                      )}
+                      <div>
+                        <div className="font-black text-xs">{contactPickerNotice.title}</div>
+                        <div className="text-[11px] opacity-90 whitespace-pre-line mt-0.5 font-sans font-bold leading-relaxed">{contactPickerNotice.message}</div>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setContactPickerNotice(null)}
+                      className="p-1 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-all cursor-pointer shrink-0"
+                    >
+                      <X size={14} />
+                    </button>
+                  </div>
+                )}
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
                   {/* Name */}
                   <div className="space-y-1 text-right">
-                    <span className="text-[10px] text-gray-400 font-bold block font-cairo">اسم العميل ورابط الحساب:</span>
-                    <input
-                      type="text"
-                      disabled={!isEditingMode}
-                      value={isEditingMode ? editName : selectedCustomer.name}
-                      onChange={(e) => setEditName(e.target.value)}
-                      className={`customer-static-input w-full text-xs font-bold text-right py-2.5 px-3.5 border rounded-xl transition-all font-cairo ${
-                        isEditingMode
-                          ? 'bg-black/50 border-white/10 text-white focus:border-orange-500 outline-none'
-                          : 'bg-[#161616] border-white/5 text-gray-400 cursor-not-allowed select-none'
-                      }`}
-                    />
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-gray-400 font-bold block font-cairo">اسم العميل ورابط الحساب:</span>
+                      {isEditingMode && (
+                        <button
+                          type="button"
+                          onClick={handleContactPicker}
+                          disabled={isPickingContact}
+                          className="text-[9px] text-orange-400 hover:text-orange-300 bg-orange-600/15 hover:bg-orange-600/25 px-2 py-0.5 rounded-lg border border-orange-500/20 font-cairo font-black flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50"
+                          title="جلب الاسم والرقم من جهات اتصال الهاتف"
+                        >
+                          <Contact size={10} />
+                          <span>سجل الهاتف</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        disabled={!isEditingMode}
+                        value={isEditingMode ? editName : selectedCustomer.name}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className={`customer-static-input w-full text-xs font-bold text-right py-2.5 ${isEditingMode ? 'pl-9 pr-3.5' : 'px-3.5'} border rounded-xl transition-all font-cairo ${
+                          isEditingMode
+                            ? 'bg-black/50 border-white/10 text-white focus:border-orange-500 outline-none'
+                            : 'bg-[#161616] border-white/5 text-gray-400 cursor-not-allowed select-none'
+                        }`}
+                      />
+                      {isEditingMode && (
+                        <button
+                          type="button"
+                          onClick={handleContactPicker}
+                          disabled={isPickingContact}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 bg-orange-600/15 hover:bg-orange-600/30 text-orange-400 hover:text-orange-300 rounded-lg border border-orange-500/25 transition-all flex items-center justify-center cursor-pointer active:scale-95 disabled:opacity-50"
+                          title="جلب الاسم والرقم من جهات اتصال الهاتف"
+                        >
+                          {isPickingContact ? (
+                            <span className="w-3.5 h-3.5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Contact size={13} />
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {/* Company Name */}
                   <div className="space-y-1 text-right">
@@ -1295,30 +1468,59 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                     <div className="flex items-center justify-between">
                       <span className="text-[10px] text-gray-400 font-bold block font-cairo">الهاتف الرئيسي:</span>
                       {isEditingMode && (
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            onClick={handleContactPicker}
+                            disabled={isPickingContact}
+                            className="text-[9px] text-orange-400 hover:text-orange-300 bg-orange-600/15 hover:bg-orange-600/25 px-2 py-0.5 rounded-lg border border-orange-500/20 font-cairo font-black flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50"
+                            title="جلب الاسم والرقم من جهات اتصال الهاتف"
+                          >
+                            <Contact size={10} />
+                            <span>سجل الهاتف</span>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setEditPhone1('لا يوجد')}
+                            className="text-[9px] text-orange-400 hover:text-white bg-white/5 hover:bg-white/10 px-2 py-0.5 rounded border border-white/5 font-cairo font-black cursor-pointer transition-all"
+                          >
+                            تعيين لا يوجد
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="tel"
+                        inputMode="tel"
+                        disabled={!isEditingMode}
+                        value={isEditingMode ? editPhone1 : selectedCustomer.phone1}
+                        onChange={(e) => {
+                          const val = e.target.value.replace(/[^0-9+*#]/g, '');
+                          setEditPhone1(val);
+                        }}
+                        className={`customer-static-input w-full text-xs font-mono font-bold text-right py-2.5 ${isEditingMode ? 'pl-9 pr-3.5' : 'px-3.5'} border rounded-xl transition-all ${
+                          isEditingMode
+                            ? 'bg-black/50 border-white/10 text-white focus:border-orange-500 outline-none'
+                            : 'bg-[#161616] border-white/5 text-gray-400 cursor-not-allowed select-none'
+                        }`}
+                      />
+                      {isEditingMode && (
                         <button
                           type="button"
-                          onClick={() => setEditPhone1('لا يوجد')}
-                          className="text-[9px] text-orange-400 hover:text-white bg-white/5 px-2 py-0.5 rounded border border-white/5 font-cairo font-black"
+                          onClick={handleContactPicker}
+                          disabled={isPickingContact}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 bg-orange-600/15 hover:bg-orange-600/30 text-orange-400 hover:text-orange-300 rounded-lg border border-orange-500/25 transition-all flex items-center justify-center cursor-pointer active:scale-95 disabled:opacity-50"
+                          title="جلب الاسم والرقم من جهات اتصال الهاتف"
                         >
-                          تعيين لا يوجد
+                          {isPickingContact ? (
+                            <span className="w-3.5 h-3.5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Contact size={13} />
+                          )}
                         </button>
                       )}
                     </div>
-                    <input
-                      type="tel"
-                      inputMode="tel"
-                      disabled={!isEditingMode}
-                      value={isEditingMode ? editPhone1 : selectedCustomer.phone1}
-                      onChange={(e) => {
-                        const val = e.target.value.replace(/[^0-9+*#]/g, '');
-                        setEditPhone1(val);
-                      }}
-                      className={`customer-static-input w-full text-xs font-mono font-bold text-right py-2.5 px-3.5 border rounded-xl transition-all ${
-                        isEditingMode
-                          ? 'bg-black/50 border-white/10 text-white focus:border-orange-500 outline-none'
-                          : 'bg-[#161616] border-white/5 text-gray-400 cursor-not-allowed select-none'
-                      }`}
-                    />
                   </div>
 
                   {/* Phone 2 */}
@@ -1917,6 +2119,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                             type="button"
                             onClick={() => {
                               setIsEditingMode(true);
+                              setContactPickerNotice(null);
                               setUpdatePastTransactions(true);
                               setEditName(selectedCustomer.name || '');
                               setEditCompanyName(selectedCustomer.companyName || '');
@@ -1935,7 +2138,10 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                     ) : (
                       <button
                         type="button"
-                        onClick={() => setIsEditingMode(false)}
+                        onClick={() => {
+                          setIsEditingMode(false);
+                          setContactPickerNotice(null);
+                        }}
                         className="px-2.5 py-1 bg-white/5 hover:bg-white/10 text-gray-400 rounded-md text-[10px] font-bold font-cairo border border-white/10 transition-all cursor-pointer"
                       >
                         إلغاء التعديل
@@ -1943,22 +2149,121 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                     )}
                   </div>
 
+                  {/* Contact Picker Quick Action Card - Only visible when editing in modal */}
+                  {isEditingMode && (
+                    <div className="p-3.5 bg-gradient-to-r from-orange-500/10 via-amber-500/5 to-transparent border border-orange-500/25 rounded-2xl flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 shadow-sm">
+                      <div className="flex items-center gap-2.5 text-right">
+                        <div className="p-2 bg-orange-600/20 text-orange-400 rounded-xl border border-orange-500/25 shrink-0">
+                          <Contact size={18} />
+                        </div>
+                        <div>
+                          <div className="text-xs font-black text-white font-cairo flex items-center gap-1.5">
+                            <span>جلب الاسم والرقم من جهات الاتصال</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-300 font-bold">Android</span>
+                          </div>
+                          <div className="text-[10px] text-gray-400 font-bold font-cairo mt-0.5">
+                            تعبئة حقل اسم العميل ورقم الهاتف الرئيسي تلقائياً من سجل الهاتف
+                          </div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleContactPicker}
+                        disabled={isPickingContact}
+                        className="w-full sm:w-auto px-3.5 py-2 bg-orange-600 hover:bg-orange-500 text-white rounded-xl text-xs font-black font-cairo transition-all flex items-center justify-center gap-1.5 shadow-md active:scale-95 disabled:opacity-50 cursor-pointer shrink-0"
+                      >
+                        {isPickingContact ? (
+                          <>
+                            <span className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                            <span>جاري الفحص...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Contact size={14} />
+                            <span>فتح سجل الهاتف</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Contact Picker Alert/Confirmation Notice */}
+                  {isEditingMode && contactPickerNotice && (
+                    <div className={`p-3 rounded-xl border text-right transition-all flex items-start justify-between gap-2.5 text-xs font-cairo ${
+                      contactPickerNotice.type === 'success'
+                        ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'
+                        : contactPickerNotice.type === 'warning'
+                        ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                        : 'bg-sky-500/10 border-sky-500/30 text-sky-300'
+                    }`}>
+                      <div className="flex items-start gap-2">
+                        {contactPickerNotice.type === 'success' ? (
+                          <CheckCircle size={16} className="text-emerald-400 mt-0.5 shrink-0" />
+                        ) : (
+                          <AlertTriangle size={16} className="text-amber-400 mt-0.5 shrink-0" />
+                        )}
+                        <div>
+                          <div className="font-black text-xs">{contactPickerNotice.title}</div>
+                          <div className="text-[11px] opacity-90 whitespace-pre-line mt-0.5 font-sans font-bold leading-relaxed">{contactPickerNotice.message}</div>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setContactPickerNotice(null)}
+                        className="p-1 hover:bg-white/10 rounded-lg text-gray-400 hover:text-white transition-all cursor-pointer shrink-0"
+                      >
+                        <X size={14} />
+                      </button>
+                    </div>
+                  )}
+
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
   
                   {/* Name */}
                   <div className="space-y-1 text-right">
-                    <span className="text-[10px] text-gray-400 font-bold block font-cairo">اسم العميل ورابط الحساب:</span>
-                    <input
-                      type="text"
-                      disabled={!isEditingMode}
-                      value={isEditingMode ? editName : selectedCustomer.name}
-                      onChange={(e) => setEditName(e.target.value)}
-                      className={`customer-static-input w-full text-xs font-bold text-right py-2.5 px-3.5 border rounded-xl transition-all font-cairo ${
-                        isEditingMode
-                          ? 'bg-black/50 border-white/10 text-white focus:border-orange-500 outline-none'
-                          : 'bg-[#161616] border-white/5 text-gray-400 cursor-not-allowed select-none'
-                      }`}
-                    />
+                    <div className="flex items-center justify-between">
+                      <span className="text-[10px] text-gray-400 font-bold block font-cairo">اسم العميل ورابط الحساب:</span>
+                      {isEditingMode && (
+                        <button
+                          type="button"
+                          onClick={handleContactPicker}
+                          disabled={isPickingContact}
+                          className="text-[9px] text-orange-400 hover:text-orange-300 bg-orange-600/15 hover:bg-orange-600/25 px-2 py-0.5 rounded-lg border border-orange-500/20 font-cairo font-black flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50"
+                          title="جلب الاسم والرقم من جهات اتصال الهاتف"
+                        >
+                          <Contact size={10} />
+                          <span>سجل الهاتف</span>
+                        </button>
+                      )}
+                    </div>
+                    <div className="relative">
+                      <input
+                        type="text"
+                        disabled={!isEditingMode}
+                        value={isEditingMode ? editName : selectedCustomer.name}
+                        onChange={(e) => setEditName(e.target.value)}
+                        className={`customer-static-input w-full text-xs font-bold text-right py-2.5 ${isEditingMode ? 'pl-9 pr-3.5' : 'px-3.5'} border rounded-xl transition-all font-cairo ${
+                          isEditingMode
+                            ? 'bg-black/50 border-white/10 text-white focus:border-orange-500 outline-none'
+                            : 'bg-[#161616] border-white/5 text-gray-400 cursor-not-allowed select-none'
+                        }`}
+                      />
+                      {isEditingMode && (
+                        <button
+                          type="button"
+                          onClick={handleContactPicker}
+                          disabled={isPickingContact}
+                          className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 bg-orange-600/15 hover:bg-orange-600/30 text-orange-400 hover:text-orange-300 rounded-lg border border-orange-500/25 transition-all flex items-center justify-center cursor-pointer active:scale-95 disabled:opacity-50"
+                          title="جلب الاسم والرقم من جهات اتصال الهاتف"
+                        >
+                          {isPickingContact ? (
+                            <span className="w-3.5 h-3.5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                          ) : (
+                            <Contact size={13} />
+                          )}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   {/* Company Name */}
                   <div className="space-y-1 text-right">
@@ -1981,26 +2286,59 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                       <div className="flex items-center justify-between">
                         <span className="text-[10px] text-gray-400 font-bold block font-cairo">الهاتف الرئيسي:</span>
                         {isEditingMode && (
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={handleContactPicker}
+                              disabled={isPickingContact}
+                              className="text-[9px] text-orange-400 hover:text-orange-300 bg-orange-600/15 hover:bg-orange-600/25 px-2 py-0.5 rounded-lg border border-orange-500/20 font-cairo font-black flex items-center gap-1 cursor-pointer transition-all disabled:opacity-50"
+                              title="جلب الاسم والرقم من جهات اتصال الهاتف"
+                            >
+                              <Contact size={10} />
+                              <span>سجل الهاتف</span>
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setEditPhone1('لا يوجد')}
+                              className="text-[9px] text-orange-400 hover:text-white bg-white/5 px-2 py-0.5 rounded border border-white/5 font-cairo font-black cursor-pointer"
+                            >
+                              تعيين لا يوجد
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                      <div className="relative">
+                        <input
+                          type="tel"
+                          inputMode="tel"
+                          disabled={!isEditingMode}
+                          value={isEditingMode ? editPhone1 : selectedCustomer.phone1}
+                          onChange={(e) => {
+                            const val = e.target.value.replace(/[^0-9+*#]/g, '');
+                            setEditPhone1(val);
+                          }}
+                          className={`customer-static-input w-full text-xs font-mono font-bold text-right py-2.5 ${isEditingMode ? 'pl-9 pr-3.5' : 'px-3.5'} border rounded-xl transition-all ${
+                            isEditingMode
+                              ? 'bg-black/50 border-white/10 text-white focus:border-orange-500 outline-none'
+                              : 'bg-[#161616] border-white/5 text-gray-400 cursor-not-allowed select-none'
+                          }`}
+                        />
+                        {isEditingMode && (
                           <button
                             type="button"
-                            onClick={() => setEditPhone1('لا يوجد')}
-                            className="text-[9px] text-orange-400 hover:text-white bg-white/5 px-2 py-0.5 rounded border border-white/5 font-cairo font-black cursor-pointer"
+                            onClick={handleContactPicker}
+                            disabled={isPickingContact}
+                            className="absolute left-2 top-1/2 -translate-y-1/2 p-1.5 bg-orange-600/15 hover:bg-orange-600/30 text-orange-400 hover:text-orange-300 rounded-lg border border-orange-500/25 transition-all flex items-center justify-center cursor-pointer active:scale-95 disabled:opacity-50"
+                            title="جلب الاسم والرقم من جهات اتصال الهاتف"
                           >
-                            تعيين لا يوجد
+                            {isPickingContact ? (
+                              <span className="w-3.5 h-3.5 border-2 border-orange-400 border-t-transparent rounded-full animate-spin" />
+                            ) : (
+                              <Contact size={13} />
+                            )}
                           </button>
                         )}
                       </div>
-                      <input
-                        type="text"
-                        disabled={!isEditingMode}
-                        value={isEditingMode ? editPhone1 : selectedCustomer.phone1}
-                        onChange={(e) => setEditPhone1(e.target.value)}
-                        className={`customer-static-input w-full text-xs font-mono font-bold text-right py-2.5 px-3.5 border rounded-xl transition-all ${
-                          isEditingMode
-                            ? 'bg-black/50 border-white/10 text-white focus:border-orange-500 outline-none'
-                            : 'bg-[#161616] border-white/5 text-gray-400 cursor-not-allowed select-none'
-                        }`}
-                      />
                     </div>
 
                     {/* Phone 2 */}

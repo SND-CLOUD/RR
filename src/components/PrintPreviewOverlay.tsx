@@ -1368,12 +1368,12 @@ export default function PrintPreviewOverlay({
                     <table className="w-full border-collapse text-xs table-fixed">
                       <thead>
                         <tr className="bg-gray-100 border-b-2 border-black text-black">
-                          <th className="py-1.5 px-2 border-l border-black text-center w-12 font-bold">مسلسل</th>
-                          <th className="py-1.5 px-2 border-l border-black text-right w-48 font-bold">النوع/الجهاز</th>
-                          <th className="py-1.5 px-2 border-l border-black text-center w-24 font-bold">الحالة</th>
-                          <th className="py-1.5 px-2 border-l border-black text-center w-36 font-bold">تكلفة صيانة الجهاز</th>
-                          <th className="py-1.5 px-2 border-l border-black text-center w-16 font-bold">العدد</th>
-                          <th className="py-1.5 px-2 text-center w-36 font-bold">إجمالي التكلفة</th>
+                          <th className="py-1.5 px-2 border-l border-black text-center w-10 font-bold">مسلسل</th>
+                          <th className="py-1.5 px-2 border-l border-black text-right w-44 font-bold">النوع/الجهاز</th>
+                          <th className="py-1.5 px-2 border-l border-black text-center font-bold">الحالة وناتج الصيانة</th>
+                          <th className="py-1.5 px-2 border-l border-black text-center w-24 font-bold">تكلفة صيانة الجهاز</th>
+                          <th className="py-1.5 px-2 border-l border-black text-center w-12 font-bold">العدد</th>
+                          <th className="py-1.5 px-2 text-center w-28 font-bold">إجمالي التكلفة</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-black">
@@ -1434,14 +1434,15 @@ export default function PrintPreviewOverlay({
                                     {it.deviceType} <span className="text-gray-500 text-[10px] font-normal">- {it.deviceName}</span>
                                   </div>
                                 </td>
-                                <td className={`py-1 px-2 border-l border-black text-center font-black ${statusColor}`}>
+                                <td className={`py-1 px-2 border-l border-black text-center font-bold ${statusColor}`}>
                                   <div className="flex flex-col items-center justify-center leading-normal">
                                     {(() => {
                                       const { outcome } = parseEngineerReport(it.technicalNotes || it.engineerReport || '');
+                                      const extraInfo = outcome || (statusLabel !== 'جاهز' && it.failureReason && it.failureReason !== statusLabel ? it.failureReason : '');
                                       return (
-                                        <span>
-                                          {statusLabel}
-                                          {isReady && outcome ? ` - ${outcome}` : ''}
+                                        <span className="leading-snug break-words">
+                                          <span className="font-black">{statusLabel}</span>
+                                          {extraInfo ? ` - ${extraInfo}` : ''}
                                         </span>
                                       );
                                     })()}

@@ -3,12 +3,18 @@ import { db, collection, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp } f
 import { PartCatalogItem } from '../types';
 import { Tag, Plus, Search, Edit2, Trash2, X, Check, Package, FolderPlus, DollarSign } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { useBackHandler } from '../hooks/useBackHandler';
 
 export default function PartsCatalogTable() {
   const [items, setItems] = useState<PartCatalogItem[]>([]);
   const [search, setSearch] = useState('');
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
+
+  // Close add/edit modal on hardware back button
+  useBackHandler(showModal, () => {
+    setShowModal(false);
+  });
 
   // Form State
   const [name, setName] = useState('');
@@ -52,9 +58,11 @@ export default function PartsCatalogTable() {
 
     setIsSaving(true);
     try {
-      const docId = editingId || name.trim().replace(/\//g, '_') + '_' + Date.now();
+      const cleanName = name.trim();
+      const docId = editingId || cleanName.replace(/\//g, '_');
       const payload: PartCatalogItem = {
-        name: name.trim(),
+        id: cleanName,
+        name: cleanName,
         category: category.trim() || 'قطع غيار ملحقات',
         defaultCost: defaultCost === '' ? 0 : Number(defaultCost),
         defaultSalePrice: defaultSalePrice === '' ? 0 : Number(defaultSalePrice),
@@ -93,7 +101,7 @@ export default function PartsCatalogTable() {
   );
 
   return (
-    <div className="space-y-6 font-cairo text-right" dir="rtl">
+    <div className="space-y-6 font-cairo text-right pb-32 md:pb-16" dir="rtl">
       {/* Top Header & Actions */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#141414] p-4 rounded-2xl border border-white/5 shadow-xl">
         <div className="flex items-center gap-3 w-full sm:w-auto">

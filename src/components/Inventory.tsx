@@ -316,24 +316,15 @@ export default function Inventory({ user, onBack }: { user: User, onBack?: () =>
     return (
       <div className="space-y-4 pb-24 md:pb-6 text-right pt-2" dir="rtl">
         {/* Navigation Top Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-3 bg-[#1a1a1a] p-3 rounded-2xl border border-white/5 shadow-md">
+        <div className="flex items-center justify-between gap-3 bg-[#1a1a1a] p-3 rounded-2xl border border-white/5 shadow-md">
           <button
+            type="button"
             onClick={() => setInventoryMode('hub')}
             className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl text-xs font-bold font-cairo transition-all border border-white/10 cursor-pointer"
           >
             <ArrowRight size={16} />
             <span>العودة لأقسام المخزون</span>
           </button>
-
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setInventoryMode('devices_stock')}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-400 rounded-lg text-xs font-bold font-cairo transition-all border border-orange-500/20 cursor-pointer"
-            >
-              <Smartphone size={14} />
-              <span>التبديل إلى: أجهزة العملاء بالمحل ({activeItems.length})</span>
-            </button>
-          </div>
         </div>
 
         {/* Render the Parts and Accessories Stock Module */}
@@ -346,24 +337,15 @@ export default function Inventory({ user, onBack }: { user: User, onBack?: () =>
   return (
     <div className="space-y-4 pb-24 md:pb-6 text-right pt-2" dir="rtl">
       {/* Navigation Top Bar */}
-      <div className="flex flex-wrap items-center justify-between gap-3 bg-[#1a1a1a] p-3 rounded-2xl border border-white/5 shadow-md">
+      <div className="flex items-center justify-between gap-3 bg-[#1a1a1a] p-3 rounded-2xl border border-white/5 shadow-md">
         <button
+          type="button"
           onClick={() => setInventoryMode('hub')}
           className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl text-xs font-bold font-cairo transition-all border border-white/10 cursor-pointer"
         >
           <ArrowRight size={16} />
           <span>العودة لأقسام المخزون</span>
         </button>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setInventoryMode('parts_stock')}
-            className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-400 rounded-lg text-xs font-bold font-cairo transition-all border border-emerald-500/20 cursor-pointer"
-          >
-            <Package size={14} />
-            <span>التبديل إلى: مخزون القطع والملحقات ({partsCount})</span>
-          </button>
-        </div>
       </div>
 
       {isActionFormOpen && (

@@ -10,6 +10,7 @@ import {
 import { formatMoney } from '../lib/fundUtils';
 import { ProviderFactory } from '../data/ProviderFactory';
 import { auditOrphanedPartsStock, cleanOrphanedPartsStock, recalculateDisassemblyBatchesRecovery } from '../lib/invoiceCascadeService';
+import { useBackHandler } from '../hooks/useBackHandler';
 
 export default function ShopPartsStockView() {
   const [stockItems, setStockItems] = useState<ShopPartItem[]>([]);
@@ -42,6 +43,15 @@ export default function ShopPartsStockView() {
   // Recalculate batches recovery state
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [notificationMsg, setNotificationMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+
+  // Handle hardware back button for open modals
+  useBackHandler(Boolean(deleteModal?.isOpen || showAuditModal), () => {
+    if (deleteModal?.isOpen) {
+      setDeleteModal(null);
+    } else if (showAuditModal) {
+      setShowAuditModal(false);
+    }
+  });
 
   useEffect(() => {
     const unsubStock = onSnapshot(collection(db, 'shop_parts_inventory'), (snapshot) => {
@@ -279,7 +289,7 @@ export default function ShopPartsStockView() {
   }, 0);
 
   return (
-    <div className="space-y-6 font-cairo text-right" dir="rtl">
+    <div className="space-y-6 font-cairo text-right pb-32 md:pb-16" dir="rtl">
       {/* Top Header & Navigation */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#141414] p-4 rounded-2xl border border-white/5 shadow-xl">
         <div className="flex items-center gap-2 p-1 bg-[#1a1a1a] rounded-xl border border-white/5 w-full sm:w-auto">
