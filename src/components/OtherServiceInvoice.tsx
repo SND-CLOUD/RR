@@ -6,11 +6,15 @@ import PartsCatalogTable from './PartsCatalogTable';
 import ShopPartsStockView from './ShopPartsStockView';
 import { db, collection, doc, query, onSnapshot, serverTimestamp, writeBatch, runTransaction, getDocs, getDoc, increment, setDoc } from '../firebase';
 import { Customer, ShopConfig, User, ShopPartItem, DisassemblyBatch } from '../types';
-import { Tag, Wrench, Cpu, CheckCircle, Plus, Trash2, ArrowRight, ArrowLeft, Save, CircleDollarSign, AlertTriangle, Eye, ShoppingCart, Layers, Package, BookOpen, User as UserIcon, RotateCcw } from 'lucide-react';
+import { Tag, Wrench, Cpu, CheckCircle, Plus, Trash2, ArrowRight, ArrowLeft, Save, CircleDollarSign, AlertTriangle, Eye, ShoppingCart, Layers, Package, BookOpen, User as UserIcon, RotateCcw, Edit2, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import PrintPreviewOverlay from './PrintPreviewOverlay';
 import { formatMoney, parseFundBalance } from '../lib/fundUtils';
 import { useBackHandler } from '../hooks/useBackHandler';
+import { sharePdfFile, openWhatsApp } from '../lib/shareHelper';
+import jsPDF from 'jspdf';
+import * as htmlToImage from 'html-to-image';
+import { sanitizeDocumentStyles, sanitizeElementInlineStyles } from '../lib/html2canvasHelper';
 
 type ServiceType = 'hub' | 'software' | 'maintenance' | 'parts' | 'purchase' | 'catalog' | 'stock';
 
@@ -31,6 +35,19 @@ export default function OtherServiceInvoice({
   const [activeTab, setActiveTab] = useState<ServiceType>(initialType);
 
   // General Customer & Currency State
+  
+  const handleSmartFocus = (e: React.FocusEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const el = e.target;
+    el.select();
+    setTimeout(() => {
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 300); // Wait for mobile keyboard to slide up
+  };
+
+  const convertToArabicToEnglishNumbers = (val: string) => {
+    return val.replace(/[٠-٩]/g, d => "٠١٢٣٤٥٦٧٨٩".indexOf(d).toString());
+  };
+
   const [customer, setCustomer] = useState({ name: '', phone1: '', phone2: '', notes: '' });
   const [selectedCustomerId, setSelectedCustomerId] = useState<string | null>(null);
   const [existingCustomers, setExistingCustomers] = useState<Customer[]>([]);
@@ -68,7 +85,7 @@ export default function OtherServiceInvoice({
   const [purchaseItems, setPurchaseItems] = useState<{ id: string; name: string; category: string; quantity: number; unitCost: number; salePrice: number; notes: string }[]>([]);
   
   // Current Item for Purchase
-  const initialPurchaseItem = { id: '', name: '', category: 'قطع غيار وملحقات', quantity: 1, unitCost: 0, salePrice: 0, notes: '' };
+  const initialPurchaseItem = { id: '', name: '', category: 'قطع غيار وملحقات', quantity: 1, unitCost: 0, salePrice: 0, notes: 'سليم' };
   const [currentPurchaseItem, setCurrentPurchaseItem] = useState(initialPurchaseItem);
   const [editingPurchaseIdx, setEditingPurchaseIdx] = useState<number | null>(null);
 
@@ -115,7 +132,7 @@ export default function OtherServiceInvoice({
     setBatchName('');
     setTotalBatchCost('');
     setPurchaseItems([]);
-    setCurrentPurchaseItem({ id: '', name: '', category: 'قطع غيار وملحقات', quantity: 1, unitCost: 0, salePrice: 0, notes: '' });
+    setCurrentPurchaseItem(initialPurchaseItem);
     setEditingPurchaseIdx(null);
     setAmountPaidPurchase('');
     setInvoiceNotes('');
@@ -151,6 +168,9 @@ export default function OtherServiceInvoice({
   useEffect(() => {
     resetAllForms();
     setActiveTab(initialType);
+    return () => {
+      resetAllForms();
+    };
   }, [initialType, resetAllForms]);
 
   // Listen to custom tab change events (e.g. from global back button)
@@ -297,8 +317,10 @@ export default function OtherServiceInvoice({
   const totalSalesCost = items.reduce((sum, item) => sum + (item.quantity * item.unitCost), 0);
   const paidSales = amountPaid === '' ? 0 : Number(amountPaid);
 
-  const totalPurchaseCostDirect = purchaseItems.reduce((sum, item) => sum + (item.quantity * item.unitCost), 0);
-  const totalPurchaseCost = purchaseType === 'batch' ? (totalBatchCost === '' ? 0 : Number(totalBatchCost)) : totalPurchaseCostDirect;
+  const totalPurchaseCostDirect = purchaseItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.unitCost || 0)), 0);
+  const totalPurchaseCost = purchaseType === 'batch' 
+    ? (totalBatchCost !== '' && Number(totalBatchCost) > 0 ? Number(totalBatchCost) : totalPurchaseCostDirect) 
+    : totalPurchaseCostDirect;
 
   // Handlers for Sale Items
   const handleAddSaleItem = () => {
@@ -354,16 +376,23 @@ export default function OtherServiceInvoice({
   const handleAddPurchaseItem = () => {
     if (!currentPurchaseItem.name.trim() || currentPurchaseItem.quantity < 1) return;
 
+    let nextItems = [...purchaseItems];
     if (editingPurchaseIdx !== null) {
-      setPurchaseItems(curr => {
-        const next = [...curr];
-        next[editingPurchaseIdx] = { ...currentPurchaseItem };
-        return next;
-      });
+      nextItems[editingPurchaseIdx] = { ...currentPurchaseItem };
       setEditingPurchaseIdx(null);
     } else {
-      setPurchaseItems([...purchaseItems, { ...currentPurchaseItem, id: Date.now().toString() }]);
+      nextItems.push({ ...currentPurchaseItem, id: Date.now().toString() });
     }
+    setPurchaseItems(nextItems);
+
+    // If batch mode and totalBatchCost was empty or 0, automatically propose the sum of item costs
+    if (purchaseType === 'batch' && (totalBatchCost === '' || Number(totalBatchCost) === 0)) {
+      const sumCost = nextItems.reduce((sum, item) => sum + (Number(item.quantity || 1) * Number(item.unitCost || 0)), 0);
+      if (sumCost > 0) {
+        setTotalBatchCost(sumCost);
+      }
+    }
+
     setCurrentPurchaseItem(initialPurchaseItem);
   };
 
@@ -380,12 +409,13 @@ export default function OtherServiceInvoice({
     setPurchaseItems(purchaseItems.filter((_, i) => i !== idx));
   };
   // Final Execution for Purchases ("إتمام عملية الشراء وتغذية المخزون والخزينة")
-  const handleSavePurchase = async () => {
+  const handleSavePurchase = async (action: 'save' | 'print' | 'whatsapp' = 'save') => {
+    if (isSubmitting) return;
     if (!supplierName.trim()) {
       setError("الرجاء إدخال اسم المورد أو البائع");
       return;
     }
-    if (purchaseType === 'batch' && (!batchName.trim() || totalBatchCost === '' || Number(totalBatchCost) <= 0)) {
+    if (purchaseType === 'batch' && (!batchName.trim() || totalPurchaseCost <= 0)) {
       setError("الرجاء إدخال اسم جهاز/دفعة التفكيك وإجمالي قيمة الشراء الصحيحة");
       return;
     }
@@ -501,6 +531,10 @@ export default function OtherServiceInvoice({
       batchOp.set(purInvoiceRef, purInvoicePayload);
 
       // 3. If batch purchase, create DisassemblyBatch record
+      const assignedBatchTotalCost = purchaseType === 'batch' 
+        ? (totalBatchCost !== '' && Number(totalBatchCost) > 0 ? Number(totalBatchCost) : totalPurchaseCostDirect) 
+        : 0;
+
       if (purchaseType === 'batch') {
         const batchPayload = {
           id: batchId,
@@ -508,7 +542,7 @@ export default function OtherServiceInvoice({
           batchName: batchName.trim(),
           supplierName: supplierName.trim(),
           currency,
-          totalBatchCost: Number(totalBatchCost),
+          totalBatchCost: assignedBatchTotalCost,
           recoveredAmount: 0,
           isCostFullyRecovered: false,
           itemsCount: purchaseItems.length,
@@ -529,8 +563,8 @@ export default function OtherServiceInvoice({
           id: cleanName,
           name: cleanName,
           category: item.category || 'قطع غيار وملحقات',
-          defaultCost: item.unitCost || 0,
-          defaultSalePrice: item.salePrice || 0,
+          defaultCost: Number(item.unitCost || 0),
+          defaultSalePrice: Number(item.salePrice || 0),
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp()
         }, { merge: true });
@@ -542,12 +576,13 @@ export default function OtherServiceInvoice({
           name: item.name.trim(),
           category: item.category || 'قطع غيار وملحقات',
           quantity: item.quantity,
-          unitCost: purchaseType === 'batch' ? (totalBatchCost ? Number(totalBatchCost) / purchaseItems.length : 0) : item.unitCost,
-          salePrice: item.salePrice,
+          unitCost: Number(item.unitCost || 0),
+          salePrice: Number(item.salePrice || 0),
+          notes: item.notes || '',
           isDisassemblyBatch: purchaseType === 'batch',
           batchId: purchaseType === 'batch' ? batchId : '',
           batchName: purchaseType === 'batch' ? batchName.trim() : '',
-          batchTotalCost: purchaseType === 'batch' ? Number(totalBatchCost) : 0,
+          batchTotalCost: assignedBatchTotalCost,
           supplierName: supplierName.trim(),
           purchaseInvoiceId: purInvoiceRef.id,
           purchaseInvoiceNumber: assignedPurchaseNumber,
@@ -566,11 +601,12 @@ export default function OtherServiceInvoice({
           invoiceNumber: assignedPurchaseNumber,
           customerId: finalCustomerId,
           customerName: supplierName.trim(),
+          name: item.name.trim(),
           deviceType: item.name.trim(),
           deviceName: item.name.trim(),
           quantity: item.quantity,
-          cost: item.quantity * item.unitCost,
-          unitCost: purchaseType === 'batch' ? (totalBatchCost ? Number(totalBatchCost) / purchaseItems.length : 0) : item.unitCost,
+          cost: item.quantity * Number(item.unitCost || 0),
+          unitCost: Number(item.unitCost || 0),
           status: 'delivered',
           source: 'purchase',
           isPurchase: 1,
@@ -644,11 +680,28 @@ export default function OtherServiceInvoice({
       }
 
       await batchOp.commit();
+      
+      const newInvoiceNumber = String(assignedPurchaseNumber);
 
-      // Reset Purchase Form & Show Success Alert
+      if (action === 'print' || action === 'whatsapp') {
+        const updatedOutput = {
+          ...currentOutput,
+          invoice: { ...currentOutput.invoice, invoiceNumber: newInvoiceNumber }
+        };
+        setCurrentOutput(updatedOutput);
+        
+        await new Promise(r => setTimeout(r, 200));
+
+        if (action === 'print') {
+          handlePrintDirect();
+        } else if (action === 'whatsapp') {
+          await handleExportPDFAndWhatsApp(updatedOutput);
+        }
+      }
+
       resetPurchaseForm();
-      setSuccessInfo({ invoiceNumber: assignedPurchaseNumber });
-      alert(`تم إتمام عملية الشراء وسند الصرف بنجاح وتحديث مخزون المحل والخزينة!\nالقيمة الإجمالية: ${formatMoney(totalPurchaseCost, currency)}`);
+      setShowPreview(false);
+      setSuccessInfo({ invoiceNumber: newInvoiceNumber });
       setActiveTab('stock');
       localStorage.setItem('otherServicesTab', 'stock');
     } catch (err: any) {
@@ -659,8 +712,74 @@ export default function OtherServiceInvoice({
     }
   };
 
-  // Preview Generator for Sales Invoices
+  // Preview Generator for Sales and Purchase Invoices
   const generateOutputData = async () => {
+    if (activeTab === 'purchase') {
+      if (!supplierName.trim()) {
+        setError("الرجاء إدخال اسم المورد أو البائع");
+        return null;
+      }
+      if (purchaseType === 'batch' && !batchName.trim()) {
+        setError("الرجاء إدخال اسم / نوع جهاز التفكيك");
+        return null;
+      }
+      if (purchaseItems.length === 0) {
+        setError("الرجاء إضافة قطعة أو ملحق واحد على الأقل للمشتريات");
+        return null;
+      }
+
+      const tmplType = 'purchase';
+      const exactBatchDeviceName = batchName.trim() || 'جهاز تفكيك';
+      const outputItems = purchaseType === 'batch'
+        ? [
+            {
+              id: 'batch_item_1',
+              name: exactBatchDeviceName,
+              deviceName: exactBatchDeviceName,
+              deviceType: exactBatchDeviceName,
+              faultType: invoiceNotes || '',
+              quantity: 1,
+              unitCost: totalPurchaseCost,
+              cost: totalPurchaseCost,
+              deviceNotes: invoiceNotes || ''
+            }
+          ]
+        : purchaseItems.map((pi, idx) => ({
+            id: pi.id || `pi_${idx}`,
+            name: pi.name.trim(),
+            deviceName: pi.name.trim(),
+            deviceType: pi.name.trim(),
+            category: pi.category || '',
+            faultType: pi.notes || '',
+            quantity: pi.quantity,
+            unitCost: pi.unitCost,
+            cost: pi.quantity * pi.unitCost,
+            deviceNotes: pi.notes || ''
+          }));
+
+      return {
+        invoice: {
+          invoiceNumber: 'معاينة',
+          customerName: supplierName.trim(),
+          phone1: supplierPhone.trim() || '',
+          currency,
+          totalCost: totalPurchaseCost,
+          amountPaid: Number(amountPaidPurchase || 0),
+          status: 'delivered',
+          notes: invoiceNotes || '',
+          isPurchase: 1,
+          type: 'purchase',
+          invoiceType: 'purchase',
+          purchaseType,
+          batchName: exactBatchDeviceName,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+        items: outputItems,
+        templateType: tmplType,
+      };
+    }
+
     if (!customer.name.trim()) {
       setError("الرجاء إدخال اسم العميل");
       return null;
@@ -676,7 +795,7 @@ export default function OtherServiceInvoice({
 
     return {
       invoice: {
-        invoiceNumber: 'PREVIEW',
+        invoiceNumber: 'معاينة',
         customerName: customer.name,
         currency,
         totalCost: totalSalesCost,
@@ -688,8 +807,9 @@ export default function OtherServiceInvoice({
       },
       items: items.map(item => ({
         ...item,
+        name: item.name,
         deviceType: item.name,
-        deviceName: '',
+        deviceName: item.name,
         faultType: item.notes,
         cost: item.quantity * item.unitCost
       })),
@@ -698,6 +818,7 @@ export default function OtherServiceInvoice({
   };
 
   const handlePreviewInit = async () => {
+    if (isSubmitting) return;
     const data = await generateOutputData();
     if (data) {
       setCurrentOutput(data);
@@ -707,7 +828,136 @@ export default function OtherServiceInvoice({
   };
 
   // Final Execution for Sales Invoices ("حفظ وإصدار الفاتورة")
+  
+  const handlePrintDirect = () => {
+    const originalStyle = document.createElement('style');
+    originalStyle.innerHTML = `
+      @media print {
+        @page { size: auto; margin: 0; }
+        body * {
+          visibility: hidden !important;
+        }
+        #print-preview-area, #print-preview-area * {
+          visibility: visible !important;
+        }
+        #print-preview-area {
+          position: absolute;
+          left: 0;
+          top: 0;
+          width: 100% !important;
+          margin: 0 !important;
+          padding: 10mm !important;
+          color: #000000 !important;
+          background-color: #ffffff !important;
+        }
+      }
+    `;
+    document.head.appendChild(originalStyle);
+    window.print();
+    document.head.removeChild(originalStyle);
+  };
+
+  const handleExportPDFAndWhatsApp = async (printData: any) => {
+    if (!printData) return;
+    const { invoice, items: prItems } = printData;
+    const currency = invoice.currency || 'USD';
+    const isPurchase = activeTab === 'purchase';
+
+    let restore = null;
+
+    try {
+      const printArea = document.getElementById('print-preview-area');
+      if (!printArea) {
+        return;
+      }
+
+      restore = await sanitizeDocumentStyles();
+      sanitizeElementInlineStyles(printArea);
+
+      const parentElement = printArea.parentElement;
+      let originalTransform = '';
+      if (parentElement) {
+        originalTransform = parentElement.style.transform;
+        parentElement.style.transform = 'none';
+      }
+
+      const canvas = await htmlToImage.toCanvas(printArea, { 
+        pixelRatio: 2, 
+        backgroundColor: '#ffffff',
+      });
+      
+      if (parentElement) {
+        parentElement.style.transform = originalTransform;
+      }
+      
+      const imgData = canvas.toDataURL('image/jpeg', 0.95);
+      
+      const pdf = new jsPDF({
+        orientation: 'portrait',
+        unit: 'mm',
+        format: 'a4',
+        compress: true
+      });
+    
+      const pdfWidth = pdf.internal.pageSize.getWidth();
+      const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
+    
+      let heightLeft = pdfHeight;
+      let position = 0;
+    
+      pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight, undefined, 'FAST');
+      heightLeft -= pdf.internal.pageSize.getHeight();
+    
+      while (heightLeft > 0.5) {
+        position = heightLeft - pdfHeight;
+        pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight, undefined, 'FAST');
+        heightLeft -= pdf.internal.pageSize.getHeight();
+      }
+      
+      const formattedDate = new Date().toISOString().split('T')[0];
+      const filename = `فاتورة_${isPurchase ? 'مشتريات' : 'مبيعات'}_${isPurchase ? (supplierName||'') : (invoice.customerName||'')}_${formattedDate}.pdf`;
+      pdf.save(filename);
+
+      let message = `*${isPurchase ? 'فاتورة مشتريات' : 'فاتورة خدمات ومبيعات'}* 📄\n\n`;
+      message += `عزيزي *${isPurchase ? (supplierName||'') : (invoice.customerName||'')}* المحترم،\n`;
+      message += `تجد أدناه الفاتورة رقم *${invoice.invoiceNumber}*:\n\n`;
+      message += `- *رقم الفاتورة:* ${invoice.invoiceNumber}\n`;
+      message += `- *القيمة الإجمالية:* ${Number(invoice.totalCost||0).toLocaleString('en-US')} ${currency}\n`;
+      if (Number(invoice.discount || 0) > 0) {
+        message += `- *مبلغ الخصم:* ${Number(invoice.discount).toLocaleString('en-US')} ${currency}\n`;
+      }
+      message += `- *المبلغ المدفوع:* ${Number(invoice.amountPaid||0).toLocaleString('en-US')} ${currency}\n`;
+      const netAmount = Math.max(0, Number(invoice.totalCost||0) - Number(invoice.discount||0));
+      message += `- *المبلغ المتبقي:* ${Math.max(0, netAmount - Number(invoice.amountPaid||0)).toLocaleString('en-US')} ${currency}\n`;
+      
+      message += `\nيسعدنا خدمتكم دائمًا. شكرًا لتعاملكم معنا!`;
+
+      let sharedNatively = false;
+      try {
+        const pdfBlob = pdf.output('blob');
+        sharedNatively = await sharePdfFile(pdfBlob, filename, message, 'invoice');
+      } catch (err) {
+        console.warn('Native sharing failed or was cancelled', err);
+      }
+
+      if (!sharedNatively) {
+        const targetPhone = isPurchase ? supplierPhone : (invoice.customerPhone || '');
+        openWhatsApp(message, targetPhone);
+      }
+    } catch (error) {
+      console.error('Error generating PDF:', error);
+    } finally {
+      if (restore) {
+        try {
+          restore();
+        } catch (restoreErr) {}
+      }
+    }
+  };
+
   const handleSaveFinal = async (action: 'save' | 'print' | 'whatsapp') => {
+    if (isSubmitting) return;
     if (!customer.name.trim()) {
       setError("الرجاء إدخال اسم العميل");
       return;
@@ -950,12 +1200,29 @@ export default function OtherServiceInvoice({
       }
 
       await batch.commit();
-      resetSalesForm();
-      setSuccessInfo({ invoiceNumber: String(finalAssignedInvoiceNumber) });
+      
+      const newInvoiceNumber = String(finalAssignedInvoiceNumber);
+      
+      if (action === 'print' || action === 'whatsapp') {
+        const updatedOutput = {
+          ...currentOutput,
+          invoice: { ...currentOutput.invoice, invoiceNumber: newInvoiceNumber }
+        };
+        setCurrentOutput(updatedOutput);
+        
+        // Wait for DOM to update
+        await new Promise(r => setTimeout(r, 200));
 
-      if (action === 'save') {
-        setShowPreview(false);
+        if (action === 'print') {
+          handlePrintDirect();
+        } else if (action === 'whatsapp') {
+          await handleExportPDFAndWhatsApp(updatedOutput);
+        }
       }
+
+      resetSalesForm();
+      setShowPreview(false);
+      setSuccessInfo({ invoiceNumber: newInvoiceNumber });
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'حدث خطأ أثناء الحفظ');
@@ -1157,7 +1424,7 @@ export default function OtherServiceInvoice({
 
       {/* TAB 3: PURCHASE PARTS & ACCESSORIES ("شراء قطع وملحقات") */}
       {activeTab === 'purchase' && !successInfo && (
-        <div className="space-y-6 pb-28">
+        <div className="space-y-6 pb-12">
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             {/* Main Column (Supplier, Batch details, Item Entry Form, Items List) */}
             <div className="lg:col-span-2 space-y-6">
@@ -1314,10 +1581,11 @@ export default function OtherServiceInvoice({
                       <div className="space-y-1.5">
                         <label className="text-xs font-bold text-gray-300 block">إجمالي تكلفة شراء الجهاز بالكامل ({currency}) <span className="text-red-400">*</span></label>
                         <input
+
                           type="number"
                           step="any"
                           value={totalBatchCost}
-                          onChange={(e) => setTotalBatchCost(e.target.value === '' ? '' : Number(e.target.value))}
+                          onChange={(e) => setTotalBatchCost(convertToArabicToEnglishNumbers(e.target.value))}
                           placeholder="مثال: 100"
                           className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl p-2.5 text-xs font-mono font-black text-amber-400 placeholder-gray-500 focus:outline-none focus:border-purple-500"
                         />
@@ -1362,10 +1630,23 @@ export default function OtherServiceInvoice({
                     </div>
                   </div>
 
+                  {/* بيان / تفاصيل الملحق */}
+                  <div className="flex flex-row items-center gap-2.5 md:col-span-2">
+                    <label className="text-xs text-gray-300 font-bold whitespace-nowrap shrink-0 w-24">بيان الملحق:</label>
+                    <input
+                      type="text"
+                      value={currentPurchaseItem.notes}
+                      onChange={(e) => setCurrentPurchaseItem(prev => ({ ...prev, notes: e.target.value }))} onFocus={handleSmartFocus}
+                      placeholder="حالة القطعة، ملاحظات خاصة بهذا الملحق..."
+                      className="flex-1 bg-[#121212] border border-white/10 rounded-xl p-2.5 text-xs font-bold text-white placeholder-gray-500 focus:outline-none focus:border-purple-500"
+                    />
+                  </div>
+
                   {/* الكمية */}
                   <div className="flex flex-row items-center gap-2.5">
                     <label className="text-xs text-gray-300 font-bold whitespace-nowrap shrink-0 w-24">الكمية:</label>
                     <input
+
                       type="number"
                       min="1"
                       value={currentPurchaseItem.quantity}
@@ -1374,74 +1655,107 @@ export default function OtherServiceInvoice({
                     />
                   </div>
 
-                  {/* تكلفة القطعة الواحدة */}
-                  {purchaseType === 'direct' && (
-                    <div className="flex flex-row items-center gap-2.5">
-                      <label className="text-xs text-gray-300 font-bold whitespace-nowrap shrink-0 w-24">التكلفة ({currency}):</label>
-                      <input
-                        type="number"
-                        step="any"
-                        value={currentPurchaseItem.unitCost}
-                        onChange={(e) => setCurrentPurchaseItem(prev => ({ ...prev, unitCost: Number(e.target.value) }))}
-                        className="flex-1 bg-[#121212] border border-white/10 rounded-xl p-2.5 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-purple-500"
-                      />
-                    </div>
-                  )}
+                  {/* سعر الشراء / التكلفة للقطعة الواحدة - ظاهر دائماً لجميع أنواع الشراء */}
+                  <div className="flex flex-row items-center gap-2.5">
+                    <label className="text-xs text-gray-300 font-bold whitespace-nowrap shrink-0 w-24">سعر الشراء ({currency}):</label>
+                    <input
+
+                      type="number"
+                      step="any"
+                      value={currentPurchaseItem.unitCost}
+                      onChange={(e) => setCurrentPurchaseItem(prev => ({ ...prev, unitCost: Number(convertToArabicToEnglishNumbers(e.target.value)) }))}
+                      className="flex-1 bg-[#121212] border border-white/10 rounded-xl p-2.5 text-xs font-mono font-bold text-amber-400 focus:outline-none focus:border-purple-500"
+                      placeholder="0.00"
+                    />
+                  </div>
 
                   {/* سعر البيع المقترح */}
-                  <div className="flex flex-row items-center gap-2.5">
+                  <div className="flex flex-row items-center gap-2.5 md:col-span-2">
                     <label className="text-xs text-gray-300 font-bold whitespace-nowrap shrink-0 w-24">سعر البيع ({currency}):</label>
                     <input
+
                       type="number"
                       step="any"
                       value={currentPurchaseItem.salePrice}
-                      onChange={(e) => setCurrentPurchaseItem(prev => ({ ...prev, salePrice: Number(e.target.value) }))}
+                      onChange={(e) => setCurrentPurchaseItem(prev => ({ ...prev, salePrice: Number(convertToArabicToEnglishNumbers(e.target.value)) }))}
                       className="flex-1 bg-[#121212] border border-white/10 rounded-xl p-2.5 text-xs font-mono font-bold text-emerald-400 focus:outline-none focus:border-purple-500"
+                      placeholder="0.00"
                     />
                   </div>
                 </div>
 
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="button"
-                    onClick={handleAddPurchaseItem}
-                    className="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-lg shadow-purple-900/20 active:scale-95"
-                  >
-                    <Plus size={16} />
-                    <span>{editingPurchaseIdx !== null ? 'تحديث الصنف' : 'إضافة إلى القائمة'}</span>
-                  </button>
+                <div className="flex justify-between items-center pt-2">
+                  {editingPurchaseIdx !== null && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingPurchaseIdx(null);
+                        setCurrentPurchaseItem(initialPurchaseItem);
+                      }}
+                      className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg text-xs font-bold transition-all"
+                    >
+                      إلغاء التعديل
+                    </button>
+                  )}
+                  <div className="mr-auto">
+                    <button
+                      type="button"
+                      onClick={handleAddPurchaseItem}
+                      className="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-black transition-all flex items-center gap-1.5 cursor-pointer shadow-lg shadow-purple-900/20 active:scale-95"
+                    >
+                      <Plus size={16} />
+                      <span>{editingPurchaseIdx !== null ? 'تحديث بيانات الصنف' : 'إضافة إلى القائمة'}</span>
+                    </button>
+                  </div>
                 </div>
 
                 {/* Added Purchase Items Table */}
                 {purchaseItems.length > 0 && (
-                  <div className="bg-[#121212] border border-white/5 rounded-2xl overflow-hidden mt-4">
+                  <div className="bg-[#121212] border border-white/5 rounded-2xl overflow-hidden overflow-x-auto mt-4">
                     <table className="w-full text-right text-xs">
                       <thead className="bg-[#181818] text-gray-400 border-b border-white/5 font-bold">
                         <tr>
                           <th className="p-3">#</th>
                           <th className="p-3">اسم القطعة</th>
+                          <th className="p-3">بيان / تفاصيل الملحق</th>
                           <th className="p-3">الكمية</th>
-                          {purchaseType === 'direct' && <th className="p-3">التكلفة الفردية</th>}
+                          <th className="p-3">سعر الشراء</th>
                           <th className="p-3">سعر البيع المقترح</th>
+                          <th className="p-3">إجمالي التكلفة</th>
                           <th className="p-3 text-center">إجراء</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5 text-gray-200">
                         {purchaseItems.map((pi, idx) => (
-                          <tr key={pi.id}>
+                          <tr key={pi.id} className={editingPurchaseIdx === idx ? 'bg-purple-500/10' : ''}>
                             <td className="p-3 font-mono text-gray-500">{idx + 1}</td>
                             <td className="p-3 font-bold text-white">{pi.name}</td>
+                            <td className="p-3 text-gray-300 max-w-[180px] truncate" title={pi.notes}>
+                              {pi.notes || '-'}
+                            </td>
                             <td className="p-3 font-mono font-bold">{pi.quantity}</td>
-                            {purchaseType === 'direct' && <td className="p-3 font-mono text-amber-400">{formatMoney(pi.unitCost, currency)}</td>}
+                            <td className="p-3 font-mono text-amber-400">{formatMoney(pi.unitCost, currency)}</td>
                             <td className="p-3 font-mono text-emerald-400">{formatMoney(pi.salePrice, currency)}</td>
+                            <td className="p-3 font-mono font-bold text-amber-300">{formatMoney(pi.quantity * pi.unitCost, currency)}</td>
                             <td className="p-3 text-center">
-                              <button
-                                type="button"
-                                onClick={() => handleRemovePurchaseItem(idx)}
-                                className="p-1 text-red-400 hover:text-red-300"
-                              >
-                                <Trash2 size={14} />
-                              </button>
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => handleEditPurchaseItem(idx)}
+                                  className="p-1.5 text-blue-400 hover:text-blue-300 hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
+                                  title="تعديل الصنف"
+                                >
+                                  <Edit2 size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => handleRemovePurchaseItem(idx)}
+                                  className="p-1.5 text-red-400 hover:text-red-300 hover:bg-white/5 rounded-lg transition-colors cursor-pointer"
+                                  title="حذف الصنف"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </td>
                           </tr>
                         ))}
@@ -1467,9 +1781,21 @@ export default function OtherServiceInvoice({
                     <span className="text-sm font-mono font-black text-white">{purchaseItems.length} صنف</span>
                   </div>
                   <div className="bg-black/40 border border-white/5 rounded-2xl p-3 text-center">
-                    <span className="text-[10px] text-gray-400 block mb-0.5">إجمالي التكلفة</span>
+                    <span className="text-[10px] text-gray-400 block mb-0.5">إجمالي المبلغ</span>
                     <span className="text-sm font-mono font-black text-amber-400" dir="ltr">
                       {formatMoney(totalPurchaseCost, currency)}
+                    </span>
+                  </div>
+                  <div className="bg-black/40 border border-white/5 rounded-2xl p-3 text-center">
+                    <span className="text-[10px] text-gray-400 block mb-0.5">الواصل (المدفوع)</span>
+                    <span className="text-sm font-mono font-black text-emerald-400" dir="ltr">
+                      {formatMoney(Number(amountPaidPurchase || 0), currency)}
+                    </span>
+                  </div>
+                  <div className="bg-black/40 border border-white/5 rounded-2xl p-3 text-center">
+                    <span className="text-[10px] text-gray-400 block mb-0.5">المتبقي</span>
+                    <span className={`text-sm font-mono font-black ${Math.max(0, totalPurchaseCost - Number(amountPaidPurchase || 0)) > 0 ? 'text-rose-400' : 'text-gray-400'}`} dir="ltr">
+                      {formatMoney(Math.max(0, totalPurchaseCost - Number(amountPaidPurchase || 0)), currency)}
                     </span>
                   </div>
                 </div>
@@ -1503,6 +1829,7 @@ export default function OtherServiceInvoice({
                     </button>
                   </div>
                   <input
+
                     type="number"
                     step="any"
                     value={amountPaidPurchase}
@@ -1536,6 +1863,7 @@ export default function OtherServiceInvoice({
                       <div className="space-y-1">
                         <label className="text-[9px] font-bold text-purple-300">سعر الصرف (فاتورة: {currency})</label>
                         <input
+
                           type="number"
                           step="any"
                           value={paymentInvoiceRate}
@@ -1546,6 +1874,7 @@ export default function OtherServiceInvoice({
                       <div className="space-y-1">
                         <label className="text-[9px] font-bold text-purple-300">سعر الصرف (صندوق: {funds.find(f => f.id === selectedFundId)?.currency || 'USD'})</label>
                         <input
+
                           type="number"
                           step="any"
                           value={paymentFundRate}
@@ -1563,47 +1892,43 @@ export default function OtherServiceInvoice({
                   </div>
                 )}
 
-                {/* Primary Posting Action Button */}
-                <div className="pt-2 space-y-2">
+                {/* Action Buttons: Save, Preview, Cancel */}
+                <div className="pt-2 space-y-2.5">
+                  
+
                   <button
                     type="button"
-                    onClick={handleSavePurchase}
+                    onClick={handlePreviewInit}
                     disabled={isSubmitting}
-                    className="w-full py-3.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xl shadow-purple-900/40 active:scale-95 disabled:opacity-50"
+                    className="w-full py-3 bg-white/5 hover:bg-white/10 text-purple-300 hover:text-white rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border border-purple-500/20 hover:border-purple-500/40 shadow-sm disabled:opacity-50"
                   >
-                    <Save size={18} />
-                    <span>{isSubmitting ? 'جاري الترحيل والحفظ...' : 'ترحيل عملية الشراء وتغذية المخزون'}</span>
+                    <Eye size={17} />
+                    <span>معاينة الفاتورة للتعديل والترحيل</span>
                   </button>
-                  <p className="text-[10px] text-center text-gray-500 font-bold">
+
+                  <button
+                    type="button"
+                    onClick={resetPurchaseForm}
+                    disabled={isSubmitting}
+                    className="w-full py-2.5 bg-red-500/5 hover:bg-red-500/10 text-red-400 hover:text-red-300 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border border-red-500/10 hover:border-red-500/20 disabled:opacity-50"
+                  >
+                    <RotateCcw size={15} />
+                    <span>إلغاء العملية وتفريغ البيانات</span>
+                  </button>
+
+                  <p className="text-[10px] text-center text-gray-500 font-bold pt-1">
                     سيتم ترحيل الفاتورة وتحديث المخزون وقيد الصرف في الخزينة
                   </p>
                 </div>
               </div>
             </div>
           </div>
-
-          {/* Sticky Quick-Action Bar for Mobile & Compact Screens */}
-          <div className="lg:hidden fixed bottom-14 md:bottom-4 left-4 right-4 z-40 bg-[#141414]/95 backdrop-blur-xl border border-purple-500/30 p-3.5 rounded-2xl shadow-2xl flex items-center justify-between gap-3">
-            <div className="flex flex-col">
-              <span className="text-[10px] text-gray-400 font-bold">إجمالي الشراء ({purchaseItems.length} صنف):</span>
-              <span className="text-sm font-mono font-black text-amber-400">{formatMoney(totalPurchaseCost, currency)}</span>
-            </div>
-            <button
-              type="button"
-              onClick={handleSavePurchase}
-              disabled={isSubmitting}
-              className="px-5 py-2.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-black transition-all flex items-center gap-2 shadow-lg shadow-purple-900/40 active:scale-95 disabled:opacity-50 cursor-pointer"
-            >
-              <Save size={16} />
-              <span>{isSubmitting ? 'جاري الترحيل...' : 'ترحيل الشراء'}</span>
-            </button>
-          </div>
         </div>
       )}
 
       {/* TAB 4: SALES OF SERVICES & PARTS ("خدمات برمجية / صيانة خارجية / بيع قطع غيار") */}
       {['software', 'maintenance', 'parts'].includes(activeTab) && !successInfo && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pb-32 md:pb-16">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 pb-12">
           {/* Main Input Form */}
           <div className="lg:col-span-2 space-y-6">
             {/* Customer Details */}
@@ -1812,6 +2137,7 @@ export default function OtherServiceInvoice({
                 <div className="space-y-1">
                   <label className="text-[10px] text-gray-400 block font-bold">الكمية</label>
                   <input
+
                     type="number"
                     min="1"
                     value={currentItem.quantity}
@@ -1823,10 +2149,11 @@ export default function OtherServiceInvoice({
                 <div className="space-y-1">
                   <label className="text-[10px] text-gray-400 block font-bold">السعر الفردي ({currency})</label>
                   <input
+
                     type="number"
                     step="any"
                     value={currentItem.unitCost}
-                    onChange={(e) => setCurrentItem(prev => ({ ...prev, unitCost: Number(e.target.value) }))}
+                    onChange={(e) => setCurrentItem(prev => ({ ...prev, unitCost: Number(convertToArabicToEnglishNumbers(e.target.value)) }))}
                     className="w-full bg-[#121212] border border-white/10 rounded-xl p-2.5 text-xs font-mono font-bold text-emerald-400 focus:outline-none"
                   />
                 </div>
@@ -1845,7 +2172,7 @@ export default function OtherServiceInvoice({
 
               {/* Items List */}
               {items.length > 0 && (
-                <div className="bg-[#121212] border border-white/5 rounded-2xl overflow-hidden mt-4">
+                <div className="bg-[#121212] border border-white/5 rounded-2xl overflow-hidden overflow-x-auto mt-4">
                   <table className="w-full text-right text-xs">
                     <thead className="bg-[#181818] text-gray-400 border-b border-white/5 font-bold">
                       <tr>
@@ -1906,6 +2233,7 @@ export default function OtherServiceInvoice({
                 <div className="space-y-1 pt-2 border-t border-white/5">
                   <label className="text-[10px] text-gray-400 block font-bold">المبلغ المدفوع حالياً</label>
                   <input
+
                     type="number"
                     step="any"
                     value={amountPaid}
@@ -1949,6 +2277,7 @@ export default function OtherServiceInvoice({
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold text-emerald-300">سعر الصرف (فاتورة: {currency})</label>
                     <input
+
                       type="number"
                       step="any"
                       value={paymentInvoiceRate}
@@ -1959,6 +2288,7 @@ export default function OtherServiceInvoice({
                   <div className="space-y-1.5">
                     <label className="text-[10px] font-bold text-emerald-300">سعر الصرف (صندوق: {funds.find(f => f.id === selectedFundId)?.currency || 'USD'})</label>
                     <input
+
                       type="number"
                       step="any"
                       value={paymentFundRate}
@@ -1976,24 +2306,27 @@ export default function OtherServiceInvoice({
               )}
 
               {/* Actions */}
-              <div className="space-y-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => handleSaveFinal('save')}
-                  disabled={isSubmitting}
-                  className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-xl shadow-emerald-900/30 active:scale-95 disabled:opacity-50"
-                >
-                  <Save size={18} />
-                  <span>حفظ وإصدار الفاتورة</span>
-                </button>
+              <div className="space-y-2.5 pt-3">
+                
 
                 <button
                   type="button"
                   onClick={handlePreviewInit}
-                  className="w-full py-2.5 bg-white/5 hover:bg-white/10 text-gray-300 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border border-white/5"
+                  disabled={isSubmitting}
+                  className="w-full py-3 bg-white/5 hover:bg-white/10 text-emerald-300 hover:text-white rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border border-emerald-500/20 hover:border-emerald-500/40 shadow-sm disabled:opacity-50"
                 >
-                  <Eye size={16} />
-                  <span>معاينة الطباعة</span>
+                  <Eye size={17} />
+                  <span>معاينة الفاتورة للتعديل والترحيل</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={resetSalesForm}
+                  disabled={isSubmitting}
+                  className="w-full py-2.5 bg-red-500/5 hover:bg-red-500/10 text-red-400 hover:text-red-300 rounded-2xl text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer border border-red-500/10 hover:border-red-500/20 disabled:opacity-50"
+                >
+                  <RotateCcw size={15} />
+                  <span>إلغاء العملية وتفريغ البيانات</span>
                 </button>
               </div>
             </div>
@@ -2035,9 +2368,9 @@ export default function OtherServiceInvoice({
           shopConfig={shopConfig}
           user={user}
           onClose={() => setShowPreview(false)}
-          onPrint={() => handleSaveFinal('print')}
-          onWhatsApp={() => handleSaveFinal('whatsapp')}
-          onSave={() => handleSaveFinal('save')}
+          onPrint={() => (activeTab === 'purchase' ? handleSavePurchase('print') : handleSaveFinal('print'))}
+          onWhatsApp={() => (activeTab === 'purchase' ? handleSavePurchase('whatsapp') : handleSaveFinal('whatsapp'))}
+          onSave={() => (activeTab === 'purchase' ? handleSavePurchase('save') : handleSaveFinal('save'))}
           isSaving={isSubmitting}
         />
       )}

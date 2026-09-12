@@ -805,9 +805,8 @@ export async function recalculateDisassemblyBatchesRecovery(): Promise<{
         if (it.source === 'purchase' || it.isPurchase === 1 || it.isPurchase === true) return false;
         if (it.invoiceId && purchaseInvIds.has(String(it.invoiceId))) return false;
 
-        // Match batch by ID or by batchName
-        if (it.batchId && String(it.batchId) === bIdStr) return true;
-        if (bName && it.batchName && String(it.batchName).trim().toLowerCase() === bName) return true;
+        // Match batch strictly by unique ID or unique batch number
+        if (it.batchId && (String(it.batchId) === bIdStr || (batch.batchNumber && String(it.batchId) === String(batch.batchNumber)))) return true;
         return false;
       });
 

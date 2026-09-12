@@ -14,7 +14,8 @@ import {
   Smartphone,
   Boxes,
   ArrowRight,
-  ChevronLeft
+  ChevronLeft,
+  BookOpen
 } from 'lucide-react';
 import { collection, query, onSnapshot } from '../firebase';
 import { db } from '../firebase';
@@ -22,11 +23,12 @@ import { InvoiceItem, User, isInShopMaintenanceDevice } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
 import MaintenanceActionForm from './MaintenanceActionForm';
 import ShopPartsStockView from './ShopPartsStockView';
+import PartsCatalogTable from './PartsCatalogTable';
 import { useTranslation } from 'react-i18next';
 import { usePermissions } from '../hooks/usePermissions';
 
 type InventorySortType = 'invoice' | 'deviceType' | 'deviceName' | 'status' | 'quantity' | 'technician';
-type InventoryMode = 'hub' | 'parts_stock' | 'devices_stock';
+type InventoryMode = 'hub' | 'parts_stock' | 'catalog' | 'devices_stock';
 
 const STATUS_CONFIG = {
   // New unified status codes
@@ -64,6 +66,7 @@ export default function Inventory({ user, onBack }: { user: User, onBack?: () =>
   const { hasPermission } = usePermissions(user);
   const [items, setItems] = useState<InvoiceItem[]>([]);
   const [partsCount, setPartsCount] = useState<number>(0);
+  const [catalogCount, setCatalogCount] = useState<number>(0);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
 
@@ -134,9 +137,17 @@ export default function Inventory({ user, onBack }: { user: User, onBack?: () =>
       console.error("Parts count error:", err);
     });
 
+    // Fetch parts catalog count for hub badge
+    const unsubCatalog = onSnapshot(collection(db, 'parts_catalog'), (snap) => {
+      setCatalogCount(snap.docs.length);
+    }, (err) => {
+      console.error("Catalog count error:", err);
+    });
+
     return () => {
       unsubscribeItems();
       unsubParts();
+      unsubCatalog();
     };
   }, []);
 
@@ -247,11 +258,11 @@ export default function Inventory({ user, onBack }: { user: User, onBack?: () =>
           </div>
           <h1 className="text-lg sm:text-xl font-black text-white">أقسام وإدارة المخزون</h1>
           <p className="text-xs text-gray-400 font-medium max-w-md mx-auto">
-            اختر القسم المطلوب لإدارة مخزون القطع والملحقات أو جرد أجهزة صيانة العملاء
+            اختر القسم المطلوب لإدارة مخزون ودليل القطع والملحقات أو جرد أجهزة صيانة العملاء
           </p>
         </div>
 
-        {/* The Two Main Buttons (Styled identically to categories-engineers in Settings) */}
+        {/* The Main Buttons */}
         <div className="grid grid-cols-1 gap-4">
           {/* 1. Parts & Accessories Stock Option */}
           <button
@@ -280,7 +291,34 @@ export default function Inventory({ user, onBack }: { user: User, onBack?: () =>
             <ChevronLeft size={20} className="text-gray-500 group-hover:text-white group-hover:translate-x-[-4px] transition-all shrink-0" />
           </button>
 
-          {/* 2. Client Devices In Shop Option */}
+          {/* 2. Parts & Accessories Catalog Option */}
+          <button
+            type="button"
+            onClick={() => setInventoryMode('catalog')}
+            className="w-full flex items-center justify-between p-6 bg-white/5 hover:bg-white/[0.08] border border-white/5 hover:border-blue-500/30 rounded-2xl transition-all group text-right shadow-lg cursor-pointer"
+          >
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 rounded-xl bg-blue-600/10 text-blue-500 flex items-center justify-center group-hover:bg-blue-600 group-hover:text-white transition-all shrink-0">
+                <BookOpen size={22} />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <h3 className="font-bold text-white text-base group-hover:text-blue-400 transition-colors">
+                    دليل القطع والملحقات
+                  </h3>
+                  <span className="text-[10px] font-bold px-2 py-0.5 bg-blue-500/10 text-blue-400 border border-blue-500/20 rounded-md">
+                    {catalogCount} صنف
+                  </span>
+                </div>
+                <p className="text-xs text-gray-400 mt-1">
+                  إدارة وتسجيل أصناف وأنواع القطع والأسعار الافتراضية للبيع والتكلفة
+                </p>
+              </div>
+            </div>
+            <ChevronLeft size={20} className="text-gray-500 group-hover:text-white group-hover:translate-x-[-4px] transition-all shrink-0" />
+          </button>
+
+          {/* 3. Client Devices In Shop Option */}
           <button
             type="button"
             onClick={() => setInventoryMode('devices_stock')}
@@ -307,6 +345,28 @@ export default function Inventory({ user, onBack }: { user: User, onBack?: () =>
             <ChevronLeft size={20} className="text-gray-500 group-hover:text-white group-hover:translate-x-[-4px] transition-all shrink-0" />
           </button>
         </div>
+      </div>
+    );
+  }
+
+  // 2. PARTS & ACCESSORIES CATALOG VIEW
+  if (inventoryMode === 'catalog') {
+    return (
+      <div className="space-y-4 pb-24 md:pb-6 text-right pt-2" dir="rtl">
+        {/* Navigation Top Bar */}
+        <div className="flex items-center justify-between gap-3 bg-[#1a1a1a] p-3 rounded-2xl border border-white/5 shadow-md">
+          <button
+            type="button"
+            onClick={() => setInventoryMode('hub')}
+            className="flex items-center gap-2 px-3 py-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl text-xs font-bold font-cairo transition-all border border-white/10 cursor-pointer"
+          >
+            <ArrowRight size={16} />
+            <span>العودة لأقسام المخزون</span>
+          </button>
+        </div>
+
+        {/* Render the Parts Catalog Module */}
+        <PartsCatalogTable />
       </div>
     );
   }

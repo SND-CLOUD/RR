@@ -23,6 +23,12 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
   const [catalogItems, setCatalogItems] = useState<PartCatalogItem[]>([]);
   const [shopParts, setShopParts] = useState<ShopPartItem[]>([]);
   const [isOpen, setIsOpen] = useState(false);
+  const [isReadOnly, setIsReadOnly] = useState(true);
+  
+  // Reset readOnly when closed
+  useEffect(() => {
+    if (!isOpen) setIsReadOnly(true);
+  }, [isOpen]);
   const wrapperRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -59,25 +65,26 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
 
   if (showStockStatus) {
     // In sales mode: shop_parts_inventory is primary.
-    // Every distinct stock entry (e.g. from a specific disassembly batch or direct purchase) is a separate selectable choice.
-    const stockNames = new Set<string>();
-
+    // ONLY load parts and accessories available in the shop with quantity > 0 as requested.
     shopParts.forEach(s => {
       if (!s || !s.name) return;
-      stockNames.add(s.name.trim().toLowerCase());
+      const qty = Number(s.quantity || 0);
+      if (qty <= 0) return; // Strict condition: must be in stock (> 0)
+
       allList.push({
         id: s.id || '',
         name: s.name,
         category: s.category || 'قطع غيار وملحقات',
         defaultCost: s.unitCost || 0,
         defaultSalePrice: s.salePrice || 0,
-        inStockQty: Number(s.quantity || 0),
+        inStockQty: qty,
         isBatch: Boolean(s.isDisassemblyBatch),
         batchId: s.batchId || '',
         batchName: s.batchName || '',
         batchTotalCost: s.batchTotalCost || 0,
         supplierName: s.supplierName || '',
         currency: s.currency || 'USD',
+        notes: (s as any).notes || '',
         isCatalogOnly: false,
         raw: {
           ...s,
@@ -86,41 +93,12 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
           batchName: s.batchName || '',
           batchTotalCost: s.batchTotalCost || 0,
           salePrice: s.salePrice || 0,
-          unitCost: s.unitCost || 0
+          unitCost: s.unitCost || 0,
+          notes: (s as any).notes || ''
         }
       });
     });
-
-    // Add catalog items that don't exist in stock as catalog-only references
-    catalogItems.forEach(c => {
-      if (!c || !c.name) return;
-      const key = c.name.trim().toLowerCase();
-      if (!stockNames.has(key)) {
-        allList.push({
-          id: '',
-          name: c.name,
-          category: c.category || 'عام',
-          defaultCost: c.defaultCost || 0,
-          defaultSalePrice: c.defaultSalePrice || 0,
-          inStockQty: 0,
-          isBatch: false,
-          batchId: '',
-          batchName: '',
-          batchTotalCost: 0,
-          supplierName: '',
-          isCatalogOnly: true,
-          raw: {
-            ...c,
-            id: '',
-            partInventoryId: '',
-            batchId: '',
-            batchName: '',
-            salePrice: c.defaultSalePrice || 0,
-            unitCost: c.defaultCost || 0
-          }
-        });
-      }
-    });
+    // In sales mode, we do NOT append catalog items that have 0 stock
   } else {
     // In purchase mode: suggest from catalog first, supplement with existing shop parts
     const combinedItemsMap = new Map<string, any>();
@@ -172,6 +150,18 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
   return (
     <div ref={wrapperRef} className={`relative w-full ${className}`}>
       <div className="relative flex items-center">
+        {/* Transparent overlay to intercept first click and prevent keyboard */}
+        {!isOpen && (
+          <div 
+            className="absolute inset-0 z-10 cursor-pointer" 
+            onClick={(e) => {
+              e.preventDefault();
+              e.stopPropagation();
+              setIsOpen(true);
+              setIsReadOnly(true);
+            }} 
+          />
+        )}
         <input
           type="text"
           value={value}
@@ -179,7 +169,24 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
             onChange(e.target.value);
             setIsOpen(true);
           }}
-          onFocus={() => setIsOpen(true)}
+          onFocus={(e) => {
+      // If menu is closed, this is the first tap.
+      if (!isOpen) {
+        setIsOpen(true);
+        // Force blur immediately to hide keyboard on first tap
+        e.currentTarget.blur();
+        setIsReadOnly(true);
+      }
+    }}
+    onClick={(e) => {
+      // If menu is already open and they tap again, let them type
+      if (isOpen && isReadOnly) {
+        setIsReadOnly(false);
+        e.currentTarget.focus();
+      }
+    }}
+    readOnly={isReadOnly}
+    inputMode={isReadOnly ? "none" : "text"}
           placeholder={placeholder}
           className="w-full bg-[#121212] border border-white/10 rounded-xl px-3 py-2.5 pl-9 text-xs font-bold text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 font-cairo transition-all"
         />

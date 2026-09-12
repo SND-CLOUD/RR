@@ -8,7 +8,7 @@ import { sharePdfFile, openWhatsApp } from '../lib/shareHelper';
 
 import ReportActions, { WhatsAppIcon } from './ReportActions';
 
-type PrintTemplateType = 'entry' | 'exit' | 'inspection' | 'quotation' | 'assignment' | 'maintenance' | 'sale_parts' | 'sale_software' | 'sale_maintenance';
+type PrintTemplateType = 'entry' | 'exit' | 'inspection' | 'quotation' | 'assignment' | 'maintenance' | 'sale_parts' | 'sale_software' | 'sale_maintenance' | 'purchase' | 'purchase_parts' | 'purchase_batch';
 
 function parseEngineerReport(reportStr: string) {
   const s = reportStr || '';
@@ -123,8 +123,8 @@ export default function PrintPreviewOverlay({
 
     if (type === 'invoice' && invoice) {
       custId = invoice.customerId || '';
-      name = invoice.customerName || '';
-      phone = invoice.customerPhone || '';
+      name = invoice.supplierName || invoice.customerName || '';
+      phone = invoice.supplierPhone || invoice.customerPhone || '';
     } else if (type === 'statement' && statement) {
       custId = statement.customerId || statement.id || '';
       name = statement.customerName || '';
@@ -302,7 +302,9 @@ export default function PrintPreviewOverlay({
       {/* Customer Info Box */}
       <div className="bg-gray-100 p-1.5 rounded-lg mb-1.5 border border-gray-300 flex flex-row items-center justify-start gap-4 px-4 shrink-0 text-xs whitespace-nowrap">
         <div className="font-black text-gray-900 flex items-center">
-          <span className="text-[10px] text-gray-600 ml-2 whitespace-nowrap">إسم العميل:</span>
+          <span className="text-[10px] text-gray-600 ml-2 whitespace-nowrap">
+            {['purchase', 'purchase_parts', 'purchase_batch'].includes(templateType) || invoice?.isPurchase === 1 || invoice?.type === 'purchase' ? 'المورد / البائع:' : 'إسم العميل:'}
+          </span>
           <span className="text-gray-900 font-black">{getOverlayCustomerDetails().name}</span>
         </div>
         {getOverlayCustomerDetails().company && (
@@ -375,6 +377,26 @@ export default function PrintPreviewOverlay({
                 <p className="pt-2">اسم المهندس المختص: ........................</p>
                 <p className="pt-1 font-black">التوقيع / ........................................</p>
               </div>
+          </>
+        ) : ['sale_parts', 'sale_software', 'sale_maintenance', 'purchase_parts', 'purchase_batch', 'purchase'].includes(templateType) ? (
+          <>
+            <div className="text-right space-y-0.5">
+              {['purchase', 'purchase_parts', 'purchase_batch'].includes(templateType) || invoice?.isPurchase === 1 || invoice?.type === 'purchase' ? (
+                <>
+                  <p>تم توريد واستلام الأصناف الموضحة أعلاه بحالة جيدة</p>
+                  <p className="pt-2 font-black">توقيع المورد / البائع: ........................................</p>
+                </>
+              ) : (
+                <>
+                  <p>استلمت الأصناف الموضحة أعلاه بحالة جيدة وسليمة</p>
+                  <p className="pt-2 font-black">توقيع العميل / المشتري: ........................................</p>
+                </>
+              )}
+            </div>
+            <div className="text-left space-y-0.5 flex flex-col items-end">
+              <p>إدارة المحل / المستلم المسؤول</p>
+              <p className="pt-2 font-black">التوقيع والختم: ........................................</p>
+            </div>
           </>
         ) : (
           <>
@@ -876,8 +898,8 @@ export default function PrintPreviewOverlay({
     let customerName = '';
     
     if (type === 'invoice' && invoice) {
-      phone = invoice.customerPhone || '';
-      customerName = invoice.customerName || '';
+      phone = invoice.customerPhone || invoice.supplierPhone || invoice.phone1 || invoice.phone || '';
+      customerName = invoice.customerName || invoice.supplierName || '';
     } else if (type === 'statement' && statement) {
       phone = statement.customerPhone || '';
       customerName = statement.customerName || '';
@@ -900,11 +922,30 @@ export default function PrintPreviewOverlay({
     
     const fileName = customerName ? `${baseName} - ${customerName}.pdf` : `${baseName}.pdf`;
           
-    const msg = type === 'invoice' 
-      ? `مرفق ${getTemplateName(templateType)}` 
-      : (type === 'statement' 
-          ? `مرفق كشف حساب مالي للعميل: ${statement?.customerName}` 
-          : (type === 'table' ? `مرفق تقرير: ${tableData?.title}` : 'مرفق سند مالي'));
+    const isPurchaseDoc = ['purchase', 'purchase_parts', 'purchase_batch'].includes(templateType) || invoice?.isPurchase === 1 || invoice?.type === 'purchase' || invoice?.invoiceType === 'purchase' || String(invoice?.invoiceNumber).startsWith('PUR-') || String(invoice?.invoiceNumber).startsWith('DIS-');
+    const docName = getTemplateName(templateType);
+    const invNum = invoice?.invoiceNumber && invoice.invoiceNumber !== 'معاينة' ? ` #${invoice.invoiceNumber}` : '';
+    
+    let msg = `مرفق ${docName}${invNum}`;
+    if (customerName) {
+      msg = `*${docName}${invNum}*\nعزيزي ${isPurchaseDoc ? 'المورد' : 'العميل'} *${customerName}* المحترم،\nمرفق لكم الفاتورة الإلكترونية.`;
+      if (invoice?.totalCost !== undefined) {
+        msg += `\n• الإجمالي: ${invoice.totalCost} ${invoice.currency || 'USD'}`;
+      }
+      if (invoice?.amountPaid !== undefined && Number(invoice.amountPaid) > 0) {
+        msg += `\n• المدفوع: ${invoice.amountPaid} ${invoice.currency || 'USD'}`;
+      }
+      const remaining = Number(invoice?.totalCost || 0) - Number(invoice?.amountPaid || 0);
+      if (remaining > 0) {
+        msg += `\n• المتبقي: ${remaining} ${invoice?.currency || 'USD'}`;
+      }
+    } else if (type === 'statement') {
+      msg = `مرفق كشف حساب مالي للعميل: ${statement?.customerName}`;
+    } else if (type === 'table') {
+      msg = `مرفق تقرير: ${tableData?.title}`;
+    } else {
+      msg = 'مرفق سند مالي';
+    }
           
     const text = msg + '\n(يرجى إرفاق ملف PDF الذي سيتم تحميله الآن)';
     
@@ -1004,6 +1045,10 @@ export default function PrintPreviewOverlay({
   };
 
   const getTemplateName = (tmpl: PrintTemplateType) => {
+    const isPurchase = ['purchase', 'purchase_parts', 'purchase_batch'].includes(tmpl) || invoice?.isPurchase === 1 || invoice?.type === 'purchase' || invoice?.invoiceType === 'purchase' || String(invoice?.invoiceNumber).startsWith('PUR-') || String(invoice?.invoiceNumber).startsWith('DIS-');
+    if (isPurchase) {
+      return 'فاتورة شراء';
+    }
     switch(tmpl) {
       case 'entry': return 'فاتورة دخول أجهزة';
       case 'exit': return 'فاتورة خروج وملخص مالي';
@@ -1013,7 +1058,7 @@ export default function PrintPreviewOverlay({
       case 'maintenance': return 'تقرير صيانة داخلي';
       case 'sale_software': return 'فاتورة خدمات برمجية';
       case 'sale_maintenance': return 'فاتورة صيانة خارجية';
-      case 'sale_parts': return 'فاتورة بيع قطع غيار';
+      case 'sale_parts': return 'فاتورة بيع قطع وملحقات';
       default: return 'فاتورة مبيعات';
     }
   };
@@ -1080,7 +1125,7 @@ export default function PrintPreviewOverlay({
       <div className="flex justify-between items-center bg-black/50 p-4 border-b border-white/10 shrink-0 flex-wrap gap-4">
         <div className="flex items-center gap-2">
           <h2 className="text-white font-bold hidden sm:block border-l border-white/20 pl-4">
-            {type === 'invoice' ? `مستند الفاتورة - #${invoice.invoiceNumber}` : (type === 'statement' ? `كشف حساب - ${statement?.customerName}` : (type === 'table' ? tableData?.title : `استعراض السند - #${voucher?.reference}`))}
+            {type === 'invoice' ? `${getTemplateName(templateType)} - #${invoice?.invoiceNumber || ''}` : (type === 'statement' ? `كشف حساب - ${statement?.customerName}` : (type === 'table' ? tableData?.title : `استعراض السند - #${voucher?.reference}`))}
           </h2>
 
           <div className="flex items-center gap-1 bg-black/40 rounded-lg p-1 border border-white/10 mr-2">
@@ -1121,7 +1166,7 @@ export default function PrintPreviewOverlay({
               }}
               disabled={isGeneratingPDF || isSaving}
               className="w-10 h-10 flex items-center justify-center bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-50 active:scale-95 cursor-pointer shrink-0"
-              title={onWhatsApp ? "ترحيل ومشاركة عبر واتساب" : "مشاركة عبر واتساب"}
+              title="مشاركة عبر واتساب"
             >
               {isGeneratingPDF ? (
                 <Loader2 size={18} className="animate-spin" />
@@ -1140,7 +1185,7 @@ export default function PrintPreviewOverlay({
               }}
               disabled={isSaving}
               className="w-10 h-10 flex items-center justify-center bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0"
-              title={onPrint ? "ترحيل وطباعة" : "طباعة"}
+              title="طباعة"
             >
               <Printer size={18} />
             </button>
@@ -2107,75 +2152,140 @@ export default function PrintPreviewOverlay({
                 </>
               );
             })()}
-                </div>
-            {(templateType === 'sale_software' || templateType === 'sale_maintenance' || templateType === 'sale_parts') && (
-              <>
-                <div className="w-full text-center border-2 border-black mb-2 text-black font-bold">
-                  {/* Header Row */}
-                  <div className="bg-gray-100 border-b-2 border-black flex items-stretch text-xs font-bold">
-                    <div className="py-1.5 px-3 border-l border-black w-12 flex items-center justify-center shrink-0">م</div>
-                    <div className="py-1.5 px-3 border-l border-black flex-1 flex items-center justify-start">البيان / الوصف</div>
-                    <div className="py-1.5 px-3 border-l border-black w-24 flex items-center justify-center shrink-0">سعر الوحدة</div>
-                    <div className="py-1.5 px-3 border-l border-black w-16 flex items-center justify-center shrink-0">الكمية</div>
-                    <div className="py-1.5 px-3 w-28 flex items-center justify-center shrink-0">الإجمالي</div>
-                  </div>
-                  
-                  {/* Items */}
-                  <div className="flex flex-col">
-                    {items.map((it: any, idx: number) => {
-                      const qty = Number(it.quantity || 1);
-                      const unitCost = Number(it.unitCost || 0);
-                      const cost = Number(it.cost || (qty * unitCost));
-                      
-                      return (
-                        <div key={idx} className={`flex items-stretch text-xs ${idx !== items.length - 1 ? 'border-b border-black' : ''}`}>
-                          <div className="py-1.5 px-3 border-l border-black w-12 flex items-center justify-center font-mono shrink-0">{idx + 1}</div>
-                          <div className="py-1.5 px-3 border-l border-black flex-1 flex flex-col justify-center text-right overflow-hidden break-words">
-                            <span className="font-bold">{it.deviceType || it.name || ''}</span>
-                            {it.faultType && <span className="text-[10px] text-gray-700 mt-0.5">{it.faultType}</span>}
-                          </div>
-                          <div className="py-1.5 px-3 border-l border-black w-24 flex items-center justify-center font-mono shrink-0">
-                            {unitCost > 0 ? unitCost.toLocaleString('en-US') : '-'}
-                          </div>
-                          <div className="py-1.5 px-3 border-l border-black w-16 flex items-center justify-center font-mono font-black shrink-0">
-                            {qty}
-                          </div>
-                          <div className="py-1.5 px-3 w-28 flex items-center justify-center font-mono font-black shrink-0">
-                            {cost > 0 ? cost.toLocaleString('en-US') : '-'}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
 
-                <div className="flex justify-between items-start gap-4 mb-2">
-                  <div className="flex-1 border-2 border-black rounded-lg p-2 min-h-[60px]">
-                    <div className="text-xs font-bold text-gray-600 mb-1">ملاحظات الفاتورة:</div>
-                    <div className="text-sm font-bold">{invoice?.notes || 'لا يوجد ملاحظات إضافية'}</div>
-                  </div>
-                  
-                  <div className="w-[200px] border-2 border-black rounded-lg overflow-hidden shrink-0">
-                    <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
-                      <span className="text-xs font-bold">الإجمالي:</span>
-                      <span className="font-mono font-black">{Number(invoice?.totalCost || 0).toLocaleString('en-US')}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-1.5 border-b border-black">
-                      <span className="text-xs font-bold">المدفوع:</span>
-                      <span className="font-mono font-black">{Number(invoice?.amountPaid || 0).toLocaleString('en-US')}</span>
-                    </div>
-                    <div className="flex justify-between items-center p-1.5 bg-gray-100">
-                      <span className="text-xs font-black">المتبقي:</span>
-                      <span className="font-mono font-black">{Math.max(0, Number(invoice?.totalCost || 0) - Number(invoice?.amountPaid || 0)).toLocaleString('en-US')}</span>
-                    </div>
-                  </div>
-                </div>
-              </>
-            )}
+            {(templateType === 'sale_software' || templateType === 'sale_maintenance' || templateType === 'sale_parts' || templateType === 'purchase_parts' || templateType === 'purchase_batch' || templateType === 'purchase' || invoice?.isPurchase === 1 || invoice?.type === 'purchase' || invoice?.invoiceType === 'purchase') && (() => {
+              const isBatchPurchase = invoice?.purchaseType === 'batch' || templateType === 'purchase_batch' || Boolean(invoice?.isDisassemblyBatch);
+              const isPurchaseDoc = ['purchase', 'purchase_parts', 'purchase_batch'].includes(templateType) || invoice?.isPurchase === 1 || invoice?.type === 'purchase' || invoice?.invoiceType === 'purchase' || String(invoice?.invoiceNumber).startsWith('PUR-') || String(invoice?.invoiceNumber).startsWith('DIS-');
 
-                {renderFooter(false)}
-              </div>
-            )) }
+              let displayItems = items;
+              if (isBatchPurchase) {
+                const singleDeviceName = (invoice?.batchName && String(invoice.batchName).trim())
+                  || (items[0]?.name && String(items[0].name).trim())
+                  || (items[0]?.deviceName && String(items[0].deviceName).trim())
+                  || (items[0]?.deviceType && String(items[0].deviceType).trim())
+                  || 'جهاز تفكيك';
+                const cleanDeviceName = singleDeviceName.replace(/^جهاز تفكيك:\s*/, '').trim();
+                const totalCost = Number(invoice?.totalCost || invoice?.batchTotalCost || (items.reduce((s: number, it: any) => s + (Number(it.cost) || (Number(it.quantity || 1) * Number(it.unitCost || 0))), 0)));
+                displayItems = [{
+                  name: cleanDeviceName,
+                  deviceName: cleanDeviceName,
+                  deviceType: cleanDeviceName,
+                  notes: invoice?.notes && invoice.notes !== 'لا يوجد' ? invoice.notes : (items.length > 0 ? `${items.length} قطع/ملحقات مفككة` : ''),
+                  faultType: invoice?.notes && invoice.notes !== 'لا يوجد' ? invoice.notes : '',
+                  quantity: 1,
+                  unitCost: totalCost,
+                  cost: totalCost
+                }];
+              }
+
+              const totalPieces = displayItems.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 1), 0);
+              const totalAmount = displayItems.reduce((sum: number, it: any) => sum + (Number(it.cost) || (Number(it.quantity || 1) * Number(it.unitCost || 0))), 0);
+              const discount = Number(invoice?.discount || 0);
+              const netAmount = Math.max(0, totalAmount - discount);
+              const paid = Number(invoice?.amountPaid || 0);
+              const remaining = Math.max(0, netAmount - paid);
+              const currency = invoice?.currency || 'USD';
+
+              return (
+                <>
+                  <div className="w-full border-2 border-black rounded-lg overflow-hidden mb-2 text-black font-bold font-cairo">
+                    <table className="w-full border-collapse text-xs table-fixed">
+                      <thead>
+                        <tr className="bg-gray-100 border-b-2 border-black text-black">
+                          <th className="py-1.5 px-2 border-l border-black text-center w-10 font-bold">مسلسل</th>
+                          <th className="py-1.5 px-2 border-l border-black text-right font-bold">
+                            {isBatchPurchase ? 'اسم الجهاز' : (isPurchaseDoc ? 'اسم القطعة / الجهاز' : 'اسم القطعة')}
+                          </th>
+                          <th className="py-1.5 px-2 border-l border-black text-center w-24 font-bold">السعر</th>
+                          <th className="py-1.5 px-2 border-l border-black text-center w-14 font-bold">العدد</th>
+                          <th className="py-1.5 px-2 text-center w-28 font-bold">إجمالي السعر</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-black">
+                        {displayItems.map((it: any, idx: number) => {
+                          const qty = Number(it.quantity || 1);
+                          const unit = Number(it.unitCost || 0);
+                          const cost = Number(it.cost || (qty * unit));
+                          const rawName = String(it.name || it.deviceName || it.deviceType || 'صنف غير محدد');
+                          const itemName = rawName.replace(/^جهاز تفكيك:\s*/, '').trim();
+                          const itemNote = it.notes || it.faultType || it.deviceNotes || '';
+
+                          return (
+                            <tr key={idx} className="h-8">
+                              <td className="py-1 px-2 border-l border-black text-center font-mono font-bold">
+                                {idx + 1}
+                              </td>
+                              <td className="py-1 px-2 border-l border-black text-right overflow-hidden break-words">
+                                <div className="font-bold text-black">{itemName}</div>
+                                {itemNote && itemNote !== 'لا يوجد' && (
+                                  <div className="text-[10px] text-gray-700 font-normal leading-tight mt-0.5">{itemNote}</div>
+                                )}
+                              </td>
+                              <td className="py-1 px-2 border-l border-black text-center font-mono font-bold" dir="ltr">
+                                {unit > 0 ? unit.toLocaleString('en-US') : '0'}
+                              </td>
+                              <td className="py-1 px-2 border-l border-black text-center font-mono font-bold" dir="ltr">
+                                {qty}
+                              </td>
+                              <td className="py-1 px-2 text-center font-mono font-black" dir="ltr">
+                                {cost > 0 ? cost.toLocaleString('en-US') : '0'}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                      <tfoot>
+                        {/* Row 1: Total pieces & Total amount */}
+                        <tr className="bg-gray-100 border-t-2 border-black font-black text-xs h-8">
+                          <td colSpan={3} className="py-1.5 px-3 border-l border-black text-right">
+                            {isBatchPurchase ? 'إجمالي الأجهزة:' : (isPurchaseDoc ? 'إجمالي الأصناف المشتراة:' : 'إجمالي القطع والملحقات:')}
+                          </td>
+                          <td className="py-1.5 px-2 border-l border-black text-center font-mono font-black text-sm" dir="ltr">
+                            {totalPieces}
+                          </td>
+                          <td className="py-1.5 px-2 text-center font-mono font-black text-sm" dir="ltr">
+                            {totalAmount.toLocaleString('en-US')} <span className="text-[10px] font-bold">{currency}</span>
+                          </td>
+                        </tr>
+
+                        {/* Row 2: Paid and Remaining */}
+                        {discount > 0 && (
+                          <tr className="bg-white border-t border-black font-black text-xs h-8">
+                            <td colSpan={3} className="py-1 px-3 border-l border-black text-right text-amber-700">
+                              قيمة الخصم:
+                            </td>
+                            <td colSpan={2} className="py-1 px-2 text-center font-mono font-black text-amber-700" dir="ltr">
+                              {discount.toLocaleString('en-US')} <span className="text-[10px] font-bold">{currency}</span>
+                            </td>
+                          </tr>
+                        )}
+                        <tr className="bg-white border-t border-black font-black text-xs h-9">
+                          <td colSpan={2} className="py-1.5 px-3 border-l border-black text-right">
+                            الواصل (المدفوع): <span className="font-mono text-emerald-700 text-sm font-black mr-1">{paid.toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                          </td>
+                          <td colSpan={3} className="py-1.5 px-3 text-center">
+                            المتبقي: <span className="font-mono text-rose-700 text-sm font-black mr-1">{remaining.toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+
+                  {/* Notes */}
+                  <div className="flex justify-between items-start gap-4 mb-2">
+                    <div className="flex-1 border-2 border-black rounded-lg p-2 min-h-[45px]">
+                      <div className="text-[10px] font-bold text-gray-600 mb-0.5">ملاحظات الفاتورة:</div>
+                      <div className="text-xs font-bold leading-relaxed">{invoice?.notes && invoice.notes !== 'لا يوجد' ? invoice.notes : 'لا توجد ملاحظات إضافية'}</div>
+                    </div>
+                  </div>
+                </>
+              );
+            })()}
+          </div>
+
+          {renderFooter(false)}
+        </div>
+      )) }
             </div>
           </div>
         </div>

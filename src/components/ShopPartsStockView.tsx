@@ -210,17 +210,15 @@ export default function ShopPartsStockView() {
   const getBatchFinancials = (batch: DisassemblyBatch) => {
     const totalCost = Number(batch.totalBatchCost || 0);
 
-    // Matching extracted parts in inventory
+    // Matching extracted parts in inventory strictly by unique ID
     const matchedParts = stockItems.filter(item => 
-      (item.batchId && item.batchId === batch.id) ||
-      (batch.batchName && item.batchName && item.batchName.trim().toLowerCase() === batch.batchName.trim().toLowerCase())
+      Boolean(item.batchId && (item.batchId === batch.id || (batch.batchNumber && item.batchId === batch.batchNumber)))
     );
 
-    // Matching sales from invoice_items (excluding purchase items)
+    // Matching sales from invoice_items (excluding purchase items) strictly by unique batchId
     const matchedSales = invoiceItems.filter(it => {
       if (it.source === 'purchase' || it.isPurchase === 1 || it.isPurchase === true) return false;
-      if (it.batchId && it.batchId === batch.id) return true;
-      if (batch.batchName && it.batchName && it.batchName.trim().toLowerCase() === batch.batchName.trim().toLowerCase()) return true;
+      if (it.batchId && (it.batchId === batch.id || (batch.batchNumber && it.batchId === batch.batchNumber))) return true;
       return false;
     });
 
