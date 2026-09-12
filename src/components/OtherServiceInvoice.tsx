@@ -679,8 +679,6 @@ export default function OtherServiceInvoice({
         });
       }
 
-      await batchOp.commit();
-      
       const newInvoiceNumber = String(assignedPurchaseNumber);
 
       if (action === 'print' || action === 'whatsapp') {
@@ -690,7 +688,7 @@ export default function OtherServiceInvoice({
         };
         setCurrentOutput(updatedOutput);
         
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 50));
 
         if (action === 'print') {
           handlePrintDirect();
@@ -698,6 +696,8 @@ export default function OtherServiceInvoice({
           await handleExportPDFAndWhatsApp(updatedOutput);
         }
       }
+
+      await batchOp.commit();
 
       resetPurchaseForm();
       setShowPreview(false);
@@ -1199,8 +1199,6 @@ export default function OtherServiceInvoice({
         }
       }
 
-      await batch.commit();
-      
       const newInvoiceNumber = String(finalAssignedInvoiceNumber);
       
       if (action === 'print' || action === 'whatsapp') {
@@ -1211,7 +1209,7 @@ export default function OtherServiceInvoice({
         setCurrentOutput(updatedOutput);
         
         // Wait for DOM to update
-        await new Promise(r => setTimeout(r, 200));
+        await new Promise(r => setTimeout(r, 50));
 
         if (action === 'print') {
           handlePrintDirect();
@@ -1219,6 +1217,8 @@ export default function OtherServiceInvoice({
           await handleExportPDFAndWhatsApp(updatedOutput);
         }
       }
+
+      await batch.commit();
 
       resetSalesForm();
       setShowPreview(false);

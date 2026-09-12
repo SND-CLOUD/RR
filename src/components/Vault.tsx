@@ -2,6 +2,8 @@ import { sharePdfFile, openWhatsApp, sendUniversalReminder } from '../lib/shareH
 import PrintPreviewOverlay from './PrintPreviewOverlay';
 import { tafqeet } from '../lib/tafqeet';
 import { parseFundBalance, formatMoney } from '../lib/fundUtils';
+import { isAccountingTransactionValid, roundCurrencyAmount, normalizeCurrencyCode, repairAllFundBalances } from '../lib/fundRepairService';
+import { SyncEngine } from '../data/SyncEngine';
 import React, { useEffect, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
@@ -53,7 +55,9 @@ import {
   ArrowUpDown,
   Save,
   Loader2,
-  Trash2
+  Trash2,
+  RefreshCw,
+  CloudDownload
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
@@ -384,10 +388,21 @@ export default function Vault({
     return currencies.join(' / ');
   };
 
+  const normalizeCurrency = (curr?: string): string => {
+    if (!curr) return 'USD';
+    const c = curr.trim().toUpperCase();
+    if (c === 'USD' || c === 'دولار' || c === '$' || c.includes('دولار') || c === 'US DOLLAR') return 'USD';
+    if (c === 'SAR' || c === 'ريال سعودي' || c === 'سعودي' || c === 'ر.س') return 'SAR';
+    if (c === 'YER' || c === 'ريال يمني' || c === 'يمني' || c === 'ر.ي') return 'YER';
+    return c;
+  };
+
   const getArabicCurrencyName = (currCode: string) => {
     if (!currCode) return 'دولار';
-    if (currCode.toUpperCase() === 'USD') return 'دولار';
-    if (currCode.toUpperCase() === 'YER') return 'ريال يمني';
+    const norm = normalizeCurrency(currCode);
+    if (norm === 'USD') return 'دولار';
+    if (norm === 'YER') return 'ريال يمني';
+    if (norm === 'SAR') return 'ريال سعودي';
     if (currCode.toUpperCase().includes('USD') && currCode.toUpperCase().includes('YER')) return 'دولار / ريال يمني';
     return currCode;
   };
@@ -495,13 +510,53 @@ export default function Vault({
     };
     fetchShopConfig();
 
+    const handleSyncEvent = () => {
+      loadDatabaseData();
+    };
+    window.addEventListener('snd_data_synced', handleSyncEvent);
+
     return () => {
       if (typeof unsubFunds === 'function') unsubFunds();
       if (typeof unsubTx === 'function') unsubTx();
       if (typeof unsubCustomers === 'function') unsubCustomers();
       if (typeof unsubInvoices === 'function') unsubInvoices();
+      window.removeEventListener('snd_data_synced', handleSyncEvent);
     };
   }, []);
+
+  const [isSyncingFunds, setIsSyncingFunds] = useState(false);
+
+  const handleForcePullFromCloud = async () => {
+    setIsSyncingFunds(true);
+    try {
+      const res = await SyncEngine.forcePullFinancialDataFromCloud();
+      setSuccessMsg(res.message);
+      await loadDatabaseData();
+      setTimeout(() => setSuccessMsg(null), 4000);
+    } catch (e: any) {
+      console.error('Failed to pull from cloud:', e);
+      setErrorMsg(`فشل سحب البيانات من السحابة: ${e?.message || e}`);
+      setTimeout(() => setErrorMsg(null), 4000);
+    } finally {
+      setIsSyncingFunds(false);
+    }
+  };
+
+  const handleRecalculateFunds = async () => {
+    setIsSyncingFunds(true);
+    try {
+      const res = await repairAllFundBalances();
+      setSuccessMsg(`تمت موازنة وتسوية أرصدة ${res.repairedCount} صندوق مع السحابة والقيود بنجاح.`);
+      await loadDatabaseData();
+      setTimeout(() => setSuccessMsg(null), 4000);
+    } catch (e: any) {
+      console.error('Failed to recalculate funds:', e);
+      setErrorMsg(`فشلت إعادة احتساب الأرصدة: ${e?.message || e}`);
+      setTimeout(() => setErrorMsg(null), 4000);
+    } finally {
+      setIsSyncingFunds(false);
+    }
+  };
 
   // Fetch & Calculate Next Voucher Index
   const calculateNextVoucherNumber = async () => {
@@ -1781,32 +1836,51 @@ export default function Vault({
   };
 
   // --- REVENUE & EXPENSE REPORT STATISTICS ---
-  const receiptTransactions = transactions.filter(tx => tx.type === 'receipt');
-  const paymentTransactions = transactions.filter(tx => tx.type === 'payment' || tx.type === 'disbursement');
+  const isValidTx = (tx: VaultTransaction) => isAccountingTransactionValid(tx);
 
-  // Calculates sums of values dynamically grouped by currency code/symbol
+  // Internal transfers and opening balances are non-operational for profit & loss calculations
+  const isInternalTransfer = (tx: VaultTransaction) => 
+    tx.transactionCategory === 'تحويل بين الصناديق' || 
+    tx.customerName === 'تحويل داخلي' || 
+    (tx.notes && tx.notes.includes('تحويل مالي بين الصناديق'));
+
+  const isOpeningBalance = (tx: VaultTransaction) =>
+    tx.transactionCategory === 'رصيد افتتاحي' ||
+    (tx.notes && tx.notes.includes('رصيد افتتاحي'));
+
+  // All active valid receipts and payments for display in tabs
+  const receiptTransactions = transactions.filter(tx => (tx.type === 'receipt' || tx.type === 'deposit' || tx.type === 'invoice_payment') && isValidTx(tx));
+  const paymentTransactions = transactions.filter(tx => (tx.type === 'payment' || tx.type === 'disbursement' || tx.type === 'expense') && isValidTx(tx));
+
+  // Operational revenues and expenses strictly for Profit & Loss (excludes capital opening balances and internal asset transfers)
+  const operationalRevenueTransactions = receiptTransactions.filter(tx => !isInternalTransfer(tx) && !isOpeningBalance(tx));
+  const operationalExpenseTransactions = paymentTransactions.filter(tx => !isInternalTransfer(tx));
+
+  // Calculates sums of values dynamically grouped by normalized currency code/symbol
   const computeCurrencyTotals = (txs: VaultTransaction[]) => {
     const sums: Record<string, number> = {};
     txs.forEach(tx => {
-      const code = tx.currency || 'USD';
+      const code = normalizeCurrencyCode(tx.currency || 'USD');
       sums[code] = (sums[code] || 0) + Math.abs(Number(tx.amount || 0));
     });
     return sums;
   };
 
-  const revenueCurrencyTotals = computeCurrencyTotals(receiptTransactions);
-  const expenseCurrencyTotals = computeCurrencyTotals(paymentTransactions);
+  const revenueCurrencyTotals = computeCurrencyTotals(operationalRevenueTransactions);
+  const expenseCurrencyTotals = computeCurrencyTotals(operationalExpenseTransactions);
+  const allReceiptCurrencyTotals = computeCurrencyTotals(receiptTransactions);
+  const allPaymentCurrencyTotals = computeCurrencyTotals(paymentTransactions);
 
-  // Build unique currencies checklist for calculations
+  // Build unique normalized currencies checklist for calculations (eliminates duplicate USD / دولار)
   const allUsedCurrencies = Array.from(new Set([
     ...Object.keys(revenueCurrencyTotals),
     ...Object.keys(expenseCurrencyTotals),
-    ...funds.map(f => f.currency),
-    ...currencies.map(c => c.name)
-  ]));
+    ...funds.map(f => normalizeCurrencyCode(f.currency)),
+    ...currencies.map(c => normalizeCurrencyCode(c.id || c.name || c.symbol))
+  ].filter(Boolean)));
 
   return (
-    <div className="financial-vault-container h-full flex flex-col overflow-hidden text-right pb-4 w-full" dir="rtl">
+    <div className="financial-vault-container min-h-full flex flex-col text-right pb-16 w-full" dir="rtl">
       
 
 
@@ -1829,7 +1903,7 @@ export default function Vault({
       )}
 
       {/* Primary Layout Wrapper */}
-      <div className="flex-1 grid grid-cols-1 gap-4 overflow-hidden">
+      <div className="flex-1 grid grid-cols-1 gap-4">
         
         {/* RIGHT SIDEBAR MENU - Accounts Hierarchy */}
         {false && activeSegment !== 'dashboard' && (
@@ -2045,159 +2119,194 @@ export default function Vault({
           )}
 
           {/* 1. RECEIPT OR PAYMENT VOUCHERS LIST VIEW */}
-          {(activeSegment === 'receipt' || activeSegment === 'payment') && !showAddModal && (
-            <div className="space-y-5">
-              <div className="flex items-center justify-between border-b border-white/5 pb-3">
-                <div className="flex items-center gap-3">
-                  <h3 className="text-base font-bold text-white font-cairo">
-                    {activeSegment === 'receipt' ? 'سندات القبض' : 'سندات الصرف'}
-                  </h3>
-                  <button 
-                    onClick={() => setActiveSegment('dashboard')}
-                    className="p-1.5 bg-white/5 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-all"
-                  >
-                    <ArrowRight size={16} />
-                  </button>
+          {(activeSegment === 'receipt' || activeSegment === 'payment') && !showAddModal && (() => {
+            const filteredVouchers = sortedTransactions
+              .filter(tx => tx.type === activeSegment)
+              .filter(tx => {
+                if (!globalSearch) return true;
+                const searchLower = (globalSearch || '').toLowerCase();
+                return (tx.customerName || '').toLowerCase().includes(searchLower) || String(tx.voucherNumber || '').includes(searchLower);
+              });
+
+            return (
+              <div className="space-y-5 p-4 sm:p-6 pb-48">
+                <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                  <div className="flex items-center gap-3">
+                    <h3 className="text-base font-bold text-white font-cairo">
+                      {activeSegment === 'receipt' ? 'سندات القبض' : 'سندات الصرف'}
+                    </h3>
+                    <button 
+                      onClick={() => setActiveSegment('dashboard')}
+                      className="p-1.5 bg-white/5 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-all"
+                    >
+                      <ArrowRight size={16} />
+                    </button>
+                  </div>
                 </div>
-              </div>
 
-              <div className="flex flex-col gap-2">
-                 <div className="flex items-center justify-between text-[11px] text-gray-500 font-bold px-1" dir="rtl">
-                    <span>البحث المباشر:</span>
-                 </div>
+                <div className="flex flex-col gap-2">
+                   <div className="flex items-center justify-between text-[11px] text-gray-500 font-bold px-1" dir="rtl">
+                      <span>البحث المباشر:</span>
+                   </div>
 
-                 <div className="flex gap-3">
-                    <div className="flex-1 relative group">
-                       <Search className="absolute right-4 top-3 text-gray-600 group-focus-within:text-amber-500 transition-colors" size={16} />
-                       <input 
-                         type="text" 
-                         placeholder="ابدأ بكتابة اسم العميل أو رقم السند..."
-                         value={globalSearch}
-                         onChange={(e) => setGlobalSearch(e.target.value)}
-                         className="w-full bg-[#161616] border border-white/5 rounded-xl pr-11 pl-4 py-3 text-[11px] font-cairo text-white outline-none focus:border-amber-500/50 transition-all font-bold placeholder:text-gray-700"
-                       />
-                    </div>
-                    
-                    {canAdd && (
-                      <button 
-                         onClick={() => setShowAddModal(true)}
-                         className="p-3 bg-amber-600/10 text-amber-500 border border-amber-500/20 rounded-xl hover:bg-amber-600 hover:text-white transition-all flex items-center justify-center active:scale-95"
-                         title="إضافة سند جديد"
-                      >
-                         <Plus size={20} />
-                      </button>
-                    )}
-                 </div>
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between pb-1" dir="rtl">
-                   <div className="flex items-center gap-2">
-                      <div className="p-2 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl">
-                         <FileText size={16} />
+                   <div className="flex gap-3">
+                      <div className="flex-1 relative group">
+                         <Search className="absolute right-4 top-3 text-gray-600 group-focus-within:text-amber-500 transition-colors" size={16} />
+                         <input 
+                           type="text" 
+                           placeholder="ابدأ بكتابة اسم العميل أو رقم السند..."
+                           value={globalSearch}
+                           onChange={(e) => setGlobalSearch(e.target.value)}
+                           className="w-full bg-[#161616] border border-white/5 rounded-xl pr-11 pl-4 py-3 text-[11px] font-cairo text-white outline-none focus:border-amber-500/50 transition-all font-bold placeholder:text-gray-700"
+                         />
                       </div>
-                      <span className="text-xs font-bold text-gray-300 font-cairo">جدول جميع السندات المسجلة في النظام</span>
-                   </div>
-                   <div className="relative">
-                     <button 
-                       onClick={() => setShowVoucherSort(!showVoucherSort)}
-                       className="p-2 bg-white/5 border border-white/5 rounded-lg text-gray-400 hover:text-white transition-all flex items-center gap-1.5"
-                     >
-                        <span className="text-[10px] font-bold font-cairo sm:block hidden">ترتيب وفرز</span>
-                        <ArrowUpDown size={14} />
-                     </button>
-                     {showVoucherSort && (
-                        <div className="absolute z-50 left-0 mt-2 bg-[#1f1f1f] border border-white/10 rounded-xl shadow-2xl p-1.5 w-48">
-                          <button onClick={() => { setVoucherSortConfig({ key: 'voucherNumber', direction: 'desc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب رقم السند (الأحدث)</button>
-                          <button onClick={() => { setVoucherSortConfig({ key: 'alpha', direction: 'asc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب اسم العميل (أ - ي)</button>
-                          <button onClick={() => { setVoucherSortConfig({ key: 'alpha', direction: 'desc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب اسم العميل (ي - أ)</button>
-                          <button onClick={() => { setVoucherSortConfig({ key: 'category', direction: 'asc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب نوع العملية</button>
-                          <button onClick={() => { setVoucherSortConfig({ key: 'amount', direction: 'desc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">مبلغ السند (الأكبر)</button>
-                          <button onClick={() => { setVoucherSortConfig({ key: 'amount', direction: 'asc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">مبلغ السند (الأصغر)</button>
-                          <button onClick={() => { setVoucherSortConfig({ key: 'date', direction: 'desc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب التاريخ (الأحدث)</button>
-                        </div>
-                     )}
+                      
+                      {canAdd && (
+                        <button 
+                           onClick={() => setShowAddModal(true)}
+                           className="p-3 bg-amber-600/10 text-amber-500 border border-amber-500/20 rounded-xl hover:bg-amber-600 hover:text-white transition-all flex items-center justify-center active:scale-95"
+                           title="إضافة سند جديد"
+                        >
+                           <Plus size={20} />
+                        </button>
+                      )}
                    </div>
                 </div>
 
-                <div className="border border-white/5 rounded-2xl overflow-x-auto bg-black/10 scrollbar-thin">
-                  <table className="w-full text-right text-[11px] whitespace-nowrap">
-                    <thead>
-                      <tr className="bg-white/5 text-gray-500 font-bold border-b border-white/5 uppercase">
-                        <th className="px-4 py-3">رقم السند</th>
-                        <th className="px-4 py-3">اسم العميل / الجهة</th>
-                        <th className="px-4 py-3 text-center">نوع العملية</th>
-                        <th className="px-4 py-3 text-center">مبلغ السند</th>
-                        <th className="px-4 py-3 text-center">الحالة / عكس القيد</th>
-                        <th className="px-4 py-3 text-left">التاريخ</th>
-                        <th className="px-4 py-3 text-center">الإجراءات / الحذف</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {sortedTransactions
-                        .filter(tx => tx.type === activeSegment)
-                        .filter(tx => {
-                          if (!globalSearch) return true;
-                          const searchLower = (globalSearch || '').toLowerCase();
-                          return (tx.customerName || '').toLowerCase().includes(searchLower) || String(tx.voucherNumber || '').includes(searchLower);
-                        })
-                        .map(tx => (
-                          <tr key={tx.id} className="hover:bg-white/5 bg-[#141414] transition-all group">
-                            <td className="px-4 py-2.5 font-mono font-bold text-amber-500">{tx.voucherNumber}</td>
-                            <td className="px-4 py-2.5 font-bold text-gray-200">{tx.customerName}</td>
-                            <td className="px-4 py-2.5 text-center">
-                               <span className={`px-2 py-1 rounded text-[10px] font-bold ${activeSegment === 'receipt' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
-                                  {tx.transactionCategory || (activeSegment === 'receipt' ? 'قبض' : 'صرف')}
-                               </span>
-                            </td>
-                            <td className={`px-4 py-2.5 text-center font-bold text-xs ${activeSegment === 'receipt' ? 'text-emerald-500' : 'text-rose-500'}`}>
-                              {Math.abs(tx.amount).toLocaleString('en-US')} <span className="text-[9px] opacity-70 font-sans">{tx.currency}</span>
-                            </td>
-                            <td className="px-4 py-2.5 text-center">
-                              {tx.isReversed ? (
-                                <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-rose-500/10 text-rose-500 border border-rose-500/20" title={tx.notes}>
-                                  تم العكس
-                                </span>
-                              ) : tx.isReversal ? (
-                                <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20" title={tx.notes}>
-                                  قيد عكسي
-                                </span>
-                              ) : (user.role === 'admin' || user.role === 'manager' || user.role === 'data_entry') ? (
-                                <button
-                                  onClick={() => {
-                                    console.log("Setting transaction for custom confirmation modal:", tx.id);
-                                    setReversalTxToConfirm(tx);
-                                  }}
-                                  className="px-2 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-500 hover:bg-amber-600 hover:text-white border border-amber-500/20 transition-all cursor-pointer"
-                                >
-                                  عكس القيد
-                                </button>
-                              ) : (
-                                <span className="text-gray-500 text-[10px] italic">سليم</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-2.5 text-left text-gray-500 font-mono italic">
-                              {formatTxDate(tx)}
-                            </td>
-                            <td className="px-4 py-2.5 text-center">
-                              {(user.role === 'admin' || user.role === 'manager' || canDelete || hasPermission('delete')) && (
-                                <button
-                                  onClick={() => setTxToDelete(tx)}
-                                  className="p-1.5 rounded-lg text-rose-400 hover:text-white hover:bg-rose-600/80 transition-all cursor-pointer bg-rose-500/10 border border-rose-500/20"
-                                  title="حذف السند المكرر أو الخاطئ نهائياً"
-                                >
-                                  <Trash2 size={13} />
-                                </button>
-                              )}
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between pb-1" dir="rtl">
+                     <div className="flex items-center gap-2">
+                        <div className="p-2 bg-amber-500/10 border border-amber-500/20 text-amber-500 rounded-xl">
+                           <FileText size={16} />
+                        </div>
+                        <span className="text-xs font-bold text-gray-300 font-cairo">جدول جميع السندات المسجلة في النظام</span>
+                        <span className="text-[10px] font-bold text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2.5 py-0.5 rounded-full font-mono">
+                           {filteredVouchers.length} سند
+                        </span>
+                     </div>
+                     <div className="relative">
+                       <button 
+                         onClick={() => setShowVoucherSort(!showVoucherSort)}
+                         className="p-2 bg-white/5 border border-white/5 rounded-lg text-gray-400 hover:text-white transition-all flex items-center gap-1.5"
+                       >
+                          <span className="text-[10px] font-bold font-cairo sm:block hidden">ترتيب وفرز</span>
+                          <ArrowUpDown size={14} />
+                       </button>
+                       {showVoucherSort && (
+                          <div className="absolute z-50 left-0 mt-2 bg-[#1f1f1f] border border-white/10 rounded-xl shadow-2xl p-1.5 w-48">
+                            <button onClick={() => { setVoucherSortConfig({ key: 'voucherNumber', direction: 'desc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب رقم السند (الأحدث)</button>
+                            <button onClick={() => { setVoucherSortConfig({ key: 'alpha', direction: 'asc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب اسم العميل (أ - ي)</button>
+                            <button onClick={() => { setVoucherSortConfig({ key: 'alpha', direction: 'desc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب اسم العميل (ي - أ)</button>
+                            <button onClick={() => { setVoucherSortConfig({ key: 'category', direction: 'asc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب نوع العملية</button>
+                            <button onClick={() => { setVoucherSortConfig({ key: 'amount', direction: 'desc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">مبلغ السند (الأكبر)</button>
+                            <button onClick={() => { setVoucherSortConfig({ key: 'amount', direction: 'asc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">مبلغ السند (الأصغر)</button>
+                            <button onClick={() => { setVoucherSortConfig({ key: 'date', direction: 'desc' }); setShowVoucherSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-amber-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب التاريخ (الأحدث)</button>
+                          </div>
+                       )}
+                     </div>
+                  </div>
+
+                  <div className="border border-white/5 rounded-2xl overflow-x-auto bg-black/10 scrollbar-thin">
+                    <table className="w-full text-right text-[11px] whitespace-nowrap">
+                      <thead>
+                        <tr className="bg-white/5 text-gray-400 font-bold border-b border-white/5 uppercase">
+                          <th className="px-4 py-3">رقم السند</th>
+                          <th className="px-4 py-3">اسم العميل / الجهة</th>
+                          <th className="px-4 py-3 text-center">نوع العملية</th>
+                          <th className="px-4 py-3 text-center">مبلغ السند</th>
+                          <th className="px-4 py-3 text-center">الحالة / عكس القيد</th>
+                          <th className="px-4 py-3 text-left">التاريخ</th>
+                          <th className="px-4 py-3 text-center">الإجراءات</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {filteredVouchers.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="text-center py-12 text-gray-500 font-cairo font-bold">
+                              {globalSearch ? 'لا توجد أي سندات تطابق البحث المحدد' : 'لا توجد أي سندات مسجلة في هذا القسم حتى الآن'}
                             </td>
                           </tr>
-                        ))}
-                    </tbody>
-                  </table>
+                        ) : (
+                          filteredVouchers.map(tx => (
+                            <tr key={tx.id} className="hover:bg-white/5 bg-[#141414] transition-all group">
+                              <td className="px-4 py-3 font-mono font-bold text-amber-500">{tx.voucherNumber}</td>
+                              <td className="px-4 py-3 font-bold text-gray-200">{tx.customerName}</td>
+                              <td className="px-4 py-3 text-center">
+                                 <span className={`px-2 py-1 rounded text-[10px] font-bold ${activeSegment === 'receipt' ? 'bg-emerald-500/10 text-emerald-500' : 'bg-amber-500/10 text-amber-500'}`}>
+                                    {tx.transactionCategory || (activeSegment === 'receipt' ? 'قبض' : 'صرف')}
+                                 </span>
+                              </td>
+                              <td className={`px-4 py-3 text-center font-bold text-xs ${activeSegment === 'receipt' ? 'text-emerald-500' : 'text-rose-500'}`}>
+                                {Math.abs(tx.amount).toLocaleString('en-US')} <span className="text-[9px] opacity-70 font-sans">{tx.currency}</span>
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                {tx.isReversed ? (
+                                  <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-rose-500/10 text-rose-500 border border-rose-500/20" title={tx.notes}>
+                                    تم العكس
+                                  </span>
+                                ) : tx.isReversal ? (
+                                  <span className="px-2 py-0.5 rounded text-[9px] font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20" title={tx.notes}>
+                                    قيد عكسي
+                                  </span>
+                                ) : (user.role === 'admin' || user.role === 'manager' || user.role === 'data_entry') ? (
+                                  <button
+                                    onClick={() => {
+                                      console.log("Setting transaction for custom confirmation modal:", tx.id);
+                                      setReversalTxToConfirm(tx);
+                                    }}
+                                    className="px-2 py-0.5 rounded text-[9px] font-bold bg-amber-500/10 text-amber-500 hover:bg-amber-600 hover:text-white border border-amber-500/20 transition-all cursor-pointer"
+                                  >
+                                    عكس القيد
+                                  </button>
+                                ) : (
+                                  <span className="text-gray-500 text-[10px] italic">سليم</span>
+                                )}
+                              </td>
+                              <td className="px-4 py-3 text-left text-gray-500 font-mono italic">
+                                {formatTxDate(tx)}
+                              </td>
+                              <td className="px-4 py-3 text-center">
+                                <div className="flex items-center justify-center gap-1.5">
+                                  <button
+                                    onClick={() => setPreviewData({ type: 'voucher', data: { voucher: tx } })}
+                                    className="p-1.5 rounded-lg text-blue-400 hover:text-white hover:bg-blue-600/80 transition-all cursor-pointer bg-blue-500/10 border border-blue-500/20"
+                                    title="معاينة وطباعة السند"
+                                  >
+                                    <Printer size={13} />
+                                  </button>
+                                  {(user.role === 'admin' || user.role === 'manager' || canDelete || hasPermission('delete')) && (
+                                    <button
+                                      onClick={() => setTxToDelete(tx)}
+                                      className="p-1.5 rounded-lg text-rose-400 hover:text-white hover:bg-rose-600/80 transition-all cursor-pointer bg-rose-500/10 border border-rose-500/20"
+                                      title="حذف السند المكرر أو الخاطئ نهائياً"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* End of vouchers table indicator & bottom buffer */}
+                  <div className="flex flex-wrap items-center justify-between text-[11px] text-gray-400 bg-[#141414] border border-white/5 rounded-xl px-4 py-3 font-cairo">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500 inline-block"></span>
+                      <span>إجمالي السندات المسجلة: <strong className="text-white font-mono">{filteredVouchers.length}</strong> سند</span>
+                    </div>
+                    <span className="text-gray-500 text-[10px]">نهاية جدول السندات المسجلة ✓</span>
+                  </div>
+
+                  {/* Guaranteed extra bottom clearance space */}
+                  <div className="h-16 w-full pointer-events-none" />
                 </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* 1. RECEIPT OR PAYMENT VOUCHERS SUBMIT SEGMENTS (Now as a modal or dedicated state) */}
           {(activeSegment === 'receipt' || activeSegment === 'payment') && showAddModal && (
@@ -2968,22 +3077,43 @@ export default function Vault({
                     </h3>
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="relative group flex-1 sm:flex-none sm:w-64">
+                <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap">
+                  <div className="relative group flex-1 sm:flex-none sm:w-56">
                     <Search className="absolute right-3 top-2.5 text-gray-500 group-focus-within:text-blue-500 transition-colors" size={16} />
                     <input 
                       type="text" 
-                      placeholder="بحث في الصناديق والحركات..."
+                      placeholder="بحث في الصناديق..."
                       value={globalSearch}
                       onChange={(e) => setGlobalSearch(e.target.value)}
                       className="w-full bg-[#181818] border border-white/5 rounded-xl pr-10 pl-4 py-2 text-xs font-cairo text-white outline-none focus:border-blue-500/50 transition-all"
                     />
                   </div>
+
+                  {/* Sync from Cloud Button */}
+                  <button 
+                    onClick={handleForcePullFromCloud}
+                    disabled={isSyncingFunds}
+                    className="px-3 py-2 bg-purple-600/20 hover:bg-purple-600/30 text-purple-300 hover:text-white border border-purple-500/30 rounded-xl transition-all text-xs font-bold font-cairo flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                    title="سحب وتحديث أرصدة الصناديق والقيد من السحابة"
+                  >
+                    {isSyncingFunds ? <Loader2 size={14} className="animate-spin" /> : <CloudDownload size={14} />}
+                    <span className="hidden sm:inline">سحب من السحابة</span>
+                  </button>
+
+                  {/* Recalculate and Reconcile Button */}
+                  <button 
+                    onClick={handleRecalculateFunds}
+                    disabled={isSyncingFunds}
+                    className="px-3 py-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 hover:text-white border border-emerald-500/30 rounded-xl transition-all text-xs font-bold font-cairo flex items-center gap-1.5 active:scale-95 disabled:opacity-50"
+                    title="موازنة وإعادة احتساب الأرصدة مع القيود"
+                  >
+                    {isSyncingFunds ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />}
+                    <span className="hidden sm:inline">إعادة احتساب الأرصدة</span>
+                  </button>
+
                   {/* Add New Fund / Movement Button */}
                   <button 
                     onClick={() => {
-                        // For simplicity, we trigger the payment/receipt modal if they need to add money
-                        // Or we can just show a message. But to follow the pattern:
                         setActiveSegment('receipt');
                         setShowAddModal(true);
                     }}
@@ -2997,9 +3127,15 @@ export default function Vault({
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {funds.map((fund) => {
-                  const fundTxs = transactions.filter(t => t.fundId === fund.id);
-                  const inSum = fundTxs.filter(t => t.type === 'receipt').reduce((acc, curr) => acc + Math.abs(Number(curr.amount)), 0);
-                  const outSum = fundTxs.filter(t => t.type === 'payment' || t.type === 'disbursement').reduce((acc, curr) => acc + Math.abs(Number(curr.amount)), 0);
+                  const fundTxs = transactions.filter(t => (t.fundId === fund.id || (!t.fundId && t.fundName === fund.name)) && isAccountingTransactionValid(t));
+                  const inSum = fundTxs.filter(t => t.type === 'receipt' || t.type === 'deposit' || t.type === 'invoice_payment').reduce((acc, curr) => {
+                    const rawAmt = curr.receiptAmount !== undefined && curr.receiptAmount !== null && curr.receiptAmount !== '' ? Number(curr.receiptAmount) : Number(curr.amount || 0);
+                    return acc + Math.abs(isNaN(rawAmt) ? 0 : rawAmt);
+                  }, 0);
+                  const outSum = fundTxs.filter(t => t.type === 'payment' || t.type === 'disbursement' || t.type === 'expense').reduce((acc, curr) => {
+                    const rawAmt = curr.receiptAmount !== undefined && curr.receiptAmount !== null && curr.receiptAmount !== '' ? Number(curr.receiptAmount) : Number(curr.amount || 0);
+                    return acc + Math.abs(isNaN(rawAmt) ? 0 : rawAmt);
+                  }, 0);
 
                   return (
                     <div key={fund.id} className="bg-[#181818] border border-white/5 rounded-2xl p-5 flex flex-col justify-between gap-4 hover:border-blue-500/30 transition-all group">
@@ -3433,8 +3569,8 @@ export default function Vault({
                       const sum = revenueCurrencyTotals[curr] || 0;
                       return (
                         <div key={curr} className="bg-green-600/10 border border-green-500/15 p-3 rounded-xl flex items-center justify-between">
-                          <span className="text-[10px] sm:text-[11px] text-green-400 font-cairo font-bold">وارد الإيرادات المتراكمة</span>
-                          <p className="font-mono text-base md:text-lg font-black text-white">{sum.toLocaleString('en-US')} <span className="text-[10px] text-green-400">{curr}</span></p>
+                          <span className="text-[10px] sm:text-[11px] text-green-400 font-cairo font-bold">وارد الإيرادات ({getArabicCurrencyName(curr)})</span>
+                          <p className="font-mono text-base md:text-lg font-black text-white">{sum.toLocaleString('en-US')} <span className="text-[10px] text-green-400 font-bold">{getArabicCurrencyName(curr)}</span></p>
                         </div>
                       );
                     })}
@@ -3487,8 +3623,8 @@ export default function Vault({
                       const sum = expenseCurrencyTotals[curr] || 0;
                       return (
                         <div key={curr} className="bg-red-600/10 border border-red-500/15 p-3 rounded-xl flex items-center justify-between">
-                          <span className="text-[10px] sm:text-[11px] text-red-400 font-cairo font-bold">إجمالي عموم المدفوعات والمصروفات</span>
-                          <p className="font-mono text-base md:text-lg font-black text-white">{sum.toLocaleString('en-US')} <span className="text-[10px] text-red-400">{curr}</span></p>
+                          <span className="text-[10px] sm:text-[11px] text-red-400 font-cairo font-bold">إجمالي المصروفات ({getArabicCurrencyName(curr)})</span>
+                          <p className="font-mono text-base md:text-lg font-black text-white">{sum.toLocaleString('en-US')} <span className="text-[10px] text-red-400 font-bold">{getArabicCurrencyName(curr)}</span></p>
                         </div>
                       );
                     })}
@@ -3546,17 +3682,17 @@ export default function Vault({
                       return (
                         <div key={curr} className="bg-[#141414] border border-white/5 rounded-xl p-3 flex flex-col md:flex-row md:items-center justify-between gap-3">
                           <div className="space-y-1">
-                            <span className="text-[11px] font-bold text-white font-cairo">مؤشر أرباح عملة: {curr}</span>
-                            <div className="flex gap-4 text-[10px] text-gray-500 font-cairo">
-                              <span>إجمالي الوارد: <strong className="text-emerald-400 font-mono">{totalIn}</strong></span>
-                              <span>إجمالي المنصرف: <strong className="text-red-500 font-mono">{totalOut}</strong></span>
+                            <span className="text-[11px] font-bold text-white font-cairo">مؤشر أرباح عملة: {getArabicCurrencyName(curr)}</span>
+                            <div className="flex gap-4 text-[10px] text-gray-400 font-cairo">
+                              <span>إجمالي الوارد: <strong className="text-emerald-400 font-mono">{totalIn.toLocaleString('en-US')}</strong> <span className="text-[9px] text-gray-500 font-bold">{getArabicCurrencyName(curr)}</span></span>
+                              <span>إجمالي المنصرف: <strong className="text-red-500 font-mono">{totalOut.toLocaleString('en-US')}</strong> <span className="text-[9px] text-gray-500 font-bold">{getArabicCurrencyName(curr)}</span></span>
                             </div>
                           </div>
 
                           <div className="text-left mt-2 md:mt-0 flex items-center gap-3">
-                            <span className="text-[10px] text-gray-500 font-cairo">صافي ربح الصندوق</span>
+                            <span className="text-[10px] text-gray-400 font-cairo">صافي ربح الصندوق</span>
                             <p className={`font-mono text-base md:text-lg font-black ${netProfit >= 0 ? 'text-emerald-400' : 'text-red-500'}`}>
-                              {netProfit >= 0 ? '+' : ''}{netProfit.toLocaleString('en-US')} <span className="text-[10px] text-gray-500">{curr}</span>
+                              {netProfit >= 0 ? '+' : ''}{netProfit.toLocaleString('en-US')} <span className="text-[10px] text-gray-400 font-bold font-cairo">{getArabicCurrencyName(curr)}</span>
                             </p>
                           </div>
                         </div>

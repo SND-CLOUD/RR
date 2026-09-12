@@ -2,6 +2,7 @@ import { localDb } from '../lib/local-db';
 import { LocalProviderInstance } from './LocalProvider';
 import { FirebaseProviderInstance } from './FirebaseProvider';
 import { ProviderFactory } from './ProviderFactory';
+import { parseFundBalance } from '../lib/fundUtils';
 
 function isPermissionError(err: any): boolean {
   if (!err) return false;
@@ -232,19 +233,20 @@ export class SyncEngine {
             const localUpdatedMs = getItemTimestamp(localItem);
             const cloudUpdatedMs = getItemTimestamp(cloudItem);
             
-            // Protect fin_funds from corrupt non-numeric cloud balance objects
-            if (table === 'fin_funds' && cloudItem && typeof cloudItem.balance === 'object') {
-              console.warn(`SyncEngine [Realtime]: Detected non-numeric cloud balance on fund ${docId}, sanitizing...`);
-              if (localItem && typeof localItem.balance === 'number') {
-                cloudItem.balance = localItem.balance;
-              } else {
-                cloudItem.balance = 0;
-              }
+            // Safely parse and sanitize fin_funds balance from cloud
+            if (table === 'fin_funds' && cloudItem) {
+              cloudItem.balance = parseFundBalance(cloudItem.balance);
             }
 
             let needsDownload = false;
             if (!localItem) {
               needsDownload = true;
+            } else if (table === 'fin_funds') {
+              const localBal = parseFundBalance(localItem.balance);
+              const cloudBal = parseFundBalance(cloudItem.balance);
+              if (localBal !== cloudBal || cloudUpdatedMs > localUpdatedMs || JSON.stringify(cloudItem) !== JSON.stringify(localItem)) {
+                needsDownload = true;
+              }
             } else if (cloudUpdatedMs > 0 && localUpdatedMs > 0) {
               if (cloudUpdatedMs > localUpdatedMs) {
                 needsDownload = true;
@@ -267,6 +269,11 @@ export class SyncEngine {
               console.log(`SyncEngine [Realtime]: Down-syncing ${table}/${docId} from cloud.`);
               try {
                 await LocalProviderInstance.setDoc(table, docId, cloudItem, undefined, 'BYPASS_OUTBOX');
+                if (table === 'fin_funds') {
+                  await localDb.run("UPDATE fin_funds SET balance = ? WHERE id = ?", [cloudItem.balance, docId]).catch(() => {});
+                  await localDb.run("DELETE FROM outbox WHERE tableName = 'fin_funds' AND recordId = ?", [docId]).catch(() => {});
+                  window.dispatchEvent(new CustomEvent('snd_data_synced'));
+                }
                 if (table === 'company_details' && docId === 'main_details') {
                   await localDb.run("DELETE FROM company_details WHERE id = 'default-company'").catch(() => {});
                 }
@@ -553,19 +560,20 @@ export class SyncEngine {
             const localUpdatedMs = getItemTimestamp(localItem);
             const cloudUpdatedMs = getItemTimestamp(cloudItem);
 
-            // Protect fin_funds from corrupt non-numeric cloud balance objects
-            if (table === 'fin_funds' && cloudItem && typeof cloudItem.balance === 'object') {
-              console.warn(`SyncEngine [Manual]: Detected non-numeric cloud balance on fund ${cloudItem.id}, sanitizing...`);
-              if (localItem && typeof localItem.balance === 'number') {
-                cloudItem.balance = localItem.balance;
-              } else {
-                cloudItem.balance = 0;
-              }
+            // Safely parse and sanitize fin_funds balance from cloud
+            if (table === 'fin_funds' && cloudItem) {
+              cloudItem.balance = parseFundBalance(cloudItem.balance);
             }
 
             let needsDownload = false;
             if (!localItem) {
               needsDownload = true;
+            } else if (table === 'fin_funds') {
+              const localBal = parseFundBalance(localItem.balance);
+              const cloudBal = parseFundBalance(cloudItem.balance);
+              if (localBal !== cloudBal || cloudUpdatedMs > localUpdatedMs || JSON.stringify(cloudItem) !== JSON.stringify(localItem)) {
+                needsDownload = true;
+              }
             } else if (cloudUpdatedMs > 0 && localUpdatedMs > 0) {
               if (cloudUpdatedMs > localUpdatedMs) {
                 needsDownload = true;
@@ -588,6 +596,10 @@ export class SyncEngine {
               // Bypass outbox queuing during down-sync by using the 'BYPASS_OUTBOX' txGroupId
               try {
                 await LocalProviderInstance.setDoc(table, cloudItem.id, cloudItem, undefined, 'BYPASS_OUTBOX');
+                if (table === 'fin_funds') {
+                  await localDb.run("UPDATE fin_funds SET balance = ? WHERE id = ?", [cloudItem.balance, cloudItem.id]).catch(() => {});
+                  await localDb.run("DELETE FROM outbox WHERE tableName = 'fin_funds' AND recordId = ?", [cloudItem.id]).catch(() => {});
+                }
                 if (table === 'company_details' && cloudItem.id === 'main_details') {
                   await localDb.run("DELETE FROM company_details WHERE id = 'default-company'").catch(() => {});
                 }
@@ -610,6 +622,8 @@ export class SyncEngine {
         }
       }
 
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+
       return {
         success: true,
         message: syncedCount > 0 ? `تمت المزامنة بنجاح! تم نقل وتحديث ${syncedCount} سِجل.` : 'النظام متزامن بالكامل مع السحابة.',
@@ -621,6 +635,67 @@ export class SyncEngine {
       return { success: false, message: `فشلت المزامنة: ${error.message || error}` };
     } finally {
       this.syncing = false;
+    }
+  }
+
+  /**
+   * Forcefully pulls and overwrites local financial funds and transaction records
+   * directly from Cloud Firestore into Local SQLite.
+   */
+  static async forcePullFinancialDataFromCloud(): Promise<{ fundsCount: number; txsCount: number; message: string }> {
+    try {
+      console.log('SyncEngine: Force pulling financial funds and vouchers from Cloud Firestore...');
+      
+      // 1. Fetch Cloud Funds
+      const cloudFundsRes = await FirebaseProviderInstance.getDocs('fin_funds');
+      const cloudFunds = (cloudFundsRes.docs || []).map((d: any) => {
+        const raw = d.data ? (typeof d.data === 'function' ? d.data() : d.data) : d;
+        return { ...(raw || {}), id: d.id || raw?.id };
+      }).filter((f: any) => Boolean(f?.id));
+
+      let fundsUpdated = 0;
+      for (const fund of cloudFunds) {
+        const parsedBal = parseFundBalance(fund.balance);
+        const cleanFund = { ...fund, balance: parsedBal };
+        
+        // Overwrite Local DB
+        await LocalProviderInstance.setDoc('fin_funds', fund.id, cleanFund, undefined, 'BYPASS_OUTBOX');
+        await localDb.run("UPDATE fin_funds SET balance = ? WHERE id = ?", [parsedBal, fund.id]).catch(() => {});
+        // Clear any stuck outbox queue that might overwrite cloud
+        await localDb.run("DELETE FROM outbox WHERE tableName = 'fin_funds' AND recordId = ?", [fund.id]).catch(() => {});
+        fundsUpdated++;
+      }
+
+      // 2. Fetch Cloud Vault Transactions
+      const cloudTxsRes = await FirebaseProviderInstance.getDocs('vault_transactions');
+      const cloudTxs = (cloudTxsRes.docs || []).map((d: any) => {
+        const raw = d.data ? (typeof d.data === 'function' ? d.data() : d.data) : d;
+        return { ...(raw || {}), id: d.id || raw?.id };
+      }).filter((t: any) => Boolean(t?.id));
+
+      let txsUpdated = 0;
+      for (const tx of cloudTxs) {
+        await LocalProviderInstance.setDoc('vault_transactions', tx.id, tx, undefined, 'BYPASS_OUTBOX');
+        txsUpdated++;
+      }
+
+      // 3. Notify Local DB Subscribers and global window event
+      const updatedLocalFunds = await localDb.query("SELECT * FROM fin_funds");
+      localDb.notify('fin_funds', updatedLocalFunds.values || []);
+
+      const updatedLocalTxs = await localDb.query("SELECT * FROM vault_transactions");
+      localDb.notify('vault_transactions', updatedLocalTxs.values || []);
+
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+
+      return {
+        fundsCount: fundsUpdated,
+        txsCount: txsUpdated,
+        message: `تم سحب وتحديث ${fundsUpdated} صندوق و ${txsUpdated} سند وقيد مالي من السحابة إلى القاعدة المحلية بنجاح.`
+      };
+    } catch (err: any) {
+      console.error('SyncEngine: forcePullFinancialDataFromCloud failed:', err);
+      throw err;
     }
   }
 }
