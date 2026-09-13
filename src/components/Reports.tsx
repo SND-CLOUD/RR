@@ -37,6 +37,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import ReportActions, { WhatsAppIcon } from './ReportActions';
 import PrintPreviewOverlay from './PrintPreviewOverlay';
 import DeviceStatisticalSummaryModal from './DeviceStatisticalSummaryModal';
+import FinancialReportsTab from './FinancialReportsTab';
 
 interface ReportStats {
   totalIncoming: number;
@@ -201,8 +202,9 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
   const [showComprehensiveModal, setShowComprehensiveModal] = useState(false);
   const [showDeviceSummaryModal, setShowDeviceSummaryModal] = useState(false);
   const [previewData, setPreviewData] = useState<{ type: 'invoice' | 'voucher' | 'statement' | 'table'; data: any } | null>(null);
-  
+  const [mainReportSection, setMainReportSection] = useState<'devices' | 'financial'>('devices');
 
+  useBackHandler(mainReportSection === 'financial' && activeSubView === 'none', () => setMainReportSection('devices'));
   useBackHandler(activeSubView !== 'none', () => setActiveSubView('none'));
 
   // Raw and filtered items cache for the table
@@ -1267,8 +1269,48 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
         </div>
       </div>
 
-      {/* Top Controls & Time Period Selector */}
-      <div className="bg-white/[0.02] p-4 rounded-3xl border border-white/5 space-y-4">
+      {/* Primary Section Switcher: Maintenance Reports vs Financial & Vault Reports */}
+      <div className="flex items-center gap-2 bg-[#121212] p-1.5 rounded-2xl border border-white/5 w-fit">
+        <button
+          type="button"
+          onClick={() => setMainReportSection('devices')}
+          className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+            mainReportSection === 'devices'
+              ? 'bg-orange-500 text-white shadow-lg shadow-orange-500/20'
+              : 'text-gray-400 hover:text-white hover:bg-white/5'
+          }`}
+        >
+          <Wrench size={16} />
+          <span>تقارير الأجهزة والورشة والصيانة</span>
+        </button>
+
+        {canViewFinancial && (
+          <button
+            type="button"
+            onClick={() => setMainReportSection('financial')}
+            className={`flex items-center gap-2 px-5 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer ${
+              mainReportSection === 'financial'
+                ? 'bg-amber-500 text-white shadow-lg shadow-amber-500/20'
+                : 'text-gray-400 hover:text-white hover:bg-white/5'
+            }`}
+          >
+            <Coins size={16} />
+            <span>تقارير الحسابات والمالية والصناديق</span>
+          </button>
+        )}
+      </div>
+
+      {mainReportSection === 'financial' ? (
+        <FinancialReportsTab
+          user={user}
+          shopConfig={shopConfig}
+          onPrintPreview={(pData) => setPreviewData(pData)}
+          canPrint={canPrint}
+        />
+      ) : (
+        <>
+          {/* Top Controls & Time Period Selector */}
+          <div className="bg-white/[0.02] p-4 rounded-3xl border border-white/5 space-y-4">
         <div className="flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-orange-600/15 text-orange-500 rounded-2xl">
@@ -1759,6 +1801,33 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
                             تقرير تفاعلي مخصص يتيح اختيار نوع أو جهاز محدد واستعراض جدول مؤشراته الشاملة مع إمكانية طباعته ومشاركته.
                           </p>
                         </div>
+
+                        {/* 9. Financial & Vault Accounts Report */}
+                        {canViewFinancial && (
+                          <div 
+                            onClick={() => {
+                              setShowComprehensiveModal(false);
+                              setMainReportSection('financial');
+                            }}
+                            className="bg-amber-950/20 hover:bg-amber-900/30 p-5 rounded-2xl border border-amber-500/30 hover:border-amber-400 transition-all cursor-pointer group flex flex-col justify-between gap-3 shadow-md md:col-span-2"
+                          >
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <div className="p-2.5 bg-amber-500 text-white rounded-xl group-hover:scale-110 transition-transform shadow-[0_0_12px_rgba(245,158,11,0.4)]">
+                                  <Coins size={20} />
+                                </div>
+                                <div>
+                                  <h4 className="text-sm font-bold text-amber-300 group-hover:text-white transition-colors">تقارير الحسابات والمالية والصناديق الشاملة</h4>
+                                  <span className="text-[10px] text-amber-400/80">أرصدة الصناديق، القيود، وتدقيق الفواتير وطباعة كشوفات الحسابات</span>
+                                </div>
+                              </div>
+                              <Sparkles size={16} className="text-amber-400 group-hover:scale-110 transition-transform" />
+                            </div>
+                            <p className="text-xs text-gray-300 leading-relaxed">
+                              استعراض أرصدة جميع الصناديق، كشف حركات السندات والقيود، مطابقة الفواتير المرتبطة، وتصدير كشف Excel أو طباعة A4 رسمية.
+                            </p>
+                          </div>
+                        )}
 
                       </div>
                     </div>
@@ -2598,6 +2667,8 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
             </motion.div>
           )}
         </AnimatePresence>
+      )}
+      </>
       )}
 
       {/* Filtered Statistical Summary Modal by Device Type or Device Name */}

@@ -31,6 +31,9 @@ import {
   Plus,
   Bookmark,
   ChevronLeft,
+  ChevronDown,
+  ChevronUp,
+  LayoutDashboard,
   Filter,
   Layers,
   FileSpreadsheet,
@@ -57,7 +60,9 @@ import {
   Loader2,
   Trash2,
   RefreshCw,
-  CloudDownload
+  CloudDownload,
+  Download,
+  Share2
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
@@ -163,6 +168,100 @@ const DashboardButton = ({ onClick, icon, label, description, color, bg }: { onC
   </button>
 );
 
+/**
+ * Merges customer name, invoice number, and notes/category into a single descriptive string
+ * e.g. "محمد علي عثمان - فاتورة رقم #102 - مشتريات قطع وملحقات"
+ */
+export function formatFundTxDetails(tx: VaultTransaction): string {
+  const parts: string[] = [];
+
+  // 1. Customer Name
+  const cust = (tx.customerName || '').trim();
+  if (cust && cust !== '-' && cust !== 'عام' && cust !== 'تحويل داخلي' && cust !== 'طرف غير محدد') {
+    parts.push(cust);
+  } else if (cust === 'تحويل داخلي' || tx.transactionCategory === 'تحويل بين الصناديق') {
+    parts.push('تحويل داخلي');
+  }
+
+  // 2. Invoice Number
+  const inv = tx.invoiceNumber ? String(tx.invoiceNumber).trim() : '';
+  if (inv && inv !== '-' && inv !== '0') {
+    parts.push(`فاتورة رقم #${inv}`);
+  }
+
+  // 3. Notes or Category
+  const notes = (tx.notes || '').trim();
+  const cat = (tx.transactionCategory || '').trim();
+  if (notes && notes !== '-' && notes !== 'حركة نقدية.') {
+    parts.push(notes);
+  } else if (cat && cat !== '-' && cat !== 'قبض' && cat !== 'صرف') {
+    parts.push(cat);
+  }
+
+  if (parts.length === 0) {
+    const rawType = String(tx.type || '');
+    const isRec = rawType === 'receipt' || rawType === 'deposit' || rawType === 'invoice_payment' || rawType === 'inflow';
+    return isRec ? 'سند قبض / إيداع نقدي' : 'سند صرف / سحب نقدي';
+  }
+
+  return parts.join(' - ');
+}
+
+export interface ProcessedFundStatementEntry {
+  id: string;
+  voucherNumber: string;
+  dateStr: string;
+  timestamp: number;
+  details: string; // Merged: Customer Name + Invoice Number + Notes/Category
+  debit: number;   // مدين (وارد / إيداع)
+  credit: number;  // دائن (منصرف / سحب)
+  runningBalance: number; // الرصيد بعد الحركة
+  currency: string;
+  rawTx: any;
+}
+
+export function computeFundChronologicalStatement(
+  fund: FinFund,
+  allFundTxs: any[]
+): ProcessedFundStatementEntry[] {
+  // 1. Sort all transactions chronologically (oldest first)
+  const sorted = [...allFundTxs].sort((a, b) => {
+    const tA = a.createdAt || a.timestamp;
+    const timeA = tA ? (typeof tA?.toDate === 'function' ? tA.toDate().getTime() : new Date(tA).getTime()) : 0;
+    const tB = b.createdAt || b.timestamp;
+    const timeB = tB ? (typeof tB?.toDate === 'function' ? tB.toDate().getTime() : new Date(tB).getTime()) : 0;
+    return timeA - timeB;
+  });
+
+  // 2. Accumulate running balance
+  let running = 0;
+  return sorted.map(tx => {
+    const rawType = String(tx.type || '');
+    const isReceipt = rawType === 'receipt' || rawType === 'deposit' || rawType === 'invoice_payment' || rawType === 'inflow';
+    const amount = Math.abs(Number(tx.amount || 0));
+    const debit = isReceipt ? amount : 0;
+    const credit = !isReceipt ? amount : 0;
+
+    running += debit - credit;
+
+    const t = tx.createdAt || tx.timestamp;
+    const time = t ? (typeof t?.toDate === 'function' ? t.toDate().getTime() : new Date(t).getTime()) : 0;
+
+    return {
+      id: String(tx.id || ''),
+      voucherNumber: String(tx.voucherNumber || ''),
+      dateStr: formatTxDate(tx),
+      timestamp: time,
+      details: formatFundTxDetails(tx),
+      debit,
+      credit,
+      runningBalance: running,
+      currency: String(tx.currency || fund.currency || ''),
+      rawTx: tx
+    };
+  });
+}
+
 export default function Vault({ 
   user, 
   shopConfig, 
@@ -232,6 +331,22 @@ export default function Vault({
   const [ledgerModalTab, setLedgerModalTab] = useState<'invoices' | 'transactions'>('invoices');
   const [ledgerListPage, setLedgerListPage] = useState<number>(1);
 
+  // FUND REPORT MODAL & STATEMENT STATES
+  const [selectedFundForReport, setSelectedFundForReport] = useState<FinFund | null>(null);
+  const [fundReportDateFrom, setFundReportDateFrom] = useState<string>(() => {
+    const d = new Date();
+    d.setMonth(d.getMonth() - 1);
+    return d.toISOString().split('T')[0];
+  });
+  const [fundReportDateTo, setFundReportDateTo] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [fundReportSearch, setFundReportSearch] = useState<string>('');
+  const [fundReportType, setFundReportType] = useState<'all' | 'receipt' | 'payment'>('all');
+
+  // Movement table filters
+  const [fundMovementSelectedFund, setFundMovementSelectedFund] = useState<string>('all');
+  const [fundMovementSelectedType, setFundMovementSelectedType] = useState<string>('all');
+  const [fundMovementShowReversed, setFundMovementShowReversed] = useState<'active' | 'all' | 'reversed'>('active');
+
   // Database lists
   const [funds, setFunds] = useState<FinFund[]>([]);
   const [currencies, setCurrencies] = useState<FinCurrency[]>([]);
@@ -283,7 +398,8 @@ export default function Vault({
   useBackHandler(showPrintPreview, () => setShowPrintPreview(false));
   useBackHandler(showAddModal, () => setShowAddModal(false));
   useBackHandler(isLedgerModalOpen, () => setIsLedgerModalOpen(false));
-  useBackHandler(activeSegment !== 'dashboard' && !showAddModal && !showPrintPreview && !reversalTxToConfirm && !isLedgerModalOpen, () => setActiveSegment('dashboard'));
+  useBackHandler(selectedFundForReport !== null, () => setSelectedFundForReport(null));
+  useBackHandler(activeSegment !== 'dashboard' && !showAddModal && !showPrintPreview && !reversalTxToConfirm && !isLedgerModalOpen && !selectedFundForReport, () => setActiveSegment('dashboard'));
 
   // LEDGER CUSTOMER MATH & HELPERS
   const getInvoiceItemsForInvoice = (invoiceNumber: string) => {
@@ -323,13 +439,426 @@ export default function Vault({
     setCurrentPage(1);
   }, [activeSegment, globalSearch, ledgerSearchTerm]);
   
-  const filteredVaultTransactions = sortedTransactions.filter(tx => 
-    (tx.customerName || '').toLowerCase().includes((globalSearch || '').toLowerCase()) || 
-    (tx.fundName || '').toLowerCase().includes((globalSearch || '').toLowerCase())
-  );
+  const filteredVaultTransactions = useMemo(() => {
+    return sortedTransactions.filter(tx => {
+      // Exclude permanently deleted items
+      if (tx.isDeleted === 1 || tx.isDeleted === true || tx.isDeleted === '1') return false;
+      if (tx.deleted === true || tx.deleted === 1 || tx.deleted === '1') return false;
+
+      // Determine reversal state
+      const isRev = tx.isReversed === 1 || tx.isReversed === true || tx.isReversed === '1' ||
+                    tx.isReversal === 1 || tx.isReversal === true || tx.isReversal === '1' ||
+                    (tx.status || '').toLowerCase().trim() === 'reversed' ||
+                    (tx.status || '').toLowerCase().trim() === 'reversal';
+
+      if (fundMovementShowReversed === 'active' && isRev) return false;
+      if (fundMovementShowReversed === 'reversed' && !isRev) return false;
+
+      // Global search string matching
+      const searchStr = (globalSearch || '').toLowerCase().trim();
+      if (searchStr) {
+        const matchSearch =
+          (tx.customerName || '').toLowerCase().includes(searchStr) || 
+          (tx.fundName || '').toLowerCase().includes(searchStr) ||
+          (tx.voucherNumber || '').toLowerCase().includes(searchStr) ||
+          String(tx.invoiceNumber || '').toLowerCase().includes(searchStr) ||
+          (tx.notes || '').toLowerCase().includes(searchStr) ||
+          (tx.transactionCategory || '').toLowerCase().includes(searchStr) ||
+          String(tx.amount || '').includes(searchStr);
+        if (!matchSearch) return false;
+      }
+
+      // Fund filter
+      if (fundMovementSelectedFund !== 'all') {
+        const tFundId = String(tx.fundId || '').trim();
+        const tFundName = String(tx.fundName || '').trim();
+        if (tFundId !== fundMovementSelectedFund && tFundName !== fundMovementSelectedFund) {
+          return false;
+        }
+      }
+
+      // Type filter (inclusive of all aliases so entries never disappear unexpectedly)
+      if (fundMovementSelectedType !== 'all') {
+        const isReceipt = tx.type === 'receipt' || tx.type === 'deposit' || tx.type === 'invoice_payment' || (tx.type as string) === 'inflow';
+        const isPayment = tx.type === 'payment' || tx.type === 'disbursement' || tx.type === 'expense' || (tx.type as string) === 'outflow';
+        const isTransfer = tx.type === 'transfer' || tx.transactionCategory === 'تحويل بين الصناديق' || tx.customerName === 'تحويل داخلي';
+
+        if (fundMovementSelectedType === 'receipt' && !isReceipt) return false;
+        if (fundMovementSelectedType === 'payment' && !isPayment) return false;
+        if (fundMovementSelectedType === 'transfer' && !isTransfer) return false;
+        if (fundMovementSelectedType === 'reversed' && !isRev) return false;
+      }
+
+      return true;
+    });
+  }, [sortedTransactions, globalSearch, fundMovementSelectedFund, fundMovementSelectedType, fundMovementShowReversed]);
+
   const totalVaultPages = Math.max(1, Math.ceil(filteredVaultTransactions.length / itemsPerPage));
   const safeVaultCurrentPage = Math.min(currentPage, totalVaultPages);
   const currentVaultTransactions = filteredVaultTransactions.slice((safeVaultCurrentPage - 1) * itemsPerPage, safeVaultCurrentPage * itemsPerPage);
+
+  // Quick print a fund's statement directly
+  const handleQuickPrintFund = (fund: FinFund) => {
+    const fundTxs = transactions.filter(tx => {
+      if (!isAccountingTransactionValid(tx)) return false;
+      const tFundId = String(tx.fundId || '').trim();
+      const tFundName = String(tx.fundName || '').trim();
+      return tFundId === fund.id || tFundName === fund.name;
+    });
+
+    const entries = computeFundChronologicalStatement(fund, fundTxs);
+    const totalIn = entries.reduce((s, e) => s + e.debit, 0);
+    const totalOut = entries.reduce((s, e) => s + e.credit, 0);
+    const lastBalance = entries.length > 0 ? entries[entries.length - 1].runningBalance : parseFundBalance(fund.balance);
+
+    const rows = entries.map(e => [
+      e.voucherNumber ? `#${e.voucherNumber}` : '-',
+      e.dateStr,
+      e.details,
+      e.debit > 0 ? `+${e.debit.toLocaleString('en-US')}` : '-',
+      e.credit > 0 ? `-${e.credit.toLocaleString('en-US')}` : '-',
+      `${e.runningBalance.toLocaleString('en-US')} ${fund.currency}`
+    ]);
+
+    setPreviewData({
+      type: 'table',
+      data: {
+        table: {
+          title: `كشف حساب حركة صندوق: ${fund.name}`,
+          subtitle: `النوع: ${fund.type === 'cash' ? 'نقدي' : 'حساب بنكي'} | العملة: ${fund.currency} | الرصيد الحالي: ${parseFundBalance(fund.balance).toLocaleString('en-US')} ${fund.currency}`,
+          headers: ['رقم السند', 'التاريخ والوقت', 'البيان والتفاصيل', 'مدين (وارد)', 'دائن (منصرف)', 'الرصيد'],
+          rows,
+          footerNotes: `إجمالي المدين (الوارد): +${totalIn.toLocaleString('en-US')} ${fund.currency} | إجمالي الدائن (المنصرف): -${totalOut.toLocaleString('en-US')} ${fund.currency} | الرصيد الفعلي المتوفر: ${lastBalance.toLocaleString('en-US')} ${fund.currency}`
+        }
+      }
+    });
+  };
+
+  // Print filtered fund statement from the modal
+  const handlePrintFundStatement = (fund: FinFund, entries: ProcessedFundStatementEntry[]) => {
+    const totalIn = entries.reduce((s, e) => s + e.debit, 0);
+    const totalOut = entries.reduce((s, e) => s + e.credit, 0);
+    const lastBalance = entries.length > 0 ? entries[entries.length - 1].runningBalance : parseFundBalance(fund.balance);
+
+    const rows = entries.map(e => [
+      e.voucherNumber ? `#${e.voucherNumber}` : '-',
+      e.dateStr,
+      e.details,
+      e.debit > 0 ? `+${e.debit.toLocaleString('en-US')}` : '-',
+      e.credit > 0 ? `-${e.credit.toLocaleString('en-US')}` : '-',
+      `${e.runningBalance.toLocaleString('en-US')} ${fund.currency}`
+    ]);
+
+    setPreviewData({
+      type: 'table',
+      data: {
+        table: {
+          title: `كشف حساب حركات الصندوق: ${fund.name}`,
+          subtitle: `الفترة من: ${fundReportDateFrom || 'البداية'} إلى: ${fundReportDateTo || 'الآن'} | العملة: ${fund.currency} | الرصيد: ${parseFundBalance(fund.balance).toLocaleString('en-US')} ${fund.currency}`,
+          headers: ['رقم السند', 'التاريخ والوقت', 'البيان والتفاصيل', 'مدين (وارد)', 'دائن (منصرف)', 'الرصيد'],
+          rows,
+          footerNotes: `إجمالي المدين (الوارد): +${totalIn.toLocaleString('en-US')} ${fund.currency} | إجمالي الدائن (المنصرف): -${totalOut.toLocaleString('en-US')} ${fund.currency} | الرصيد الختامي للفترة: ${lastBalance.toLocaleString('en-US')} ${fund.currency}`
+        }
+      }
+    });
+  };
+
+  // Export fund statement as CSV
+  const handleExportFundCSV = (fund: FinFund, entries: ProcessedFundStatementEntry[]) => {
+    const totalIn = entries.reduce((s, e) => s + e.debit, 0);
+    const totalOut = entries.reduce((s, e) => s + e.credit, 0);
+    const lastBalance = entries.length > 0 ? entries[entries.length - 1].runningBalance : parseFundBalance(fund.balance);
+
+    const headers = ['رقم السند', 'التاريخ والوقت', 'البيان والتفاصيل', 'مدين (وارد)', 'دائن (منصرف)', 'الرصيد', 'العملة'];
+    const rows: (string | number)[][] = entries.map(e => [
+      e.voucherNumber || '',
+      e.dateStr,
+      `"${e.details.replace(/"/g, '""')}"`,
+      e.debit > 0 ? e.debit : 0,
+      e.credit > 0 ? e.credit : 0,
+      e.runningBalance,
+      fund.currency
+    ]);
+
+    // Totals row at bottom
+    rows.push([
+      'الإجمالي',
+      '',
+      'إجمالي الحركات المعروضة للفترة',
+      totalIn,
+      totalOut,
+      lastBalance,
+      fund.currency
+    ]);
+
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `كشف_حساب_${fund.name}_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // WhatsApp share for fund statement
+  const handleShareFundWhatsApp = (fund: FinFund, entries: ProcessedFundStatementEntry[]) => {
+    const totalIn = entries.reduce((s, e) => s + e.debit, 0);
+    const totalOut = entries.reduce((s, e) => s + e.credit, 0);
+    const lastBalance = entries.length > 0 ? entries[entries.length - 1].runningBalance : parseFundBalance(fund.balance);
+
+    let message = `📊 *كشف حساب صندوق: ${fund.name}*\n`;
+    message += `🏛️ المتجر: ${shopConfig?.shopName || 'المتجر'}\n`;
+    message += `💰 العملة: ${fund.currency}\n`;
+    message += `🏦 الرصيد الختامي: ${lastBalance.toLocaleString('en-US')} ${fund.currency}\n`;
+    message += `📥 إجمالي المدين (الوارد): +${totalIn.toLocaleString('en-US')} ${fund.currency}\n`;
+    message += `📤 إجمالي الدائن (المنصرف): -${totalOut.toLocaleString('en-US')} ${fund.currency}\n`;
+    message += `🔢 عدد العمليات: ${entries.length}\n`;
+    message += `📅 التاريخ: ${new Date().toLocaleDateString('ar-YE')}\n`;
+
+    const encoded = encodeURIComponent(message);
+    window.open(`https://api.whatsapp.com/send?text=${encoded}`, '_blank');
+  };
+
+  // Print movements table below funds
+  const handlePrintFundMovementsTable = () => {
+    const rows = filteredVaultTransactions.map(tx => {
+      const isReceipt = tx.type === 'receipt' || tx.type === 'deposit' || tx.type === 'invoice_payment' || (tx.type as string) === 'inflow';
+      const amount = Math.abs(Number(tx.amount || 0));
+      const debit = isReceipt ? amount : 0;
+      const credit = !isReceipt ? amount : 0;
+
+      return [
+        tx.voucherNumber ? `#${tx.voucherNumber}` : '-',
+        formatTxDate(tx),
+        getFundDisplayName(tx),
+        formatFundTxDetails(tx),
+        debit > 0 ? `+${debit.toLocaleString('en-US')}` : '-',
+        credit > 0 ? `-${credit.toLocaleString('en-US')}` : '-',
+        `${amount.toLocaleString('en-US')} ${tx.currency}`
+      ];
+    });
+
+    setPreviewData({
+      type: 'table',
+      data: {
+        table: {
+          title: 'سجل حركات وسندات الصناديق المالية',
+          subtitle: `تاريخ التقرير: ${new Date().toLocaleDateString('ar-YE')} | إجمالي السندات المعروضة: ${filteredVaultTransactions.length}`,
+          headers: ['رقم السند', 'التاريخ والوقت', 'الصندوق', 'البيان والتفاصيل', 'مدين (وارد)', 'دائن (منصرف)', 'المبلغ والعملة'],
+          rows,
+          footerNotes: `طبع بواسطة: ${(user as any)?.displayName || (user as any)?.name || user?.email || 'المسؤول'}`
+        }
+      }
+    });
+  };
+
+  // Export movements table to CSV
+  const handleExportFundMovementsCSV = () => {
+    const headers = ['رقم السند', 'التاريخ والوقت', 'الصندوق', 'البيان والتفاصيل', 'مدين (وارد)', 'دائن (منصرف)', 'المبلغ', 'العملة', 'المستخدم'];
+    const rows = filteredVaultTransactions.map(tx => {
+      const isReceipt = tx.type === 'receipt' || tx.type === 'deposit' || tx.type === 'invoice_payment' || (tx.type as string) === 'inflow';
+      const amount = Math.abs(Number(tx.amount || 0));
+      const debit = isReceipt ? amount : 0;
+      const credit = !isReceipt ? amount : 0;
+
+      return [
+        tx.voucherNumber || '',
+        formatTxDate(tx),
+        `"${getFundDisplayName(tx).replace(/"/g, '""')}"`,
+        `"${formatFundTxDetails(tx).replace(/"/g, '""')}"`,
+        debit,
+        credit,
+        amount,
+        tx.currency,
+        `"${(tx.userName || '').replace(/"/g, '""')}"`
+      ];
+    });
+
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', `حركات_وسندات_الصناديق_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
+
+  // Print active report from the reports view
+  const handlePrintActiveReport = () => {
+    let title = 'تقرير الحسابات المالية';
+    let subtitle = '';
+    let headers: string[] = [];
+    let rows: (string | number)[][] = [];
+
+    if (reportSubSegment === 'revenues') {
+      title = 'تقرير الإيرادات والنقود الواردة وسندات القبض';
+      subtitle = `إجمالي سندات القبض: ${receiptTransactions.length} سند`;
+      headers = ['رقم السند', 'التاريخ', 'التصنيف', 'الجهة المستلم منها', 'الصندوق', 'المبلغ'];
+      rows = receiptTransactions.map(tx => [
+        tx.voucherNumber || '-',
+        formatTxDate(tx),
+        tx.transactionCategory || '-',
+        tx.customerName || '-',
+        getFundDisplayName(tx),
+        `+${Math.abs(Number(tx.amount || 0)).toLocaleString('en-US')} ${tx.currency}`
+      ]);
+    } else if (reportSubSegment === 'expenses') {
+      title = 'تقرير المصروفات والمبالغ الصادرة وسندات الصرف';
+      subtitle = `إجمالي سندات الصرف: ${paymentTransactions.length} سند`;
+      headers = ['رقم السند', 'التاريخ', 'التصنيف المصروف', 'الصرف لصالح', 'المصدر (الصندوق)', 'المبلغ'];
+      rows = paymentTransactions.map(tx => [
+        tx.voucherNumber || '-',
+        formatTxDate(tx),
+        tx.transactionCategory || '-',
+        tx.customerName || '-',
+        getFundDisplayName(tx),
+        `-${Math.abs(Number(tx.amount || 0)).toLocaleString('en-US')} ${tx.currency}`
+      ]);
+    } else if (reportSubSegment === 'fund-balances') {
+      title = 'تقرير أرصدة ومحتويات الصناديق المالية';
+      subtitle = `عدد الصناديق: ${funds.length} صندوق`;
+      headers = ['اسم الصندوق المالي', 'النوع', 'العملة الأساسية', 'الرصيد الفعلي الحالي'];
+      rows = funds.map(f => [
+        f.name,
+        f.type === 'cash' ? 'نقدي' : 'حساب بنك',
+        f.currency,
+        `${parseFundBalance(f.balance).toLocaleString('en-US')} ${f.currency}`
+      ]);
+    } else if (reportSubSegment === 'profits') {
+      title = 'تقرير الأرباح وصافي الميزان المالي';
+      headers = ['العملة', 'إجمالي الوارد', 'إجمالي المنصرف', 'صافي الربح / الفائض'];
+      rows = allUsedCurrencies.map(curr => {
+        const rev = revenueCurrencyTotals[curr] || 0;
+        const exp = expenseCurrencyTotals[curr] || 0;
+        const net = rev - exp;
+        return [
+          getArabicCurrencyName(curr),
+          `+${rev.toLocaleString('en-US')} ${curr}`,
+          `-${exp.toLocaleString('en-US')} ${curr}`,
+          `${net >= 0 ? '+' : ''}${net.toLocaleString('en-US')} ${curr}`
+        ];
+      });
+    } else if (reportSubSegment === 'outstanding-debts') {
+      title = 'سجل الديون والمديونيات المستحقة للعملاء';
+      headers = ['اسم العميل', 'اسم الشركة', 'رقم الهاتف', 'المبلغ المتبقي'];
+      rows = customers.map(cust => {
+        const custInvs = invoices.filter(inv => inv.customerId === cust.id);
+        const totalCost = custInvs.reduce((a, b) => {
+          const invItems = getInvoiceItemsForInvoice(b.invoiceNumber);
+          return a + getInvoiceActualCost(invItems, b);
+        }, 0);
+        const totalPaid = custInvs.reduce((a, b) => a + Number(b.amountPaid || 0), 0);
+        const extCollections = transactions
+          .filter(t => t.customerId === cust.id && t.type === 'receipt' && (!t.invoiceNumber || String(t.invoiceNumber).trim() === ''))
+          .reduce((a, b) => a + Number(b.amount || 0), 0);
+        const debt = Math.max(0, totalCost - (totalPaid + extCollections));
+        return { cust, debt };
+      }).filter(x => x.debt > 0).map(x => [
+        x.cust.name,
+        x.cust.companyName || '-',
+        x.cust.phone1 || '-',
+        `${x.debt.toLocaleString('en-US')} ${x.cust.liabilityCurrency || 'USD'}`
+      ]);
+    }
+
+    setPreviewData({
+      type: 'table',
+      data: {
+        table: {
+          title,
+          subtitle,
+          headers,
+          rows,
+          footerNotes: `طبع بتاريخ: ${new Date().toLocaleDateString('ar-YE')} | ${shopConfig?.shopName || ''}`
+        }
+      }
+    });
+  };
+
+  // Export active report to CSV
+  const handleExportActiveReportCSV = () => {
+    const filename = `تقرير_${reportSubSegment}_${new Date().toISOString().split('T')[0]}.csv`;
+    let headers: string[] = [];
+    let rows: (string | number)[][] = [];
+
+    if (reportSubSegment === 'revenues') {
+      headers = ['رقم السند', 'التاريخ', 'التصنيف', 'الجهة المستلم منها', 'الصندوق', 'المبلغ', 'العملة'];
+      rows = receiptTransactions.map(tx => [
+        tx.voucherNumber || '',
+        formatTxDate(tx),
+        `"${(tx.transactionCategory || '').replace(/"/g, '""')}"`,
+        `"${(tx.customerName || '').replace(/"/g, '""')}"`,
+        `"${getFundDisplayName(tx).replace(/"/g, '""')}"`,
+        Math.abs(Number(tx.amount || 0)),
+        tx.currency
+      ]);
+    } else if (reportSubSegment === 'expenses') {
+      headers = ['رقم السند', 'التاريخ', 'التصنيف المصروف', 'الصرف لصالح', 'الصندوق', 'المبلغ', 'العملة'];
+      rows = paymentTransactions.map(tx => [
+        tx.voucherNumber || '',
+        formatTxDate(tx),
+        `"${(tx.transactionCategory || '').replace(/"/g, '""')}"`,
+        `"${(tx.customerName || '').replace(/"/g, '""')}"`,
+        `"${getFundDisplayName(tx).replace(/"/g, '""')}"`,
+        Math.abs(Number(tx.amount || 0)),
+        tx.currency
+      ]);
+    } else if (reportSubSegment === 'fund-balances') {
+      headers = ['اسم الصندوق', 'النوع', 'العملة', 'الرصيد الفعلي'];
+      rows = funds.map(f => [
+        `"${f.name.replace(/"/g, '""')}"`,
+        f.type === 'cash' ? 'نقدي' : 'بنك',
+        f.currency,
+        parseFundBalance(f.balance)
+      ]);
+    } else if (reportSubSegment === 'profits') {
+      headers = ['العملة', 'إجمالي الوارد', 'إجمالي المصروف', 'صافي الربح'];
+      rows = allUsedCurrencies.map(curr => [
+        curr,
+        revenueCurrencyTotals[curr] || 0,
+        expenseCurrencyTotals[curr] || 0,
+        (revenueCurrencyTotals[curr] || 0) - (expenseCurrencyTotals[curr] || 0)
+      ]);
+    } else if (reportSubSegment === 'outstanding-debts') {
+      headers = ['اسم العميل', 'اسم الشركة', 'الهاتف', 'الديون المتبقية', 'العملة'];
+      rows = customers.map(cust => {
+        const custInvs = invoices.filter(inv => inv.customerId === cust.id);
+        const totalCost = custInvs.reduce((a, b) => {
+          const invItems = getInvoiceItemsForInvoice(b.invoiceNumber);
+          return a + getInvoiceActualCost(invItems, b);
+        }, 0);
+        const totalPaid = custInvs.reduce((a, b) => a + Number(b.amountPaid || 0), 0);
+        const extCollections = transactions
+          .filter(t => t.customerId === cust.id && t.type === 'receipt' && (!t.invoiceNumber || String(t.invoiceNumber).trim() === ''))
+          .reduce((a, b) => a + Number(b.amount || 0), 0);
+        const debt = Math.max(0, totalCost - (totalPaid + extCollections));
+        return { cust, debt };
+      }).filter(x => x.debt > 0).map(x => [
+        `"${x.cust.name.replace(/"/g, '""')}"`,
+        `"${(x.cust.companyName || '').replace(/"/g, '""')}"`,
+        x.cust.phone1 || '',
+        x.debt,
+        x.cust.liabilityCurrency || 'USD'
+      ]);
+    }
+
+    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  };
 
   const totalLedgerInvoicesPages = Math.max(1, Math.ceil(ledgerCustomerInvoices.length / itemsPerPage));
   const safeLedgerInvoicesPage = Math.min(currentPage, totalLedgerInvoicesPages);
@@ -1904,119 +2433,6 @@ export default function Vault({
 
       {/* Primary Layout Wrapper */}
       <div className="flex-1 grid grid-cols-1 gap-4">
-        
-        {/* RIGHT SIDEBAR MENU - Accounts Hierarchy */}
-        {false && activeSegment !== 'dashboard' && (
-          <div className="lg:col-span-1 bg-[#101010] border border-white/5 rounded-3xl p-4 flex flex-col gap-5 overflow-y-auto">
-            <div>
-              <h3 className="text-[10px] font-black uppercase text-gray-500 tracking-wider mr-1 mb-2 font-cairo">شجرة النظام المالي</h3>
-              
-              <div className="space-y-1">
-                
-                {/* Dashboard Back */}
-                <button 
-                  onClick={() => { setActiveSegment('dashboard'); setErrorMsg(null); }}
-                  className="p-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all border border-white/5 flex items-center justify-center mb-4"
-                  title="العودة للرئيسية"
-                >
-                  <ArrowRight size={20} className="text-gray-500" />
-                </button>
-
-                {/* Vouchers Header */}
-              <div className="px-2 py-1 text-xs text-gray-400 font-bold font-cairo">
-                سندات التحويل المالي
-              </div>
-
-              {/* Receipt */}
-              <button 
-                onClick={() => { setActiveSegment('receipt'); setErrorMsg(null); }}
-                className={`w-full text-right px-4 py-2.5 rounded-xl text-xs font-bold font-cairo transition-all flex items-center justify-between ${activeSegment === 'receipt' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-500/15' : 'hover:bg-white/5 text-gray-300'}`}
-              >
-                <span className="flex items-center gap-2">
-                  <TrendingUp size={16} className={activeSegment === 'receipt' ? 'text-white' : 'text-green-500'} />
-                  سند قبض ونقد وارد
-                </span>
-                <span className="font-mono text-[9px] bg-white/10 px-1.5 py-0.5 rounded text-white font-bold">وارد</span>
-              </button>
-
-              {/* Payment */}
-              <button 
-                onClick={() => { setActiveSegment('payment'); setErrorMsg(null); }}
-                className={`w-full text-right px-4 py-2.5 rounded-xl text-xs font-bold font-cairo transition-all flex items-center justify-between ${activeSegment === 'payment' ? 'bg-amber-600 text-white shadow-lg shadow-amber-500/15' : 'hover:bg-white/5 text-gray-300'}`}
-              >
-                <span className="flex items-center gap-2">
-                  <TrendingDown size={16} className={activeSegment === 'payment' ? 'text-white' : 'text-amber-500'} />
-                  سند صرف ونفقات صادرة
-                </span>
-                <span className="font-mono text-[9px] bg-white/10 px-1.5 py-0.5 rounded text-white font-bold">صادر</span>
-              </button>
-
-              <div className="h-[1px] bg-white/5 my-3" />
-
-              {/* Box Funds */}
-              <button 
-                onClick={() => { setActiveSegment('funds'); setErrorMsg(null); }}
-                className={`w-full text-right px-4 py-2.5 rounded-xl text-xs font-bold font-cairo transition-all flex items-center gap-2 ${activeSegment === 'funds' ? 'bg-blue-600 text-white shadow-lg shadow-blue-500/15' : 'hover:bg-white/5 text-gray-300'}`}
-              >
-                <Wallet size={16} className={activeSegment === 'funds' ? 'text-white' : 'text-blue-500'} />
-                رصيد وحركة الصناديق المال
-              </button>
-
-              {/* Client Ledger */}
-              <button 
-                onClick={() => { setActiveSegment('customer-ledger'); setErrorMsg(null); }}
-                className={`w-full text-right px-4 py-2.5 rounded-xl text-xs font-bold font-cairo transition-all flex items-center gap-2 ${activeSegment === 'customer-ledger' ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/15' : 'hover:bg-white/5 text-gray-300'}`}
-              >
-                <Users size={16} className={activeSegment === 'customer-ledger' ? 'text-white' : 'text-purple-500'} />
-                كشف حسابات العملاء
-              </button>
-
-              <div className="h-[1px] bg-white/5 my-3" />
-
-              {/* Reports */}
-              <div className="px-2 py-1 text-xs text-gray-400 font-bold font-cairo">
-                التقارير والمؤشرات المالية
-              </div>
-
-              <button 
-                onClick={() => { setActiveSegment('reports'); setReportSubSegment('revenues'); setErrorMsg(null); }}
-                className={`w-full text-right px-4 py-2 rounded-xl text-xs font-medium font-cairo transition-all flex items-center justify-between ${activeSegment === 'reports' && reportSubSegment === 'revenues' ? 'bg-white/10 text-white font-bold' : 'hover:bg-white/5 text-gray-400'}`}
-              >
-                <span>• الإيرادات والمداخيل</span>
-              </button>
-
-              <button 
-                onClick={() => { setActiveSegment('reports'); setReportSubSegment('expenses'); setErrorMsg(null); }}
-                className={`w-full text-right px-4 py-2 rounded-xl text-xs font-medium font-cairo transition-all flex items-center justify-between ${activeSegment === 'reports' && reportSubSegment === 'expenses' ? 'bg-white/10 text-white font-bold' : 'hover:bg-white/5 text-gray-400'}`}
-              >
-                <span>• المصروفات والمدفوعات</span>
-              </button>
-
-              <button 
-                onClick={() => { setActiveSegment('reports'); setReportSubSegment('profits'); setErrorMsg(null); }}
-                className={`w-full text-right px-4 py-2 rounded-xl text-xs font-medium font-cairo transition-all flex items-center justify-between ${activeSegment === 'reports' && reportSubSegment === 'profits' ? 'bg-white/10 text-white font-bold' : 'hover:bg-white/5 text-gray-400'}`}
-              >
-                <span>• الأرباح والصافي</span>
-              </button>
-
-              <button 
-                onClick={() => { setActiveSegment('reports'); setReportSubSegment('fund-balances'); setErrorMsg(null); }}
-                className={`w-full text-right px-4 py-2 rounded-xl text-xs font-medium font-cairo transition-all flex items-center justify-between ${activeSegment === 'reports' && reportSubSegment === 'fund-balances' ? 'bg-white/10 text-white font-bold' : 'hover:bg-white/5 text-gray-400'}`}
-              >
-                <span>• أرصدة كتل الصناديق</span>
-              </button>
-
-              <button 
-                onClick={() => { setActiveSegment('reports'); setReportSubSegment('outstanding-debts'); setErrorMsg(null); }}
-                className={`w-full text-right px-4 py-2 rounded-xl text-xs font-medium font-cairo transition-all flex items-center justify-between ${activeSegment === 'reports' && reportSubSegment === 'outstanding-debts' ? 'bg-white/10 text-white font-bold' : 'hover:bg-white/5 text-gray-400'}`}
-              >
-                <span>• مديونيات وحقوق معلقة</span>
-              </button>
-
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* LEFT WORKSPACE CARD */}
       <div className={`${activeSegment === 'dashboard' ? 'lg:col-span-4 bg-transparent border-0 !p-0 shadow-none' : 'lg:col-span-4 bg-[#101010] border-y border-white/5 p-0'} flex flex-col overflow-y-auto`}>
@@ -3166,6 +3582,25 @@ export default function Vault({
                           {parseFundBalance(fund.balance).toLocaleString('en-US')} <span className="text-[11px] font-sans text-gray-500">{fund.currency}</span>
                         </span>
                       </div>
+
+                      <div className="flex items-center gap-2 border-t border-white/5 pt-3">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedFundForReport(fund)}
+                          className="flex-1 py-2 px-3 bg-blue-600/15 hover:bg-blue-600/30 text-blue-400 hover:text-white border border-blue-500/20 rounded-xl text-xs font-bold font-cairo transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <FileText size={14} />
+                          <span>كشف حساب الصندوق</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleQuickPrintFund(fund)}
+                          className="p-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl border border-white/5 transition-all cursor-pointer"
+                          title="طباعة كشف حركات الصندوق A4"
+                        >
+                          <Printer size={15} />
+                        </button>
+                      </div>
                     </div>
                   );
                 })}
@@ -3173,60 +3608,207 @@ export default function Vault({
 
               {/* Fund Movements Table below boxes */}
               <div className="mt-8 space-y-4">
-                <div className="flex items-center justify-between">
-                  <h4 className="text-xs font-black text-gray-400 uppercase tracking-widest font-cairo mr-1">سجل حركات الصناديق الأخيرة</h4>
-                  <div className="relative">
-                    <button 
-                      onClick={() => setShowFundTxSort(!showFundTxSort)}
-                      className="p-2 bg-white/5 border border-white/5 rounded-lg text-gray-400 hover:text-white transition-all flex items-center gap-1.5"
-                    >
-                       <span className="text-[10px] font-bold font-cairo sm:block hidden">ترتيب وفرز</span>
-                       <ArrowUpDown size={14} />
-                    </button>
-                    {showFundTxSort && (
-                       <div className="absolute z-50 left-0 mt-2 bg-[#1f1f1f] border border-white/10 rounded-xl shadow-2xl p-1.5 w-48">
-                         <button onClick={() => { setVoucherSortConfig({ key: 'date', direction: 'desc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب التاريخ (الأحدث)</button>
-                         <button onClick={() => { setVoucherSortConfig({ key: 'alpha', direction: 'asc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب الصندوق (أ - ي)</button>
-                         <button onClick={() => { setVoucherSortConfig({ key: 'alpha', direction: 'desc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب الصندوق (ي - أ)</button>
-                         <button onClick={() => { setVoucherSortConfig({ key: 'category', direction: 'asc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب نوع الحركة</button>
-                         <button onClick={() => { setVoucherSortConfig({ key: 'amount', direction: 'desc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">المبلغ (الأكبر)</button>
-                         <button onClick={() => { setVoucherSortConfig({ key: 'amount', direction: 'asc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">المبلغ (الأصغر)</button>
-                       </div>
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <h4 className="text-xs font-black text-white uppercase tracking-widest font-cairo mr-1 flex items-center gap-1.5">
+                      <FileText size={15} className="text-blue-400" />
+                      سجل حركات وسندات الصناديق والقيود
+                    </h4>
+                    <span className="px-2 py-0.5 rounded-lg bg-blue-500/10 border border-blue-500/20 text-[10px] font-mono text-blue-300 font-bold">
+                      {filteredVaultTransactions.length} قيد معروض
+                    </span>
+                    {filteredVaultTransactions.length !== sortedTransactions.length && (
+                      <span className="text-[10px] text-gray-500 font-cairo">
+                        (من إجمالي {sortedTransactions.length})
+                      </span>
                     )}
                   </div>
-                </div>
-                <div className="border border-white/5 rounded-2xl overflow-auto bg-black/20 max-h-96 scrollbar-thin">
-                  <table className="w-full text-right text-[10px] whitespace-nowrap min-w-[600px]">
-                    <thead>
-                      <tr className="bg-white/5 text-gray-500 font-black border-b border-white/5">
-                        <th className="px-4 py-3">الصندوق</th>
-                        <th className="px-4 py-3">التاريخ</th>
-                        <th className="px-4 py-3">نوع الحركة</th>
-                        <th className="px-4 py-3 text-center">المبلغ</th>
-                        <th className="px-4 py-3 text-left">التفاصيل</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {currentVaultTransactions.map(tx => (
-                        <tr key={tx.id} className="hover:bg-white/5 bg-[#141414] transition-colors">
-                          <td className="px-4 py-3 font-bold text-gray-300">{getFundDisplayName(tx)}</td>
-                          <td className="px-4 py-3 text-gray-500 font-mono">
-                            {formatTxDate(tx)}
-                          </td>
-                          <td className="px-4 py-3">
-                            <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${tx.type === 'receipt' ? 'bg-green-600/15 text-green-400' : 'bg-amber-600/15 text-amber-500'}`}>
-                              {tx.type === 'receipt' ? 'إيداع' : (tx.transactionCategory === 'مشتريات قطع وملحقات' ? 'شراء قطع' : 'سحب / صرف')}
-                            </span>
-                          </td>
-                          <td className={`px-4 py-3 text-center font-bold ${tx.type === 'receipt' ? 'text-green-400' : 'text-red-500'}`}>
-                            {Math.abs(Number(tx.amount))?.toLocaleString('en-US')} {tx.currency}
-                          </td>
-                          <td className="px-4 py-3 text-gray-500 text-left truncate max-w-[180px]">{tx.notes || 'حركة نقدية.'}</td>
-                        </tr>
+
+                  <div className="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+                    {/* Fund filter */}
+                    <select
+                      value={fundMovementSelectedFund}
+                      onChange={(e) => setFundMovementSelectedFund(e.target.value)}
+                      className="bg-[#1a1a1a] border border-white/10 text-white text-xs px-2.5 py-1.5 rounded-lg font-cairo outline-none focus:border-blue-500 cursor-pointer"
+                    >
+                      <option value="all">كل الصناديق</option>
+                      {funds.map(f => (
+                        <option key={f.id} value={f.id}>{f.name} ({f.currency})</option>
                       ))}
-                    </tbody>
-                  </table>
+                    </select>
+
+                    {/* Type filter */}
+                    <select
+                      value={fundMovementSelectedType}
+                      onChange={(e) => setFundMovementSelectedType(e.target.value)}
+                      className="bg-[#1a1a1a] border border-white/10 text-white text-xs px-2.5 py-1.5 rounded-lg font-cairo outline-none focus:border-blue-500 cursor-pointer"
+                    >
+                      <option value="all">كل الحركات والقيود</option>
+                      <option value="receipt">سندات القبض (وارد)</option>
+                      <option value="payment">سندات الصرف (صادر)</option>
+                      <option value="transfer">التحويل بين الصناديق</option>
+                      <option value="reversed">القيود المعكوسة/الملغاة</option>
+                    </select>
+
+                    {/* Status filter (Active vs Reversed) */}
+                    <select
+                      value={fundMovementShowReversed}
+                      onChange={(e) => setFundMovementShowReversed(e.target.value as any)}
+                      className="bg-[#1a1a1a] border border-white/10 text-white text-xs px-2.5 py-1.5 rounded-lg font-cairo outline-none focus:border-blue-500 cursor-pointer"
+                    >
+                      <option value="active">السندات النشطة فقط</option>
+                      <option value="all">عرض الكل (نشطة وملغاة)</option>
+                      <option value="reversed">المعكوسة والملغاة فقط</option>
+                    </select>
+
+                    {/* Reset Filters button if any filter is active */}
+                    {(fundMovementSelectedFund !== 'all' || fundMovementSelectedType !== 'all' || fundMovementShowReversed !== 'active' || globalSearch) && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setFundMovementSelectedFund('all');
+                          setFundMovementSelectedType('all');
+                          setFundMovementShowReversed('active');
+                          setGlobalSearch('');
+                        }}
+                        className="p-1.5 px-2 bg-rose-600/15 hover:bg-rose-600/25 text-rose-400 border border-rose-500/20 rounded-lg transition-all text-xs font-bold font-cairo flex items-center gap-1 cursor-pointer"
+                        title="إعادة ضبط الفلاتر وإظهار كافة السندات"
+                      >
+                        <X size={13} />
+                        <span className="hidden lg:inline text-[10px]">إظهار الكل</span>
+                      </button>
+                    )}
+
+                    {/* Print table button */}
+                    <button
+                      type="button"
+                      onClick={handlePrintFundMovementsTable}
+                      className="p-2 bg-blue-600/20 hover:bg-blue-600/30 text-blue-400 hover:text-white border border-blue-500/30 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold font-cairo cursor-pointer"
+                      title="طباعة سجل الحركات A4"
+                    >
+                      <Printer size={14} />
+                      <span className="hidden md:inline">طباعة</span>
+                    </button>
+
+                    {/* Export CSV button */}
+                    <button
+                      type="button"
+                      onClick={handleExportFundMovementsCSV}
+                      className="p-2 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-400 hover:text-white border border-emerald-500/30 rounded-lg transition-all flex items-center gap-1.5 text-xs font-bold font-cairo cursor-pointer"
+                      title="تصدير إلى Excel (CSV)"
+                    >
+                      <Download size={14} />
+                      <span className="hidden md:inline">تصدير CSV</span>
+                    </button>
+
+                    {/* Sort button */}
+                    <div className="relative">
+                      <button 
+                        onClick={() => setShowFundTxSort(!showFundTxSort)}
+                        className="p-2 bg-white/5 border border-white/5 rounded-lg text-gray-400 hover:text-white transition-all flex items-center gap-1.5 cursor-pointer"
+                      >
+                         <span className="text-[10px] font-bold font-cairo sm:block hidden">ترتيب</span>
+                         <ArrowUpDown size={14} />
+                      </button>
+                      {showFundTxSort && (
+                         <div className="absolute z-50 left-0 mt-2 bg-[#1f1f1f] border border-white/10 rounded-xl shadow-2xl p-1.5 w-48">
+                           <button onClick={() => { setVoucherSortConfig({ key: 'date', direction: 'desc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب التاريخ (الأحدث)</button>
+                           <button onClick={() => { setVoucherSortConfig({ key: 'alpha', direction: 'asc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب الصندوق (أ - ي)</button>
+                           <button onClick={() => { setVoucherSortConfig({ key: 'alpha', direction: 'desc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب الصندوق (ي - أ)</button>
+                           <button onClick={() => { setVoucherSortConfig({ key: 'category', direction: 'asc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">حسب نوع الحركة</button>
+                           <button onClick={() => { setVoucherSortConfig({ key: 'amount', direction: 'desc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">المبلغ (الأكبر)</button>
+                           <button onClick={() => { setVoucherSortConfig({ key: 'amount', direction: 'asc' }); setShowFundTxSort(false); }} className="w-full text-right px-3 py-1.5 text-[10px] hover:bg-blue-600 hover:text-white text-slate-300 rounded font-bold font-cairo transition-colors">المبلغ (الأصغر)</button>
+                         </div>
+                      )}
+                    </div>
+                  </div>
                 </div>
+
+                {filteredVaultTransactions.length === 0 ? (
+                  <div className="border border-white/5 rounded-2xl p-8 text-center bg-black/20 space-y-3">
+                    <FileText size={36} className="mx-auto text-gray-600 opacity-60" />
+                    <p className="text-xs font-bold text-gray-400 font-cairo">لا توجد حركات أو سندات مطابقة لمعايير الفلترة الحالية</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setFundMovementSelectedFund('all');
+                        setFundMovementSelectedType('all');
+                        setFundMovementShowReversed('all');
+                        setGlobalSearch('');
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold font-cairo transition-all cursor-pointer shadow-lg shadow-blue-600/20"
+                    >
+                      إظهار كافة السندات والقيود بدون فلتر ({sortedTransactions.length} قيد)
+                    </button>
+                  </div>
+                ) : (
+                  <div className="border border-white/5 rounded-2xl overflow-auto bg-black/20 max-h-[32rem] scrollbar-thin">
+                    <table className="w-full text-right text-[11px] whitespace-nowrap min-w-[700px]">
+                      <thead>
+                        <tr className="bg-white/5 text-gray-300 font-bold border-b border-white/5 font-cairo">
+                          <th className="px-3.5 py-3">رقم السند</th>
+                          <th className="px-3.5 py-3">التاريخ والوقت</th>
+                          <th className="px-3.5 py-3">الصندوق</th>
+                          <th className="px-3.5 py-3">البيان والتفاصيل</th>
+                          <th className="px-3.5 py-3 text-center">مدين (وارد)</th>
+                          <th className="px-3.5 py-3 text-center">دائن (منصرف)</th>
+                          <th className="px-3.5 py-3 text-left">المبلغ والعملة</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5 font-cairo">
+                        {currentVaultTransactions.map(tx => {
+                          const isReceipt = tx.type === 'receipt' || tx.type === 'deposit' || tx.type === 'invoice_payment' || (tx.type as string) === 'inflow';
+                          const amount = Math.abs(Number(tx.amount || 0));
+                          const debit = isReceipt ? amount : 0;
+                          const credit = !isReceipt ? amount : 0;
+                          const isRev = tx.isReversed === 1 || tx.isReversed === true || tx.isReversed === '1' ||
+                                        tx.isReversal === 1 || tx.isReversal === true || tx.isReversal === '1' ||
+                                        (tx.status || '').toLowerCase().trim() === 'reversed' ||
+                                        (tx.status || '').toLowerCase().trim() === 'reversal';
+
+                          return (
+                            <tr key={tx.id} className={`hover:bg-white/5 transition-colors ${isRev ? 'opacity-60 bg-red-950/10' : 'bg-[#141414]'}`}>
+                              <td className="px-3.5 py-2.5 font-mono font-bold text-amber-500">
+                                {tx.voucherNumber ? `#${tx.voucherNumber}` : '-'}
+                              </td>
+                              <td className="px-3.5 py-2.5 text-gray-400 font-mono text-[10px]">
+                                {formatTxDate(tx)}
+                              </td>
+                              <td className="px-3.5 py-2.5 font-bold text-gray-300">
+                                {getFundDisplayName(tx)}
+                              </td>
+                              <td className="px-3.5 py-2.5">
+                                <div className="flex flex-col gap-0.5">
+                                  <span className="font-bold text-white text-xs leading-tight">
+                                    {formatFundTxDetails(tx)}
+                                  </span>
+                                  {tx.userName && (
+                                    <span className="text-[9px] text-gray-500">
+                                      بواسطة: {tx.userName}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-3.5 py-2.5 text-center font-mono font-bold text-emerald-400">
+                                {debit > 0 ? `+${debit.toLocaleString('en-US')}` : <span className="text-gray-600 font-normal">-</span>}
+                              </td>
+                              <td className="px-3.5 py-2.5 text-center font-mono font-bold text-rose-400">
+                                {credit > 0 ? `-${credit.toLocaleString('en-US')}` : <span className="text-gray-600 font-normal">-</span>}
+                              </td>
+                              <td className="px-3.5 py-2.5 text-left font-mono font-black text-white">
+                                <span>{amount.toLocaleString('en-US')}</span>
+                                <span className="text-[10px] text-gray-500 font-sans mr-1">{tx.currency}</span>
+                                {isRev && (
+                                  <span className="mr-1.5 px-1.5 py-0.5 rounded text-[9px] bg-rose-500/20 text-rose-400 font-bold">ملغي</span>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
 
                 {/* Pagination Controls */}
                 {totalVaultPages > 1 && (
@@ -3537,7 +4119,7 @@ export default function Vault({
             <div className="space-y-4 animate-fade-in">
               
               {/* Report Category Header */}
-              <div className="flex items-center justify-between border-b border-white/5 pb-3">
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-white/5 pb-3">
                 <div className="flex items-center gap-3">
                   <button 
                     onClick={() => setActiveSegment('dashboard')}
@@ -3557,6 +4139,27 @@ export default function Vault({
                       {reportSubSegment === 'outstanding-debts' && 'سجل الديون والمديونيات المستحقة'}
                     </span>
                   </h3>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handlePrintActiveReport}
+                    className="py-1.5 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-black text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-blue-600/20"
+                    title="طباعة التقرير الحالي A4"
+                  >
+                    <Printer size={14} />
+                    <span>طباعة التقرير</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleExportActiveReportCSV}
+                    className="py-1.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-black text-xs transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20"
+                    title="تصدير التقرير إلى Excel (CSV)"
+                  >
+                    <Download size={14} />
+                    <span>تصدير Excel</span>
+                  </button>
                 </div>
               </div>
 
@@ -4229,6 +4832,255 @@ export default function Vault({
           </div>
         </div>
       )}
+
+      {/* Fund Statement & Movement Report Modal */}
+      {selectedFundForReport && (() => {
+        const fund = selectedFundForReport;
+        const allFundTxs = transactions.filter(tx => {
+          if (!isAccountingTransactionValid(tx)) return false;
+          const tFundId = String(tx.fundId || '');
+          const tFundName = String(tx.fundName || '').trim();
+          return tFundId === fund.id || tFundName === fund.name;
+        });
+
+        const allStatementEntries = computeFundChronologicalStatement(fund, allFundTxs);
+
+        const filteredEntries = allStatementEntries.filter(entry => {
+          // Date filter
+          const rawDate = entry.rawTx.createdAt || entry.rawTx.timestamp;
+          const txDate = rawDate ? (typeof (rawDate as any)?.toDate === 'function' ? (rawDate as any).toDate().toISOString() : String(rawDate)) : '';
+          const txDay = txDate.split('T')[0] || '';
+          if (fundReportDateFrom && txDay && txDay < fundReportDateFrom) return false;
+          if (fundReportDateTo && txDay && txDay > fundReportDateTo) return false;
+
+          // Type filter
+          if (fundReportType === 'receipt' && entry.debit <= 0) return false;
+          if (fundReportType === 'payment' && entry.credit <= 0) return false;
+
+          // Search filter
+          if (fundReportSearch) {
+            const s = fundReportSearch.toLowerCase().trim();
+            const match = (entry.details || '').toLowerCase().includes(s) ||
+                          (entry.voucherNumber || '').toLowerCase().includes(s) ||
+                          (entry.rawTx.customerName || '').toLowerCase().includes(s) ||
+                          (entry.rawTx.notes || '').toLowerCase().includes(s) ||
+                          String(entry.rawTx.invoiceNumber || '').toLowerCase().includes(s);
+            if (!match) return false;
+          }
+
+          return true;
+        });
+
+        const totalIn = filteredEntries.reduce((s, e) => s + e.debit, 0);
+        const totalOut = filteredEntries.reduce((s, e) => s + e.credit, 0);
+        const netFlow = totalIn - totalOut;
+        const currentDisplayedBalance = filteredEntries.length > 0 ? filteredEntries[filteredEntries.length - 1].runningBalance : parseFundBalance(fund.balance);
+
+        return (
+          <div className="fixed inset-0 z-[150] bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-6 animate-fade-in" dir="rtl">
+            <div className="bg-[#141414] border border-white/10 rounded-2xl w-full max-w-5xl max-h-[92vh] flex flex-col shadow-2xl overflow-hidden">
+              {/* Modal Header */}
+              <div className="p-4 sm:p-5 border-b border-white/10 flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-[#181818]">
+                <div className="flex items-center gap-3">
+                  <div className="p-2.5 bg-blue-500/10 border border-blue-500/20 text-blue-400 rounded-xl">
+                    <FileText size={22} />
+                  </div>
+                  <div>
+                    <h3 className="text-base sm:text-lg font-black text-white font-cairo flex items-center gap-2">
+                      <span>كشف حساب وحركات:</span>
+                      <span className="text-blue-400 font-bold">{fund.name}</span>
+                    </h3>
+                    <p className="text-[11px] text-gray-400 font-cairo mt-0.5">
+                      النوع: {fund.type === 'cash' ? 'صندوق نقدي' : 'حساب بنكي'} | العملة الأساسية: {fund.currency}
+                    </p>
+                  </div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handlePrintFundStatement(fund, filteredEntries)}
+                    className="py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold font-cairo transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-blue-600/20"
+                    title="طباعة كشف الحساب A4"
+                  >
+                    <Printer size={15} />
+                    <span className="hidden sm:inline">طباعة A4</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleExportFundCSV(fund, filteredEntries)}
+                    className="py-2 px-3 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold font-cairo transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-emerald-600/20"
+                    title="تصدير إلى ملف Excel (CSV)"
+                  >
+                    <Download size={15} />
+                    <span className="hidden sm:inline">تصدير Excel</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleShareFundWhatsApp(fund, filteredEntries)}
+                    className="py-2 px-3 bg-green-600 hover:bg-green-500 text-white rounded-xl text-xs font-bold font-cairo transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-green-600/20"
+                    title="مشاركة الملخص عبر واتساب"
+                  >
+                    <Share2 size={15} />
+                    <span className="hidden sm:inline">واتساب</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedFundForReport(null)}
+                    className="p-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl border border-white/5 transition-all cursor-pointer mr-1"
+                  >
+                    <X size={18} />
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter & Summary Section */}
+              <div className="p-4 sm:p-5 border-b border-white/5 bg-[#121212] space-y-4 overflow-y-auto">
+                {/* Stats cards */}
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  <div className="bg-[#1a1a1a] border border-white/5 p-3 rounded-xl">
+                    <span className="text-[10px] text-gray-400 font-cairo block">الرصيد في نهاية الفترة</span>
+                    <span className="text-base sm:text-lg font-black font-mono text-emerald-400">
+                      {currentDisplayedBalance.toLocaleString('en-US')} <span className="text-[10px] font-sans text-gray-500">{fund.currency}</span>
+                    </span>
+                  </div>
+                  <div className="bg-emerald-950/20 border border-emerald-500/20 p-3 rounded-xl">
+                    <span className="text-[10px] text-emerald-400 font-cairo block">إجمالي الوارد (مدين)</span>
+                    <span className="text-base sm:text-lg font-black font-mono text-emerald-300">
+                      +{totalIn.toLocaleString('en-US')} <span className="text-[10px] font-sans text-emerald-500">{fund.currency}</span>
+                    </span>
+                  </div>
+                  <div className="bg-rose-950/20 border border-rose-500/20 p-3 rounded-xl">
+                    <span className="text-[10px] text-rose-400 font-cairo block">إجمالي المنصرف (دائن)</span>
+                    <span className="text-base sm:text-lg font-black font-mono text-rose-300">
+                      -{totalOut.toLocaleString('en-US')} <span className="text-[10px] font-sans text-rose-500">{fund.currency}</span>
+                    </span>
+                  </div>
+                  <div className="bg-[#1a1a1a] border border-white/5 p-3 rounded-xl">
+                    <span className="text-[10px] text-gray-400 font-cairo block">صافي حركة الفترة</span>
+                    <span className={`text-base sm:text-lg font-black font-mono ${netFlow >= 0 ? 'text-blue-400' : 'text-amber-400'}`}>
+                      {netFlow >= 0 ? '+' : ''}{netFlow.toLocaleString('en-US')} <span className="text-[10px] font-sans text-gray-500">{fund.currency}</span>
+                    </span>
+                  </div>
+                </div>
+
+                {/* Filters */}
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-2.5">
+                  <div>
+                    <label className="text-[10px] text-gray-400 font-cairo block mb-1">من تاريخ:</label>
+                    <input
+                      type="date"
+                      value={fundReportDateFrom}
+                      onChange={(e) => setFundReportDateFrom(e.target.value)}
+                      className="w-full bg-[#181818] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white font-mono outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-400 font-cairo block mb-1">إلى تاريخ:</label>
+                    <input
+                      type="date"
+                      value={fundReportDateTo}
+                      onChange={(e) => setFundReportDateTo(e.target.value)}
+                      className="w-full bg-[#181818] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white font-mono outline-none focus:border-blue-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-400 font-cairo block mb-1">نوع الحركة:</label>
+                    <select
+                      value={fundReportType}
+                      onChange={(e) => setFundReportType(e.target.value as any)}
+                      className="w-full bg-[#181818] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white font-cairo outline-none focus:border-blue-500 cursor-pointer"
+                    >
+                      <option value="all">كل الحركات</option>
+                      <option value="receipt">قبض / إيداع فقط (مدين)</option>
+                      <option value="payment">صرف / سحب فقط (دائن)</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] text-gray-400 font-cairo block mb-1">بحث في القيود:</label>
+                    <input
+                      type="text"
+                      placeholder="بحث بالعميل، السند، البيان..."
+                      value={fundReportSearch}
+                      onChange={(e) => setFundReportSearch(e.target.value)}
+                      className="w-full bg-[#181818] border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white font-cairo outline-none focus:border-blue-500"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Transactions Table Body */}
+              <div className="flex-1 overflow-auto p-4 sm:p-5 scrollbar-thin">
+                {filteredEntries.length === 0 ? (
+                  <div className="py-12 text-center text-gray-500 font-cairo">
+                    <FileText size={40} className="mx-auto text-gray-600 mb-2 opacity-50" />
+                    <p className="text-sm font-bold">لا توجد حركات مسجلة لهذا الصندوق وفقاً لمعايير التصفية المختارة</p>
+                    <p className="text-xs text-gray-600 mt-1">جرّب تغيير نطاق التواريخ أو تصفية نوع الحركات</p>
+                  </div>
+                ) : (
+                  <div className="border border-white/10 rounded-xl overflow-x-auto w-full scrollbar-thin bg-black/20 shadow-inner">
+                    <table className="w-full text-right text-xs whitespace-nowrap min-w-[820px] table-auto">
+                      <thead>
+                        <tr className="bg-white/5 text-gray-300 font-bold border-b border-white/5 font-cairo">
+                          <th className="px-3.5 py-3 text-center w-20">رقم السند</th>
+                          <th className="px-3.5 py-3 w-36">التاريخ والوقت</th>
+                          <th className="px-3.5 py-3 min-w-[280px]">البيان والتفاصيل</th>
+                          <th className="px-3.5 py-3 text-center w-28">مدين (وارد)</th>
+                          <th className="px-3.5 py-3 text-center w-28">دائن (منصرف)</th>
+                          <th className="px-3.5 py-3 text-left w-32">الرصيد</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5 font-cairo">
+                        {filteredEntries.map(entry => (
+                          <tr key={entry.id} className="hover:bg-white/5 transition-colors">
+                            <td className="px-3.5 py-2.5 font-mono font-bold text-amber-500 text-center">
+                              {entry.voucherNumber ? `#${entry.voucherNumber}` : '-'}
+                            </td>
+                            <td className="px-3.5 py-2.5 font-mono text-gray-400 text-[11px] whitespace-nowrap">{entry.dateStr}</td>
+                            <td className="px-3.5 py-2.5 whitespace-normal max-w-[340px]">
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-bold text-white text-xs leading-tight">
+                                  {entry.details}
+                                </span>
+                                {entry.rawTx.userName && (
+                                  <span className="text-[10px] text-gray-500">
+                                    المستخدم: {entry.rawTx.userName}
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3.5 py-2.5 text-center font-mono font-bold text-emerald-400 whitespace-nowrap">
+                              {entry.debit > 0 ? `+${entry.debit.toLocaleString('en-US')}` : <span className="text-gray-600 font-normal">-</span>}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-center font-mono font-bold text-rose-400 whitespace-nowrap">
+                              {entry.credit > 0 ? `-${entry.credit.toLocaleString('en-US')}` : <span className="text-gray-600 font-normal">-</span>}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-left font-mono font-black text-blue-400 whitespace-nowrap">
+                              {entry.runningBalance.toLocaleString('en-US')} <span className="text-[10px] text-gray-500 font-sans">{fund.currency}</span>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* Modal Footer */}
+              <div className="p-3 sm:p-4 border-t border-white/10 bg-[#181818] flex items-center justify-between text-xs font-cairo text-gray-400">
+                <span>إجمالي الحركات المعروضة: <strong className="text-white font-mono">{filteredEntries.length}</strong> حركة</span>
+                <button
+                  type="button"
+                  onClick={() => setSelectedFundForReport(null)}
+                  className="py-1.5 px-4 bg-white/5 hover:bg-white/10 text-white rounded-lg transition-colors cursor-pointer"
+                >
+                  إغلاق
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );
