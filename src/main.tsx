@@ -14,10 +14,7 @@ const init = async () => {
     let jeepSqlite = document.querySelector('jeep-sqlite');
     if (!jeepSqlite) {
       jeepSqlite = document.createElement('jeep-sqlite');
-      jeepSqlite.setAttribute('wasmPath', '/assets');
       document.body.appendChild(jeepSqlite);
-    } else if (!jeepSqlite.getAttribute('wasmPath')) {
-      jeepSqlite.setAttribute('wasmPath', '/assets');
     }
     await customElements.whenDefined('jeep-sqlite');
   }
