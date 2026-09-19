@@ -32,6 +32,10 @@ function isNoPartsText(text: any): boolean {
   );
 }
 
+function isDeliveredStatus(status: any): boolean {
+  return status === '60' || status === 'delivered';
+}
+
 function getItemSubStatus(item: InvoiceItem): string {
   if (item.subStatus) {
     return item.subStatus;
@@ -185,13 +189,13 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
   useEffect(() => {
     if (selectedInvoice) {
       const cleanInvNo = String(selectedInvoice.invoiceNumber || '').replace('#', '');
-      const currentReadyItems = items.filter(i => {
+      const currentModalItems = items.filter(i => {
         const itClean = String(i.invoiceNumber || '').replace('#', '');
-        return (itClean === cleanInvNo || i.invoiceId === selectedInvoice.id) && EXIT_READY_STATUSES.includes(i.status);
+        return (itClean === cleanInvNo || i.invoiceId === selectedInvoice.id) && (EXIT_READY_STATUSES.includes(i.status) || isDeliveredStatus(i.status));
       });
       // Ensure strict uniqueness by ID
       const uniqueMap = new Map<string, InvoiceItem>();
-      currentReadyItems.forEach(it => {
+      currentModalItems.forEach(it => {
         if (it.id) uniqueMap.set(it.id, it);
       });
       setInvoiceItems(Array.from(uniqueMap.values()));
@@ -284,6 +288,13 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
     selectedCost: number;
     isPayOnly?: boolean;
     voucherData?: any;
+    isPartialExit?: boolean;
+    currentItemsTotal?: number;
+    previousRemaining?: number;
+    previousPaid?: number;
+    paidForCurrent?: number;
+    paidForPrevious?: number;
+    totalInvoiceCost?: number;
   } | null>(null);
   const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
   const isFinalizingRef = useRef<boolean>(false);
@@ -399,21 +410,21 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
     setIsPayOnly(false);
     setPrepaymentSuccessMsg(null);
     const cleanInvNo = String(invoice.invoiceNumber || '').replace('#', '');
-    const invoiceReadyItems = items.filter(i => {
+    const invoiceModalItems = items.filter(i => {
       const itClean = String(i.invoiceNumber || '').replace('#', '');
-      return (itClean === cleanInvNo || i.invoiceId === invoice.id) && EXIT_READY_STATUSES.includes(i.status);
+      return (itClean === cleanInvNo || i.invoiceId === invoice.id) && (EXIT_READY_STATUSES.includes(i.status) || isDeliveredStatus(i.status));
     });
     // Strict uniqueness by ID
     const uniqueMap = new Map<string, InvoiceItem>();
-    invoiceReadyItems.forEach(it => {
+    invoiceModalItems.forEach(it => {
       if (it.id) uniqueMap.set(it.id, it);
     });
     const uniqueList = Array.from(uniqueMap.values());
     setInvoiceItems(uniqueList);
     
-    // Select all ready items by default
-    const allIds = new Set(uniqueList.map(i => i.id!));
-    setSelectedItemIds(allIds);
+    // Select all ready items by default (excluding already delivered status 60 items)
+    const activeReadyIds = new Set(uniqueList.filter(i => !isDeliveredStatus(i.status)).map(i => i.id!));
+    setSelectedItemIds(activeReadyIds);
 
     // Default paid amount to 0
     setExitPaidAmount(0);
@@ -421,6 +432,8 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
   };
 
   const handleToggleItem = (id: string) => {
+    const it = invoiceItems.find(i => i.id === id);
+    if (it && isDeliveredStatus(it.status)) return;
     const newSet = new Set(selectedItemIds);
     if (newSet.has(id)) newSet.delete(id);
     else newSet.add(id);
@@ -750,16 +763,52 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
     }
   };
 
-  const selectedCost = selectedInvoice
-    ? invoiceItems.filter(i => selectedItemIds.has(i.id!) && getItemSubStatus(i) === 'ready').reduce((sum, item) => sum + (Number(item.cost) || 0), 0)
+  // 1. All maintenance items of this invoice
+  const cleanSelectedInvNo = selectedInvoice ? String(selectedInvoice.invoiceNumber || '').replace('#', '') : '';
+  const allInvoiceMaintenanceItems = selectedInvoice
+    ? items.filter(i => {
+        const itClean = String(i.invoiceNumber || '').replace('#', '');
+        return (itClean === cleanSelectedInvNo || i.invoiceId === selectedInvoice.id) && isShopMaintenanceItem(i, selectedInvoice);
+      })
+    : [];
+
+  const totalDevicesEntered = allInvoiceMaintenanceItems.reduce((sum, i) => sum + (Number(i.quantity) || 1), 0);
+
+  // Total invoice amount
+  const totalInvoiceAmount = Number(selectedInvoice?.totalCost) > 0
+    ? Number(selectedInvoice?.totalCost)
+    : allInvoiceMaintenanceItems.reduce((sum, it) => sum + (getItemSubStatus(it) === 'ready' ? Number(it.cost || 0) : 0), 0);
+
+  // 2. Currently selected items cost for exit (excluding status 60 items)
+  const currentSelectedCost = selectedInvoice
+    ? invoiceItems.filter(i => selectedItemIds.has(i.id!) && !isDeliveredStatus(i.status) && getItemSubStatus(i) === 'ready').reduce((sum, item) => sum + (Number(item.cost) || 0), 0)
     : 0;
 
-  const subtotal = selectedCost;
-  const discount = exitDiscountAmount;
-  const previousPaid = Number(selectedInvoice?.amountPaid || 0);
-  const total = Math.max(0, subtotal - discount - previousPaid);
+  const selectedCost = currentSelectedCost;
+  const subtotal = currentSelectedCost;
 
-  const remainingCostForSelection = Math.max(0, total - exitPaidAmount);
+  // 3. Previously delivered items cost in this invoice
+  const previousDeliveredCost = selectedInvoice
+    ? invoiceItems.filter(i => isDeliveredStatus(i.status) && getItemSubStatus(i) === 'ready').reduce((sum, item) => sum + (Number(item.cost) || 0), 0)
+    : 0;
+
+  // 4. Amount paid so far on the invoice
+  const previousPaid = Number(selectedInvoice?.amountPaid || 0);
+
+  // 5. Debt left from previous delivery or credit
+  const previousDebt = previousDeliveredCost > previousPaid ? (previousDeliveredCost - previousPaid) : 0;
+  const availableCredit = previousPaid > previousDeliveredCost ? (previousPaid - previousDeliveredCost) : 0;
+
+  // 6. Current net cost
+  const discount = exitDiscountAmount;
+  const currentNetCost = Math.max(0, currentSelectedCost - discount);
+
+  // 7. Total Due (المبلغ المستحق)
+  const totalDueAmount = Math.max(0, currentNetCost + previousDebt - availableCredit);
+  const total = totalDueAmount;
+
+  // 8. Remaining balance
+  const remainingCostForSelection = Math.max(0, totalDueAmount - exitPaidAmount);
 
   const invoiceCurrency = selectedInvoice?.currency || 'USD';
   const targetFund = funds.find(f => f.id === modalSelectedFundId);
@@ -780,7 +829,8 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
   }
   
   const handleShowPreview = async () => {
-    if (!selectedInvoice || selectedItemIds.size === 0) return;
+    if (!selectedInvoice) return;
+    if (!isPayOnly && selectedItemIds.size === 0) return;
 
     if (isPayOnly) {
       const payAmount = otherPayment?.isActive ? otherPayment.amount : exitPaidAmount;
@@ -788,7 +838,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         alert('يرجى كتابة المبلغ الواصل أو تحديد طريقة الدفع أولاً لإنشاء سند القبض.');
         return;
       }
-      if (exitPaidAmount > total && !otherPayment?.isActive) {
+      if (exitPaidAmount > totalDueAmount && !otherPayment?.isActive) {
         alert('المبلغ الواصل أكبر من المبلغ المستحق على الفاتورة!');
         return;
       }
@@ -801,7 +851,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         nextNum = 1001;
       }
 
-      const printItems = invoiceItems.filter(i => selectedItemIds.has(i.id!));
+      const printItems = invoiceItems.filter(i => selectedItemIds.has(i.id!) && !isDeliveredStatus(i.status));
       const sessionId = `prepay-sess-${selectedInvoice.id}-${Date.now()}`;
       const timestampIso = new Date().toISOString();
 
@@ -836,14 +886,34 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         discountAmount: 0,
         taxAmount: 0,
         remainingAmount: remainingCostForSelection,
-        selectedCost: selectedCost
+        selectedCost: currentSelectedCost,
+        isPartialExit: true,
+        currentItemsTotal: currentSelectedCost,
+        previousRemaining: previousDebt,
+        previousPaid,
+        paidForCurrent: exitPaidAmount,
+        paidForPrevious: 0,
+        totalInvoiceCost: totalInvoiceAmount
       });
       return;
     }
 
-    if (exitPaidAmount > total) return;
+    if (exitPaidAmount > totalDueAmount && !otherPayment?.isActive) return;
     
-    const printItems = invoiceItems.filter(i => selectedItemIds.has(i.id!));
+    // Only active items selected for exit (excluding delivered ones)
+    const printItems = invoiceItems.filter(i => selectedItemIds.has(i.id!) && !isDeliveredStatus(i.status));
+    const currentExitingCount = printItems.reduce((sum, i) => sum + (Number(i.quantity) || 1), 0);
+
+    const hasPreviousDelivered = allInvoiceMaintenanceItems.some(i => isDeliveredStatus(i.status));
+    const isFullExit = !hasPreviousDelivered && (currentExitingCount === totalDevicesEntered);
+    const isPartialExit = !isFullExit;
+
+    let paidForCurrent = Math.min(exitPaidAmount, currentNetCost);
+    let paidForPrevious = 0;
+    if (exitPaidAmount > currentNetCost && previousDebt > 0) {
+      paidForPrevious = Math.min(exitPaidAmount - currentNetCost, previousDebt);
+    }
+
     const sessionId = `exit-sess-${selectedInvoice.id}-${Date.now()}`;
     const timestampIso = new Date().toISOString();
 
@@ -857,7 +927,14 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
       discountAmount: exitDiscountAmount,
       taxAmount: 0,
       remainingAmount: remainingCostForSelection,
-      selectedCost: selectedCost
+      selectedCost: currentSelectedCost,
+      isPartialExit,
+      currentItemsTotal: currentSelectedCost,
+      previousRemaining: previousDebt,
+      previousPaid,
+      paidForCurrent,
+      paidForPrevious,
+      totalInvoiceCost: totalInvoiceAmount
     });
   };
 
@@ -1043,6 +1120,8 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
       // Process delivery
       const batch = writeBatch(db);
       selectedItemIds.forEach(id => {
+        const itemObj = invoiceItems.find(i => i.id === id);
+        if (itemObj && isDeliveredStatus(itemObj.status)) return;
         const itemRef = doc(db, 'invoice_items', id);
         batch.update(itemRef, { status: '60', deliveredAt: new Date().getTime(), updatedAt: serverTimestamp() });
       });
@@ -1258,7 +1337,17 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
               printCount: activePrintData.invoice.printCount || 0
             },
             items: activePrintData.items,
-            templateType: 'exit'
+            templateType: 'exit',
+            isPartialExit: activePrintData.isPartialExit,
+            currentItemsTotal: activePrintData.currentItemsTotal,
+            previousRemaining: activePrintData.previousRemaining,
+            previousPaid: activePrintData.previousPaid,
+            paidForCurrent: activePrintData.paidForCurrent,
+            paidForPrevious: activePrintData.paidForPrevious,
+            paidAmount: activePrintData.paidAmount,
+            discountAmount: activePrintData.discountAmount,
+            remainingAmount: activePrintData.remainingAmount,
+            totalInvoiceCost: activePrintData.totalInvoiceCost
           }}
           onClose={() => {
             if (!isFinalizing) {
@@ -1803,9 +1892,24 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
 
               {/* جدول الأجهزة المعروض أفقيا */}
               <div className="space-y-1 bg-black/20 p-2.5 rounded-xl border border-white/5 relative flex-1 flex flex-col overflow-hidden">
-                <h4 className="text-xs font-bold text-gray-400 flex items-center gap-1.5 mb-1 flex-shrink-0">
-                  <HardDrive size={14} /> الأجهزة جاهزة للخروج ({invoiceItems.length})
-                </h4>
+                <div className="flex items-center justify-between mb-1.5 flex-shrink-0">
+                  <h4 className="text-xs font-bold text-gray-400 flex items-center gap-1.5">
+                    <HardDrive size={14} /> الأجهزة جاهزة للخروج ({invoiceItems.filter(i => !isDeliveredStatus(i.status)).length})
+                    {invoiceItems.some(i => isDeliveredStatus(i.status)) && (
+                      <span className="text-[10px] text-gray-500 font-normal">
+                        ({invoiceItems.filter(i => isDeliveredStatus(i.status)).length} تم تسليمها مسبقاً)
+                      </span>
+                    )}
+                  </h4>
+                  <div className="flex items-center gap-2 bg-white/5 border border-white/10 px-3 py-1 rounded-lg">
+                    <span className="text-[11px] font-bold text-gray-400">المبلغ الكلي:</span>
+                    <span className="font-mono font-black text-white text-xs">
+                      {totalInvoiceAmount.toFixed(2)}
+                    </span>
+                    <span className="text-[10px] text-gray-400 font-sans">{selectedInvoice.currency || 'USD'}</span>
+                  </div>
+                </div>
+
                 <div className="overflow-auto w-full flex-1">
                   <table className="w-full text-right border-collapse text-xs">
                     <thead className="bg-[#111] text-gray-300 font-bold border-b border-white/10 whitespace-nowrap sticky top-0 z-10">
@@ -1816,10 +1920,14 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                             <span className="text-gray-600">/</span>
                             <input 
                               type="checkbox"
-                              checked={invoiceItems.length > 0 && selectedItemIds.size === invoiceItems.length}
+                              checked={
+                                invoiceItems.filter(i => !isDeliveredStatus(i.status)).length > 0 && 
+                                invoiceItems.filter(i => !isDeliveredStatus(i.status)).every(i => selectedItemIds.has(i.id!))
+                              }
                               onChange={(e) => {
+                                const activeItems = invoiceItems.filter(i => !isDeliveredStatus(i.status));
                                 if (e.target.checked) {
-                                  setSelectedItemIds(new Set(invoiceItems.map(i => i.id!)));
+                                  setSelectedItemIds(new Set(activeItems.map(i => i.id!)));
                                 } else {
                                   setSelectedItemIds(new Set());
                                 }
@@ -1841,6 +1949,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                     <tbody className="divide-y divide-white/5 text-gray-300">
                       {(() => {
                         const getConditionRank = (item: any) => {
+                          if (isDeliveredStatus(item.status)) return 99;
                           const subStatus = getItemSubStatus(item);
                           if (subStatus === 'ready') return 1;
                           if (subStatus === 'intact') return 2;
@@ -1874,14 +1983,16 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                           
                           return getConditionRank(a) - getConditionRank(b);
                         }).map((item, idx) => {
+                          const isDelivered = isDeliveredStatus(item.status);
+                          const isSelected = isDelivered || selectedItemIds.has(item.id!);
                           const subStatus = getItemSubStatus(item);
-                          const isSelected = selectedItemIds.has(item.id!);
                           
                           const itemQty = Number(item.quantity || 1);
                           const totalItemCost = Number(item.cost || 0);
                           const unitItemCost = item.unitCost || (itemQty > 0 ? totalItemCost / itemQty : 0);
                           
                           const getReportTypeArabic = (itemData: typeof item, statusStr: string) => {
+                            if (isDelivered) return 'تم التسليم';
                             if (statusStr === 'intact') return 'تقرير الفحص';
                             if (statusStr === 'unrepairable') {
                               return itemData.source === 'inspection' ? 'تقرير الفحص' : 'تقرير الصيانة';
@@ -1889,25 +2000,31 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                             if (statusStr === 'ready') return 'تقرير الصيانة';
                             if (statusStr === 'refused' || statusStr === 'cancelled') return 'تقرير رد العميل';
                             return 'تقرير الصيانة';
-                        };
+                          };
 
-                        const reportTypeArabic = getReportTypeArabic(item, subStatus);
-                        
-                        const subStatusArabic = getStatusArabic(subStatus);
-                        const parsedReport = parseEngineerReport(item.failureReason || item.engineerReport || '');
-                        const reportText = `${subStatusArabic}${subStatus === 'ready' && parsedReport.outcome ? ` - ${parsedReport.outcome}` : ''}`;
+                          const reportTypeArabic = getReportTypeArabic(item, subStatus);
+                          const subStatusArabic = isDelivered ? 'تم التسليم' : getStatusArabic(subStatus);
+                          const parsedReport = parseEngineerReport(item.failureReason || item.engineerReport || '');
+                          const reportText = isDelivered
+                            ? 'تم تسليمه مسبقاً (مرحلة 60)'
+                            : `${subStatusArabic}${subStatus === 'ready' && parsedReport.outcome ? ` - ${parsedReport.outcome}` : ''}`;
 
-                        const reportTypeBadgeClass = 
-                          reportTypeArabic === 'تقرير الفحص' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' :
-                          reportTypeArabic === 'تقرير الصيانة' ? 'bg-orange-500/10 text-orange-500 border border-orange-500/20' :
-                          'bg-purple-500/10 text-purple-400 border border-purple-500/20';
+                          const reportTypeBadgeClass = isDelivered
+                            ? 'bg-gray-500/10 text-gray-400 border border-gray-500/20'
+                            : reportTypeArabic === 'تقرير الفحص' ? 'bg-cyan-500/10 text-cyan-400 border border-cyan-500/20' :
+                              reportTypeArabic === 'تقرير الصيانة' ? 'bg-orange-500/10 text-orange-500 border border-orange-500/20' :
+                              'bg-purple-500/10 text-purple-400 border border-purple-500/20';
 
                         return (
                           <tr 
                             key={`${item.id || 'item'}-${idx}`} 
-                            onClick={() => handleToggleItem(item.id!)}
-                            className={`hover:bg-white/5 transition-colors cursor-pointer whitespace-nowrap ${
-                              isSelected ? 'bg-orange-500/5' : ''
+                            onClick={() => !isDelivered && handleToggleItem(item.id!)}
+                            className={`transition-colors whitespace-nowrap ${
+                              isDelivered
+                                ? 'opacity-40 bg-white/[0.02] cursor-not-allowed select-none'
+                                : isSelected 
+                                  ? 'bg-orange-500/5 hover:bg-white/5 cursor-pointer' 
+                                  : 'hover:bg-white/5 cursor-pointer'
                             }`}
                           >
                             {/* 1. مسلسل / مربع اختيار */}
@@ -1917,8 +2034,13 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                                 <input 
                                   type="checkbox"
                                   checked={isSelected}
-                                  onChange={() => handleToggleItem(item.id!)}
-                                  className="rounded border-white/10 bg-black/40 text-orange-600 focus:ring-orange-500 focus:ring-offset-[#1a1a1a] w-3.5 h-3.5 cursor-pointer"
+                                  disabled={isDelivered}
+                                  onChange={() => !isDelivered && handleToggleItem(item.id!)}
+                                  className={`rounded border-white/10 w-3.5 h-3.5 ${
+                                    isDelivered
+                                      ? 'bg-gray-600/30 text-gray-500 cursor-not-allowed opacity-60'
+                                      : 'bg-black/40 text-orange-600 focus:ring-orange-500 focus:ring-offset-[#1a1a1a] cursor-pointer'
+                                  }`}
                                 />
                               </div>
                             </td>
@@ -1926,13 +2048,16 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                             {/* 2. النوع/الجهاز */}
                             <td className="px-2 py-1 text-right text-white font-bold text-[11px] whitespace-nowrap">
                               {item.deviceType || '-'} {item.deviceName ? ` / ${item.deviceName}` : ''}
+                              {isDelivered && (
+                                <span className="text-[10px] text-gray-400 mr-1.5 font-normal">(تم تسليمه مسبقاً)</span>
+                              )}
                             </td>
 
                             {/* 3. العدد */}
                             <td className="px-2 py-1 text-center" onClick={(e) => e.stopPropagation()}>
                               <div className="flex items-center justify-center gap-1.5">
                                 <span className="font-mono text-white text-[11px] font-bold">{itemQty}</span>
-                                {itemQty > 1 && (
+                                {!isDelivered && itemQty > 1 && (
                                   <button
                                     type="button"
                                     onClick={(e) => {
@@ -1993,45 +2118,61 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
               <div className="pt-2 mt-2 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-3 flex-shrink-0">
                 {/* Financial panel on the right (RTL) */}
                 <div className="flex flex-col gap-2.5 w-full md:w-auto">
-                  {/* Top row: اجمالي الفاتورة، سداد سابق، المبلغ المستحق، خيار سداد فقط */}
+                  {/* Top row: 1. اجمالي جزئي ، 2. مسدد مسبقا ، 3. مستحق الدفع */}
                   <div className="flex flex-wrap items-center gap-3 sm:gap-4 justify-between md:justify-start">
-                    {/* 1. Invoice Total (اجمالي الفاتورة) */}
+                    {/* 1. Partial Total (اجمالي جزئي) */}
                     <div className="text-right">
-                      <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest block mb-0.5">اجمالي الفاتورة</p>
-                      <p className="text-sm font-black font-mono text-gray-300 text-right w-full">
-                        {subtotal.toFixed(2)} <span className="text-xs text-gray-400 font-sans">{selectedInvoice.currency || 'USD'}</span>
+                      <p className="text-[10px] text-gray-400 uppercase font-black tracking-widest block mb-0.5">اجمالي جزئي</p>
+                      <p className="text-sm font-black font-mono text-gray-200 text-right w-full">
+                        {currentSelectedCost.toFixed(2)} <span className="text-xs text-gray-400 font-sans">{selectedInvoice.currency || 'USD'}</span>
                       </p>
                     </div>
 
                     {/* Vertical Separator */}
                     <div className="hidden sm:block w-px h-6 bg-white/10" />
 
-                    {/* 2. Previous Payment (سداد سابق) */}
+                    {/* 2. Previous Payment (مسدد مسبقا) */}
                     <div className="text-right">
                       <p className="text-[10px] text-cyan-400 uppercase font-black tracking-widest block mb-0.5 flex items-center gap-1 justify-end">
                         {previousPaid > 0 && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />}
-                        سداد سابق
+                        مسدد مسبقا
                       </p>
-                      <p className={`text-sm font-black font-mono text-right w-full ${previousPaid > 0 ? 'text-cyan-300 font-bold' : 'text-gray-500'}`}>
-                        {previousPaid.toFixed(2)} <span className="text-xs text-gray-400 font-sans">{selectedInvoice.currency || 'USD'}</span>
-                      </p>
+                      <div className="flex items-baseline gap-1.5 justify-end">
+                        <span className={`text-sm font-black font-mono text-right ${previousPaid > 0 ? 'text-cyan-300 font-bold' : 'text-gray-500'}`}>
+                          {previousPaid.toFixed(2)}
+                        </span>
+                        <span className="text-xs text-gray-400 font-sans">{selectedInvoice.currency || 'USD'}</span>
+                      </div>
+                      {previousDebt > 0 && (
+                        <span className="text-[9px] text-amber-400 font-bold block" title="مبلغ متبقي بذمة العميل من خروج أجهزة سابقة">
+                          (متبقي سابق: {previousDebt.toFixed(2)})
+                        </span>
+                      )}
+                      {availableCredit > 0 && (
+                        <span className="text-[9px] text-cyan-400 font-bold block" title="رصيد متبقي للعميل من دفعات سابقة">
+                          (رصيد متاح: {availableCredit.toFixed(2)})
+                        </span>
+                      )}
                     </div>
 
                     {/* Vertical Separator */}
                     <div className="hidden sm:block w-px h-6 bg-white/10" />
 
-                    {/* 3. Amount Due (المبلغ المستحق) */}
+                    {/* 3. Amount Due (مستحق الدفع) */}
                     <div className="text-right">
-                      <p className="text-[10px] text-purple-400 uppercase font-black tracking-widest block mb-0.5">المبلغ المستحق</p>
+                      <p className="text-[10px] text-purple-400 uppercase font-black tracking-widest block mb-0.5">مستحق الدفع</p>
                       <p className="text-sm font-black font-mono text-purple-300 text-right w-full">
-                        {total.toFixed(2)} <span className="text-xs text-purple-400 font-sans">{selectedInvoice.currency || 'USD'}</span>
+                        {totalDueAmount.toFixed(2)} <span className="text-xs text-purple-400 font-sans">{selectedInvoice.currency || 'USD'}</span>
                       </p>
                     </div>
+                  </div>
 
-                    {/* Vertical Separator */}
-                    <div className="hidden sm:block w-px h-6 bg-white/10" />
+                  {/* Divider line between rows */}
+                  <div className="h-px bg-white/5 w-full" />
 
-                    {/* 4. Pay Only Checkbox (سداد فقط) */}
+                  {/* Bottom row: مربع اختيار سداد بدون خروج ثم ثلاثة حقول: خصم ، واصل ، باقي */}
+                  <div className="flex flex-wrap items-center gap-4 justify-between md:justify-start">
+                    {/* Checkbox: سداد بدون خروج */}
                     <div className="text-right flex items-center">
                       <label 
                         className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs font-bold font-cairo cursor-pointer transition-all select-none shadow-sm ${
@@ -2054,25 +2195,22 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                           className="w-4 h-4 rounded text-emerald-600 focus:ring-emerald-500 border-white/20 bg-black/40 cursor-pointer accent-emerald-600"
                         />
                         <div className="flex items-center gap-1.5">
-                          <span className="font-black text-xs">سداد فقط</span>
+                          <span className="font-black text-xs">سداد بدون خروج</span>
                           {isPayOnly ? (
                             <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-md font-mono border border-emerald-500/30">سند قبض</span>
                           ) : (
-                            <span className="text-[10px] text-gray-400">(دون خروج)</span>
+                            <span className="text-[10px] text-gray-400">(سند قبض)</span>
                           )}
                         </div>
                       </label>
                     </div>
-                  </div>
 
-                  {/* Divider line between rows */}
-                  <div className="h-px bg-white/5 w-full" />
+                    {/* Vertical Separator */}
+                    <div className="hidden sm:block w-px h-6 bg-white/10" />
 
-                  {/* Bottom row: الخصم، المبلغ الواصل، المبلغ المتبقي */}
-                  <div className="flex flex-wrap items-center gap-4 justify-between md:justify-start">
-                    {/* 1. Discount (الخصم) */}
+                    {/* 1. Discount (خصم) */}
                     <div className="text-right">
-                      <p className="text-[10px] text-amber-500 uppercase font-black tracking-widest block mb-0.5">الخصم</p>
+                      <p className="text-[10px] text-amber-500 uppercase font-black tracking-widest block mb-0.5">خصم</p>
                       <div className="relative">
                         <input
                           type="text"
@@ -2087,7 +2225,6 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                             if (parts.length > 2) return;
                             let num = parseFloat(val);
                             if (isNaN(num)) num = 0;
-                            console.log("exitDiscountAmount changed", num);
                             setExitDiscountAmount(num);
                           }}
                           className="w-16 bg-black/40 border border-white/10 rounded-lg px-2 py-1 text-xs font-bold focus:outline-none transition-all pl-7 font-mono text-center text-amber-400 focus:border-amber-500"
@@ -2102,11 +2239,11 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                     {/* Vertical Separator */}
                     <div className="hidden sm:block w-px h-6 bg-white/10" />
 
-                    {/* 2. Amount received / paid (المبلغ الواصل) - Emphasized & Enlarged */}
+                    {/* 2. Amount received / paid (واصل) */}
                     <div className="text-right">
                       <p className="text-[10px] text-emerald-400 uppercase font-black tracking-widest block mb-1 flex items-center gap-1 justify-end">
                         <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-                        المبلغ الواصل
+                        واصل
                       </p>
                       <div className="relative">
                         <input
@@ -2123,11 +2260,10 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                             if (parts.length > 2) return;
                             let num = parseFloat(val);
                             if (isNaN(num)) num = 0;
-                            console.log("exitPaidAmount changed", num);
                             setExitPaidAmount(num);
                           }}
                           className={`w-28 h-9 bg-emerald-950/30 border rounded-lg px-3 py-1.5 text-sm font-black focus:outline-none transition-all pl-8 font-mono text-center shadow-md disabled:opacity-60 disabled:cursor-not-allowed ${
-                            exitPaidAmount > total 
+                            exitPaidAmount > totalDueAmount 
                               ? "border-rose-500 text-rose-400 focus:border-rose-500 bg-rose-500/10 focus:ring-1 focus:ring-rose-500 shadow-rose-500/10" 
                               : "border-emerald-500/45 text-emerald-400 focus:border-emerald-500 bg-emerald-950/20 focus:ring-1 focus:ring-emerald-500 shadow-emerald-500/10"
                           }`}
@@ -2142,9 +2278,9 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                     {/* Vertical Separator */}
                     <div className="hidden sm:block w-px h-6 bg-white/10" />
 
-                    {/* 3. New Remaining Balance (المبلغ المتبقي) */}
+                    {/* 3. Remaining Balance (باقي) */}
                     <div className="text-right">
-                      <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest block mb-0.5">المبلغ المتبقي</p>
+                      <p className="text-[10px] text-gray-500 uppercase font-black tracking-widest block mb-0.5">باقي</p>
                       <p className={`text-sm font-black font-mono ${remainingCostForSelection > 0 ? 'text-rose-500' : 'text-emerald-400'}`}>
                         {remainingCostForSelection.toFixed(2)} <span className="text-xs text-gray-500 font-sans">{selectedInvoice.currency || 'USD'}</span>
                       </p>
@@ -2174,7 +2310,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                             } else if (funds.length > 0) {
                               setModalSelectedFundId(funds[0].id);
                             }
-                            setModalAmount(0); // Default to 0
+                            setModalAmount(0);
                             setModalNotes('');
                             setModalDepositorName('');
                             setModalReferenceNumber('');
@@ -2221,11 +2357,11 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                 <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto justify-end">
                   <div className="text-right text-[10px] text-slate-500 leading-tight hidden lg:block">
                     <div>الواصل سابقاً: <span className="font-mono text-gray-300 font-bold">{Number(selectedInvoice.amountPaid || 0).toFixed(2)}</span> {selectedInvoice.currency}</div>
-                    <div>إجمالي الفاتورة: <span className="font-mono text-gray-300 font-bold">{Number(selectedInvoice.totalCost || 0).toFixed(2)}</span> {selectedInvoice.currency}</div>
+                    <div>المبلغ الكلي للفاتورة: <span className="font-mono text-gray-300 font-bold">{totalInvoiceAmount.toFixed(2)}</span> {selectedInvoice.currency}</div>
                   </div>
 
                   <div className="flex flex-col items-end gap-1.5 w-full md:w-auto mt-2 sm:mt-0">
-                    {exitPaidAmount > total && !otherPayment?.isActive && (
+                    {exitPaidAmount > totalDueAmount && !otherPayment?.isActive && (
                       <span className="text-[10px] text-rose-400 font-bold font-cairo text-right">
                         ⚠️ مبلغ الواصل أكبر من الإجمالي المستحق!
                       </span>
@@ -2234,8 +2370,8 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                       onClick={handleShowPreview}
                       disabled={
                         isPayOnly
-                          ? (selectedItemIds.size === 0 || (exitPaidAmount <= 0 && (!otherPayment?.isActive || otherPayment.amount <= 0)))
-                          : (selectedItemIds.size === 0 || (total > 0 && exitPaidAmount > total) || (otherPayment?.isActive && (Number(exitPaidAmount) + Number(exitDiscountAmount)) === 0))
+                          ? (exitPaidAmount <= 0 && (!otherPayment?.isActive || otherPayment.amount <= 0))
+                          : (selectedItemIds.size === 0 || (totalDueAmount > 0 && exitPaidAmount > totalDueAmount) || (otherPayment?.isActive && (Number(exitPaidAmount) + Number(exitDiscountAmount)) === 0))
                       }
                       className={`w-full md:w-auto text-white font-black px-6 py-2 rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2 text-xs font-cairo cursor-pointer ${
                         isPayOnly 

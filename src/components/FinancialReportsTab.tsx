@@ -602,15 +602,15 @@ export default function FinancialReportsTab({
         ? Number(tx.receiptAmount)
         : Number(tx.amount || 0);
       const absAmt = Math.abs(rawAmt);
-      const debitStr = isReceipt ? `+${absAmt.toLocaleString('en-US')} ${tx.currency}` : '-';
-      const creditStr = !isReceipt ? `-${absAmt.toLocaleString('en-US')} ${tx.currency}` : '-';
+      const debitStr = isReceipt ? `${absAmt.toLocaleString('en-US')} ${getCurrencySymbol(tx.currency)}` : '-';
+      const creditStr = !isReceipt ? `${absAmt.toLocaleString('en-US')} ${getCurrencySymbol(tx.currency)}` : '-';
       
       let balanceOrAmtStr = '';
       if (selectedFundId !== 'all') {
         const bal = fundChronologicalBalances.get(tx.id) ?? 0;
-        balanceOrAmtStr = `${bal.toLocaleString('en-US')} ${tx.currency}`;
+        balanceOrAmtStr = `${bal.toLocaleString('en-US')} ${getCurrencySymbol(tx.currency)}`;
       } else {
-        balanceOrAmtStr = `${isReceipt ? '+' : '-'}${absAmt.toLocaleString('en-US')} ${tx.currency}`;
+        balanceOrAmtStr = `${absAmt.toLocaleString('en-US')} ${getCurrencySymbol(tx.currency)}`;
       }
 
       return [
@@ -669,9 +669,9 @@ export default function FinancialReportsTab({
         String(tx.voucherNumber || '---'),
         formatTxDate(tx as any),
         formatTxDetailsString(tx),
-        debit > 0 ? `+${debit.toLocaleString('en-US')} ${fund.currency}` : '-',
-        credit > 0 ? `-${credit.toLocaleString('en-US')} ${fund.currency}` : '-',
-        `${running.toLocaleString('en-US')} ${fund.currency}`
+        debit > 0 ? `${debit.toLocaleString('en-US')} ${getCurrencySymbol(fund.currency)}` : '-',
+        credit > 0 ? `${credit.toLocaleString('en-US')} ${getCurrencySymbol(fund.currency)}` : '-',
+        `${running.toLocaleString('en-US')} ${getCurrencySymbol(fund.currency)}`
       ];
     });
 
@@ -1134,17 +1134,17 @@ export default function FinancialReportsTab({
         </div>
 
         <div className="overflow-x-auto w-full scrollbar-thin">
-          <table className="w-full text-right text-xs min-w-[850px] table-auto">
+          <table className="w-full text-right text-xs min-w-[720px] table-auto">
             <thead>
               <tr className="bg-[#1a1a1a] text-gray-300 font-bold border-b border-white/5 font-cairo">
-                <th className="py-3 px-3 text-center w-16"># السند</th>
-                <th className="py-3 px-3 w-36">التاريخ والوقت</th>
-                {selectedFundId === 'all' && <th className="py-3 px-3 w-28">الصندوق</th>}
-                <th className="py-3 px-3 min-w-[280px]">البيان والتفاصيل</th>
-                <th className="py-3 px-3 text-center text-emerald-400 w-28">مدين (وارد)</th>
-                <th className="py-3 px-3 text-center text-rose-400 w-28">دائن (منصرف)</th>
-                <th className="py-3 px-3 text-left w-32">
-                  {selectedFundId !== 'all' ? 'الرصيد' : 'المبلغ والعملة'}
+                <th className="py-3 px-2.5 text-center w-14 sm:w-16 shrink-0"># السند</th>
+                <th className="py-3 px-2.5 text-center w-28 sm:w-32 shrink-0">التاريخ والوقت</th>
+                {selectedFundId === 'all' && <th className="py-3 px-2.5 text-center w-24 sm:w-28 shrink-0">الصندوق</th>}
+                <th className="py-3 px-3.5 min-w-[220px] w-full">البيان والتفاصيل</th>
+                <th className="py-3 px-2.5 text-center text-emerald-400 w-20 sm:w-24 shrink-0">مدين (وارد)</th>
+                <th className="py-3 px-2.5 text-center text-rose-400 w-20 sm:w-24 shrink-0">دائن (منصرف)</th>
+                <th className="py-3 px-3 text-left w-24 sm:w-28 shrink-0">
+                  {selectedFundId !== 'all' ? 'الرصيد' : 'المبلغ'}
                 </th>
               </tr>
             </thead>
@@ -1157,24 +1157,25 @@ export default function FinancialReportsTab({
                   : Number(tx.amount || 0);
                 const absAmt = Math.abs(rawAmt);
                 const runningBal = fundChronologicalBalances.get(tx.id);
+                const currSymbol = getCurrencySymbol(tx.currency);
 
                 return (
                   <tr key={tx.id} className="hover:bg-white/5 transition-colors">
-                    <td className="py-3 px-3 text-center font-bold text-amber-500 font-mono">
+                    <td className="py-2.5 px-2.5 text-center font-bold text-amber-500 font-mono whitespace-nowrap">
                       #{tx.voucherNumber}
                     </td>
-                    <td className="py-3 px-3 text-gray-400 font-sans text-[10px] whitespace-nowrap">
+                    <td className="py-2.5 px-2.5 text-gray-400 font-sans text-[10px] text-center whitespace-nowrap">
                       {formatTxDate(tx as any)}
                     </td>
                     {selectedFundId === 'all' && (
-                      <td className="py-3 px-3 text-gray-300 whitespace-nowrap">
+                      <td className="py-2.5 px-2.5 text-gray-300 text-center whitespace-nowrap">
                         <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[10px]">
                           {getFundName(tx.fundId, tx.fundName)}
                         </span>
                       </td>
                     )}
-                    <td className="py-3 px-3">
-                      <div className="flex flex-col gap-1">
+                    <td className="py-2.5 px-3.5 whitespace-normal">
+                      <div className="flex flex-col gap-0.5">
                         <div className="flex items-center gap-2 flex-wrap">
                           {tx.customerName && tx.customerName !== 'جهة عامة أخرى' && (
                             <span className="font-bold text-white text-xs">{tx.customerName}</span>
@@ -1203,32 +1204,34 @@ export default function FinancialReportsTab({
                         </div>
                       </div>
                     </td>
-                    <td className="py-3 px-3 text-center font-mono whitespace-nowrap">
+                    <td className="py-2.5 px-2.5 text-center font-mono whitespace-nowrap">
                       {isReceipt ? (
                         <span className="font-bold text-emerald-400">
-                          +{absAmt.toLocaleString('en-US')} <span className="text-[9px] text-gray-500 font-cairo">{tx.currency}</span>
+                          {absAmt.toLocaleString('en-US')}
                         </span>
                       ) : (
-                        <span className="text-gray-600">-</span>
+                        <span className="text-gray-600 font-normal">-</span>
                       )}
                     </td>
-                    <td className="py-3 px-3 text-center font-mono whitespace-nowrap">
+                    <td className="py-2.5 px-2.5 text-center font-mono whitespace-nowrap">
                       {!isReceipt ? (
                         <span className="font-bold text-rose-400">
-                          -{absAmt.toLocaleString('en-US')} <span className="text-[9px] text-gray-500 font-cairo">{tx.currency}</span>
+                          {absAmt.toLocaleString('en-US')}
                         </span>
                       ) : (
-                        <span className="text-gray-600">-</span>
+                        <span className="text-gray-600 font-normal">-</span>
                       )}
                     </td>
-                    <td className="py-3 px-3 text-left font-mono whitespace-nowrap">
+                    <td className="py-2.5 px-3 text-left font-mono whitespace-nowrap">
                       {selectedFundId !== 'all' ? (
                         <span className="font-black text-blue-400 text-sm">
-                          {(runningBal ?? 0).toLocaleString('en-US')} <span className="text-[9px] text-gray-500 font-cairo">{tx.currency}</span>
+                          {(runningBal ?? 0).toLocaleString('en-US')}{' '}
+                          <span className="text-[11px] text-blue-300/80 font-cairo mr-1 font-semibold">{currSymbol}</span>
                         </span>
                       ) : (
                         <span className={`font-bold ${isReceipt ? 'text-emerald-400' : 'text-rose-400'}`}>
-                          {isReceipt ? '+' : '-'}{absAmt.toLocaleString('en-US')} <span className="text-[9px] text-gray-500 font-cairo">{tx.currency}</span>
+                          {isReceipt ? '+' : '-'}{absAmt.toLocaleString('en-US')}{' '}
+                          <span className="text-[11px] text-gray-400 font-cairo mr-1 font-semibold">{currSymbol}</span>
                         </span>
                       )}
                     </td>

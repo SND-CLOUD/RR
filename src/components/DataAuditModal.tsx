@@ -569,6 +569,385 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
     }
   };
 
+  const repairMaintenanceInvoiceCounter = async () => {
+    if (!auditResults) return;
+    setRepairProgress({ status: 'running', message: 'جاري ترقيم وتصحيح عدّاد فواتير الصيانة...' });
+    try {
+      const itemsRes = await localDb.query('SELECT * FROM invoice_items');
+      const dbItems = itemsRes.values || [];
+      let currentMax = auditResults.invoiceCounter.actualMax;
+      if (auditResults.missingInvoiceNumbers && auditResults.missingInvoiceNumbers.length > 0) {
+        for (const inv of auditResults.missingInvoiceNumbers) {
+          currentMax++;
+          try {
+            await updateDoc(doc(db, 'invoices', inv.id), { invoiceNumber: String(currentMax) });
+          } catch (e) {}
+          try {
+            await localDb.run("UPDATE invoices SET invoiceNumber = ? WHERE id = ?", [String(currentMax), inv.id]);
+            await LocalProviderInstance.updateDoc('invoices', inv.id, { invoiceNumber: String(currentMax) });
+          } catch (e) {}
+          const matchingItems = dbItems.filter((it: any) => it.invoiceId === inv.id);
+          for (const item of matchingItems) {
+            try {
+              await updateDoc(doc(db, 'invoice_items', item.id), { invoiceNumber: String(currentMax) });
+            } catch (e) {}
+            try {
+              await localDb.run("UPDATE invoice_items SET invoiceNumber = ? WHERE id = ?", [String(currentMax), item.id]);
+              await LocalProviderInstance.updateDoc('invoice_items', item.id, { invoiceNumber: String(currentMax) });
+            } catch (e) {}
+          }
+        }
+      }
+      try {
+        await setDoc(doc(db, 'settings', 'app'), { lastInvoiceNumber: currentMax }, { merge: true });
+      } catch (e) {}
+      try {
+        await localDb.run("UPDATE system_settings SET value = ? WHERE key = 'lastInvoiceNumber'", [String(currentMax)]);
+      } catch (e) {}
+      setRepairProgress({ status: 'completed', message: `تم تصحيح عدّاد فواتير الصيانة إلى (${currentMax}) بنجاح!` });
+      await runDatabaseAudit();
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+    } catch (err: any) {
+      setRepairProgress({ status: 'error', message: `فشل تصحيح عداد فواتير الصيانة: ${err?.message || err}` });
+    }
+  };
+
+  const repairOtherInvoiceCounter = async () => {
+    if (!auditResults) return;
+    setRepairProgress({ status: 'running', message: 'جاري ترقيم وتصحيح عدّاد فواتير المبيعات والخدمات...' });
+    try {
+      const itemsRes = await localDb.query('SELECT * FROM invoice_items');
+      const dbItems = itemsRes.values || [];
+      let currentMax = auditResults.otherInvoiceCounter?.actualMax || 0;
+      if (auditResults.missingOtherInvoiceNumbers && auditResults.missingOtherInvoiceNumbers.length > 0) {
+        for (const inv of auditResults.missingOtherInvoiceNumbers) {
+          currentMax++;
+          const newNum = `O-${currentMax}`;
+          try {
+            await updateDoc(doc(db, 'invoices', inv.id), { invoiceNumber: newNum });
+          } catch (e) {}
+          try {
+            await localDb.run("UPDATE invoices SET invoiceNumber = ? WHERE id = ?", [newNum, inv.id]);
+            await LocalProviderInstance.updateDoc('invoices', inv.id, { invoiceNumber: newNum });
+          } catch (e) {}
+          const matchingItems = dbItems.filter((it: any) => it.invoiceId === inv.id);
+          for (const item of matchingItems) {
+            try {
+              await updateDoc(doc(db, 'invoice_items', item.id), { invoiceNumber: newNum });
+            } catch (e) {}
+            try {
+              await localDb.run("UPDATE invoice_items SET invoiceNumber = ? WHERE id = ?", [newNum, item.id]);
+              await LocalProviderInstance.updateDoc('invoice_items', item.id, { invoiceNumber: newNum });
+            } catch (e) {}
+          }
+        }
+      }
+      try {
+        await setDoc(doc(db, 'settings', 'app'), { lastOtherInvoiceNumber: currentMax }, { merge: true });
+      } catch (e) {}
+      try {
+        await localDb.run("UPDATE system_settings SET value = ? WHERE key = 'lastOtherInvoiceNumber'", [String(currentMax)]);
+      } catch (e) {}
+      setRepairProgress({ status: 'completed', message: `تم تصحيح عدّاد فواتير المبيعات إلى (${currentMax}) بنجاح!` });
+      await runDatabaseAudit();
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+    } catch (err: any) {
+      setRepairProgress({ status: 'error', message: `فشل تصحيح عداد فواتير المبيعات: ${err?.message || err}` });
+    }
+  };
+
+  const repairCustomerCounter = async () => {
+    if (!auditResults) return;
+    setRepairProgress({ status: 'running', message: 'جاري ترقيم وتصحيح عدّاد العملاء...' });
+    try {
+      let currentMax = auditResults.customerCounter.actualMax;
+      if (auditResults.missingCustomerNumbers && auditResults.missingCustomerNumbers.length > 0) {
+        for (const cust of auditResults.missingCustomerNumbers) {
+          currentMax++;
+          try {
+            await updateDoc(doc(db, 'customers', cust.id), { customerNumber: currentMax });
+          } catch (e) {}
+          try {
+            await localDb.run("UPDATE customers SET customerNumber = ? WHERE id = ?", [currentMax, cust.id]);
+            await LocalProviderInstance.updateDoc('customers', cust.id, { customerNumber: currentMax });
+          } catch (e) {}
+        }
+      }
+      try {
+        await setDoc(doc(db, 'settings', 'app'), { lastCustomerNumber: currentMax }, { merge: true });
+      } catch (e) {}
+      try {
+        await localDb.run("UPDATE system_settings SET value = ? WHERE key = 'lastCustomerNumber'", [String(currentMax)]);
+      } catch (e) {}
+      setRepairProgress({ status: 'completed', message: `تم تصحيح عدّاد العملاء إلى (${currentMax}) بنجاح!` });
+      await runDatabaseAudit();
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+    } catch (err: any) {
+      setRepairProgress({ status: 'error', message: `فشل تصحيح عداد العملاء: ${err?.message || err}` });
+    }
+  };
+
+  const repairInvoiceTotals = async (targetInvoiceId?: string) => {
+    if (!auditResults) return;
+    setRepairProgress({ 
+      status: 'running', 
+      message: targetInvoiceId 
+        ? 'جاري تصحيح إجمالي الفاتورة المحددة...' 
+        : `جاري إعادة احتساب ومطابقة مجاميع ${auditResults.totalDiscrepancies.length} فواتير...` 
+    });
+    try {
+      const localItemsSnap = await LocalProviderInstance.getDocs('invoice_items');
+      const localItems = localItemsSnap.docs ? localItemsSnap.docs.map((d: any) => d.data()) : (localItemsSnap || []);
+      
+      const localInvoicesSnap = await LocalProviderInstance.getDocs('invoices');
+      const localInvoices = localInvoicesSnap.docs ? localInvoicesSnap.docs.map((d: any) => d.data()) : (localInvoicesSnap || []);
+
+      let count = 0;
+      for (const inv of localInvoices) {
+        if (targetInvoiceId && inv.id !== targetInvoiceId) continue;
+        if (!targetInvoiceId && !auditResults.totalDiscrepancies.some((d: any) => d.id === inv.id)) continue;
+
+        const isPurchase = isPurchaseInvoice(inv);
+        const explicitType = String(inv.invoiceType || inv.templateType || inv.type || '').toLowerCase();
+        const isOtherService = explicitType.startsWith('sale_') || isPurchase;
+        if (isOtherService) continue;
+
+        const invItems = localItems.filter((it: any) => it.invoiceId === inv.id);
+        if (invItems.length > 0) {
+          const sumCost = invItems.reduce((sum: number, it: any) => sum + (Number(it.cost) || 0), 0);
+
+          if (Math.abs(Number(inv.totalCost) - sumCost) > 0.01) {
+            await LocalProviderInstance.updateDoc('invoices', inv.id, { totalCost: sumCost });
+            try {
+              await localDb.run("UPDATE invoices SET totalCost = ? WHERE id = ?", [sumCost, inv.id]);
+            } catch (e) {}
+            try {
+              await FirebaseProviderInstance.updateDoc('invoices', inv.id, { totalCost: sumCost });
+            } catch (e) {}
+            count++;
+          }
+        }
+      }
+
+      setRepairProgress({ status: 'completed', message: `تمت تسوية وتحديث إجمالي ${count > 0 ? count : 1} فاتورة صيانة بنجاح!` });
+      await runDatabaseAudit();
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+    } catch (err: any) {
+      setRepairProgress({ status: 'error', message: `فشل تصحيح مجاميع الفواتير: ${err?.message || err}` });
+    }
+  };
+
+  const repairCloudLocalSync = async () => {
+    if (!auditResults) return;
+    setRepairProgress({ status: 'running', message: 'جاري توحيد ومزامنة السجلات والقيود المالية بين السحابي والمحلي...' });
+    try {
+      for (const item of (auditResults.missingInCloudItems || [])) {
+        await FirebaseProviderInstance.setDoc('invoice_items', item.id, item);
+        const localInvRes = await LocalProviderInstance.getDoc('invoices', item.invoiceId);
+        if (localInvRes.exists()) {
+          await FirebaseProviderInstance.setDoc('invoices', item.invoiceId, localInvRes.data(), { merge: true });
+        }
+      }
+
+      for (const item of (auditResults.missingInLocalItems || [])) {
+        await LocalProviderInstance.setDoc('invoice_items', item.id, item, undefined, 'BYPASS_OUTBOX');
+        const cloudInvRes = await FirebaseProviderInstance.getDoc('invoices', item.invoiceId);
+        if (cloudInvRes.exists()) {
+          await LocalProviderInstance.setDoc('invoices', item.invoiceId, cloudInvRes.data(), undefined, 'BYPASS_OUTBOX');
+        }
+      }
+
+      for (const tx of (auditResults.missingInCloudTransactions || [])) {
+        try {
+          await FirebaseProviderInstance.setDoc('vault_transactions', tx.id, tx, { merge: true });
+        } catch (e) {}
+      }
+
+      for (const tx of (auditResults.missingInLocalTransactions || [])) {
+        try {
+          await LocalProviderInstance.setDoc('vault_transactions', tx.id, tx, undefined, 'BYPASS_OUTBOX');
+        } catch (e) {}
+      }
+
+      setRepairProgress({ status: 'completed', message: 'تمت مزامنة وتوحيد السجلات بين السحابي والمحلي بنجاح!' });
+      await runDatabaseAudit();
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+    } catch (err: any) {
+      setRepairProgress({ status: 'error', message: `فشل توحيد المزامنة: ${err?.message || err}` });
+    }
+  };
+
+  const repairCorruptedPurchaseInvoices = async () => {
+    if (!auditResults?.corruptedPurchaseInvoices || auditResults.corruptedPurchaseInvoices.length === 0) return;
+    setRepairProgress({ status: 'running', message: `جاري استعادة وتثبيت قيم ${auditResults.corruptedPurchaseInvoices.length} فواتير شراء وموردين...` });
+    try {
+      for (const cInv of auditResults.corruptedPurchaseInvoices) {
+        await LocalProviderInstance.updateDoc('invoices', cInv.id, { totalCost: cInv.suggestedTotal });
+        try {
+          await localDb.run("UPDATE invoices SET totalCost = ? WHERE id = ?", [cInv.suggestedTotal, cInv.id]);
+        } catch (e) {}
+        try {
+          await FirebaseProviderInstance.updateDoc('invoices', cInv.id, { totalCost: cInv.suggestedTotal });
+        } catch (e) {}
+      }
+      setRepairProgress({ status: 'completed', message: `تم استعادة قيم فواتير الشراء لـ ${auditResults.corruptedPurchaseInvoices.length} فاتورة بنجاح!` });
+      await runDatabaseAudit();
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+    } catch (err: any) {
+      setRepairProgress({ status: 'error', message: `فشل استعادة فواتير الشراء: ${err?.message || err}` });
+    }
+  };
+
+  const repairStatusDiscrepancies = async (targetInvoiceId?: string) => {
+    if (!auditResults?.statusDiscrepancies || auditResults.statusDiscrepancies.length === 0) return;
+    setRepairProgress({ 
+      status: 'running', 
+      message: targetInvoiceId 
+        ? 'جاري تحديث الحالة الفنية للفاتورة المحددة...' 
+        : `جاري مزامنة الحالة الفنية لـ ${auditResults.statusDiscrepancies.length} فواتير...` 
+    });
+    try {
+      const itemsToFix = targetInvoiceId 
+        ? auditResults.statusDiscrepancies.filter((x: any) => x.id === targetInvoiceId)
+        : auditResults.statusDiscrepancies;
+
+      for (const item of itemsToFix) {
+        try {
+          await updateDoc(doc(db, 'invoices', item.id), { status: item.expectedStatus });
+        } catch (e) {}
+        try {
+          await localDb.run("UPDATE invoices SET status = ? WHERE id = ?", [item.expectedStatus, item.id]);
+          await LocalProviderInstance.updateDoc('invoices', item.id, { status: item.expectedStatus });
+        } catch (e) {}
+      }
+      setRepairProgress({ status: 'completed', message: `تم تحديث وتصحيح الحالة الفنية لـ ${itemsToFix.length} فاتورة بنجاح!` });
+      await runDatabaseAudit();
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+    } catch (err: any) {
+      setRepairProgress({ status: 'error', message: `فشل تصحيح الحالة الفنية: ${err?.message || err}` });
+    }
+  };
+
+  const repairPaymentImbalances = async (targetInvoiceNumber?: string) => {
+    if (!auditResults?.paymentImbalances || auditResults.paymentImbalances.length === 0) return;
+    setRepairProgress({ 
+      status: 'running', 
+      message: targetInvoiceNumber 
+        ? `جاري موازنة القيود المالية للفاتورة #${targetInvoiceNumber}...` 
+        : `جاري موازنة وتسجيل القيود المالية لـ ${auditResults.paymentImbalances.length} حالة...` 
+    });
+    try {
+      let currentVoucherNum = 1000;
+      let availableFunds: any[] = [];
+      try {
+        const vRes = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
+        currentVoucherNum = Number(vRes.values?.[0]?.maxNum || 1000);
+        const fRes = await localDb.query("SELECT * FROM fin_funds");
+        availableFunds = fRes.values || [];
+      } catch (err) {}
+
+      const normalizeCurr = (c: string) => {
+        const u = (c || '').toUpperCase().trim();
+        if (u === 'SAR' || u === 'ر.س' || u === 'سعودي') return 'SAR';
+        if (u === 'YER' || u === 'ر.ي' || u === 'يمني') return 'YER';
+        if (u === 'USD' || u === '$' || u === 'دولار') return 'USD';
+        return u;
+      };
+
+      const itemsToFix = targetInvoiceNumber 
+        ? auditResults.paymentImbalances.filter((x: any) => String(x.invoiceNumber).trim() === String(targetInvoiceNumber).trim())
+        : auditResults.paymentImbalances;
+
+      for (const item of itemsToFix) {
+        if (item.amountInLedger === 0 && item.amountPaidOnInvoice > 0) {
+          currentVoucherNum++;
+          const txId = `tx_audit_${item.invoiceNumber}_${Math.random().toString(36).substring(2, 6)}`;
+          const isPurchase = !!item.isPurchase;
+          let categoryName = 'إيراد صيانة';
+          if (isPurchase) {
+            categoryName = 'مشتريات قطع وملحقات';
+          } else if (String(item.invoiceNumber).startsWith('O-') || String(item.invoiceNumber).startsWith('S-')) {
+            categoryName = 'مبيعات قطع وخدمات';
+          }
+
+          const noteText = isPurchase 
+            ? `سند صرف مسجل لتسوية ومطابقة المدفوع بفاتورة شراء رقم #${item.invoiceNumber}`
+            : (categoryName === 'إيراد صيانة' 
+                ? `سند قبض إيراد صيانة لتسوية ومطابقة المدفوع بفاتورة الأجهزة رقم #${item.invoiceNumber}`
+                : `سند قبض مبيعات لتسوية ومطابقة المدفوع بالفاتورة رقم #${item.invoiceNumber}`);
+
+          const matchedFund = availableFunds.find((f: any) => f.type === 'cash' && normalizeCurr(f.currency) === normalizeCurr(item.currency)) || availableFunds[0];
+
+          const txData: any = {
+            id: txId,
+            voucherNumber: currentVoucherNum,
+            currency: matchedFund?.currency || item.currency,
+            amount: Number(item.amountPaidOnInvoice),
+            liabilityCurrency: item.currency,
+            liabilityAmount: Number(item.amountPaidOnInvoice),
+            receiptCurrency: matchedFund?.currency || item.currency,
+            receiptAmount: Number(item.amountPaidOnInvoice),
+            fundId: matchedFund ? matchedFund.id : '',
+            fundName: matchedFund ? matchedFund.name : 'الصندوق الرئيسي',
+            customerName: item.customerName || (isPurchase ? 'مورد نقدي' : 'عميل نقدي'),
+            invoiceNumber: String(item.invoiceNumber).trim(),
+            invoiceId: item.invoiceId || '',
+            type: isPurchase ? 'payment' : 'receipt',
+            category: categoryName,
+            notes: noteText,
+            source: 'audit_repair',
+            createdAt: item.createdAt || new Date().toISOString()
+          };
+
+          try {
+            await FirebaseProviderInstance.setDoc('vault_transactions', txId, txData);
+          } catch (e) {}
+
+          try {
+            await LocalProviderInstance.setDoc('vault_transactions', txId, txData, undefined, 'BYPASS_OUTBOX');
+          } catch (e) {}
+        }
+      }
+
+      setRepairProgress({ status: 'completed', message: `تمت موازنة القيود المالية لـ ${itemsToFix.length} حالة بنجاح!` });
+      await runDatabaseAudit();
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+    } catch (err: any) {
+      setRepairProgress({ status: 'error', message: `فشل موازنة الصندوق والمدفوعات: ${err?.message || err}` });
+    }
+  };
+
+  const repairOrphanedAndEmpty = async () => {
+    if (!auditResults) return;
+    setRepairProgress({ status: 'running', message: 'جاري تنظيف وحذف الفواتير الفارغة والمخزون المعلق...' });
+    try {
+      if (auditResults.emptyInvoices && auditResults.emptyInvoices.length > 0) {
+        for (const inv of auditResults.emptyInvoices) {
+          if (isPurchaseInvoice(inv) || isSaleInvoice(inv)) continue;
+          try {
+            await deleteDoc(doc(db, 'invoices', inv.id));
+          } catch (e) {}
+          try {
+            await LocalProviderInstance.deleteDoc('invoices', inv.id);
+          } catch (e) {}
+        }
+      }
+
+      if ((auditResults.orphanedStockParts && auditResults.orphanedStockParts.length > 0) || (auditResults.orphanedBatches && auditResults.orphanedBatches.length > 0)) {
+        await cleanOrphanedPartsStock(
+          (auditResults.orphanedStockParts || []).map((x: any) => x.id),
+          (auditResults.orphanedBatches || []).map((x: any) => x.id)
+        );
+      }
+
+      setRepairProgress({ status: 'completed', message: 'تم تنظيف السجلات اليتيمة والفواتير الفارغة بنجاح!' });
+      await runDatabaseAudit();
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+    } catch (err: any) {
+      setRepairProgress({ status: 'error', message: `فشل تنظيف السجلات اليتيمة: ${err?.message || err}` });
+    }
+  };
+
   const repairCloudDocumentIds = async () => {
     if (!auditResults?.missingCloudIds || auditResults.missingCloudIds.length === 0) return;
     setRepairProgress({ status: 'running', message: `جاري تزويد وتحديث معرّفات ${auditResults.missingCloudIds.length} مستند في السحابة (Firestore)...` });
@@ -1099,11 +1478,23 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         <FileText size={16} className="text-blue-400" />
                         <span className="font-bold text-sm text-white">ترقيم عداد فواتير الصيانة</span>
                       </div>
-                      {auditResults.invoiceCounter.conflict ? (
-                        <span className="px-2.5 py-1 bg-red-500/10 text-red-400 rounded-lg text-[10px] font-black">يوجد تضارب</span>
-                      ) : (
-                        <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">متطابق</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {auditResults.invoiceCounter.conflict || (auditResults.missingInvoiceNumbers?.length > 0) ? (
+                          <>
+                            <span className="px-2.5 py-1 bg-red-500/10 text-red-400 rounded-lg text-[10px] font-black">يوجد تضارب</span>
+                            <button
+                              type="button"
+                              onClick={repairMaintenanceInvoiceCounter}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2.5 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              تصحيح العداد
+                            </button>
+                          </>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">متطابق</span>
+                        )}
+                      </div>
                     </div>
                     <div className="text-xs space-y-1 text-gray-400">
                       <p>العداد المسجل بالنظام: <strong className="text-white font-mono">{auditResults.invoiceCounter.registered}</strong></p>
@@ -1121,11 +1512,23 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         <Layers size={16} className="text-purple-400" />
                         <span className="font-bold text-sm text-white">ترقيم فواتير الخدمات والمبيعات</span>
                       </div>
-                      {auditResults.otherInvoiceCounter?.conflict ? (
-                        <span className="px-2.5 py-1 bg-red-500/10 text-red-400 rounded-lg text-[10px] font-black">يوجد تضارب</span>
-                      ) : (
-                        <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">متطابق</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {auditResults.otherInvoiceCounter?.conflict || (auditResults.missingOtherInvoiceNumbers?.length > 0) ? (
+                          <>
+                            <span className="px-2.5 py-1 bg-red-500/10 text-red-400 rounded-lg text-[10px] font-black">يوجد تضارب</span>
+                            <button
+                              type="button"
+                              onClick={repairOtherInvoiceCounter}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2.5 py-1 bg-purple-600 hover:bg-purple-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              تصحيح العداد
+                            </button>
+                          </>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">متطابق</span>
+                        )}
+                      </div>
                     </div>
                     <div className="text-xs space-y-1 text-gray-400">
                       <p>العداد المسجل بالنظام: <strong className="text-white font-mono">{auditResults.otherInvoiceCounter?.registered || 0}</strong></p>
@@ -1143,11 +1546,23 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         <Users size={16} className="text-amber-400" />
                         <span className="font-bold text-sm text-white">ترقيم عداد العملاء</span>
                       </div>
-                      {auditResults.customerCounter.conflict ? (
-                        <span className="px-2.5 py-1 bg-red-500/10 text-red-400 rounded-lg text-[10px] font-black">يوجد تضارب</span>
-                      ) : (
-                        <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">متطابق</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {auditResults.customerCounter.conflict || (auditResults.missingCustomerNumbers?.length > 0) ? (
+                          <>
+                            <span className="px-2.5 py-1 bg-red-500/10 text-red-400 rounded-lg text-[10px] font-black">يوجد تضارب</span>
+                            <button
+                              type="button"
+                              onClick={repairCustomerCounter}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              تصحيح العداد
+                            </button>
+                          </>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">متطابق</span>
+                        )}
+                      </div>
                     </div>
                     <div className="text-xs space-y-1 text-gray-400">
                       <p>العداد المسجل بالإعدادات: <strong className="text-white font-mono">{auditResults.customerCounter.registered}</strong></p>
@@ -1165,17 +1580,39 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         <DollarSign size={16} className="text-emerald-400" />
                         <span className="font-bold text-sm text-white">مطابقة قيمة الفواتير وأجهزتها</span>
                       </div>
-                      {auditResults.totalDiscrepancies.length > 0 ? (
-                        <span className="px-2.5 py-1 bg-amber-500/10 text-amber-500 rounded-lg text-[10px] font-black">{auditResults.totalDiscrepancies.length} تباينات</span>
-                      ) : (
-                        <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">سليم</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {auditResults.totalDiscrepancies.length > 0 ? (
+                          <>
+                            <span className="px-2.5 py-1 bg-amber-500/10 text-amber-500 rounded-lg text-[10px] font-black">{auditResults.totalDiscrepancies.length} تباينات</span>
+                            <button
+                              type="button"
+                              onClick={() => repairInvoiceTotals()}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              إصلاح الكل ({auditResults.totalDiscrepancies.length})
+                            </button>
+                          </>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">سليم</span>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs text-gray-400">التحقق من مطابقة إجمالي الفاتورة لمجموع تكلفة الأجهزة الملحقة بها.</p>
                     {auditResults.totalDiscrepancies.length > 0 && (
-                      <div className="max-h-24 overflow-y-auto space-y-1.5 p-2 bg-black/40 rounded-xl font-mono text-[10px] text-red-300">
+                      <div className="max-h-36 overflow-y-auto space-y-1.5 p-2 bg-black/40 rounded-xl font-mono text-[10px] text-red-300">
                         {auditResults.totalDiscrepancies.map((d: any, idx: number) => (
-                          <p key={idx}>فاتورة #{d.invoiceNumber}: الفاتورة ({d.currentTotal}) ↔ المجموع الحقيقي ({d.computedTotal})</p>
+                          <div key={idx} className="flex items-center justify-between gap-2 p-1 rounded bg-white/5">
+                            <span>فاتورة #{d.invoiceNumber}: الفاتورة ({d.currentTotal}) ↔ المجموع الحقيقي ({d.computedTotal})</span>
+                            <button
+                              type="button"
+                              onClick={() => repairInvoiceTotals(d.id)}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2 py-0.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-[9px] font-sans font-bold cursor-pointer disabled:opacity-50"
+                            >
+                              إصلاح الفاتورة
+                            </button>
+                          </div>
                         ))}
                       </div>
                     )}
@@ -1188,11 +1625,23 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         <Database size={16} className="text-cyan-400" />
                         <span className="font-bold text-sm text-white">تطابق المزامنة السحابية والمحلية</span>
                       </div>
-                      {((auditResults.itemSyncDiscrepancies && auditResults.itemSyncDiscrepancies.length > 0) || (auditResults.missingInCloudItems?.length > 0) || (auditResults.missingInLocalItems?.length > 0) || (auditResults.missingInCloudTransactions?.length > 0) || (auditResults.missingInLocalTransactions?.length > 0)) ? (
-                        <span className="px-2.5 py-1 bg-amber-500/10 text-amber-400 rounded-lg text-[10px] font-black">فروقات مزامنة</span>
-                      ) : (
-                        <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">متطابق</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {((auditResults.itemSyncDiscrepancies && auditResults.itemSyncDiscrepancies.length > 0) || (auditResults.missingInCloudItems?.length > 0) || (auditResults.missingInLocalItems?.length > 0) || (auditResults.missingInCloudTransactions?.length > 0) || (auditResults.missingInLocalTransactions?.length > 0)) ? (
+                          <>
+                            <span className="px-2.5 py-1 bg-amber-500/10 text-amber-400 rounded-lg text-[10px] font-black">فروقات مزامنة</span>
+                            <button
+                              type="button"
+                              onClick={repairCloudLocalSync}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2.5 py-1 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              مزامنة وتوحيد الآن
+                            </button>
+                          </>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">متطابق</span>
+                        )}
+                      </div>
                     </div>
                     <div className="text-xs space-y-1 text-gray-400">
                       <p>أجهزة ناقصة في السحابة: <strong className="text-white font-mono">{auditResults.missingInCloudItems?.length || 0}</strong></p>
@@ -1209,11 +1658,23 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         <ShoppingBag size={16} className="text-amber-400" />
                         <span className="font-bold text-sm text-white">سلامة فواتير الشراء والموردين</span>
                       </div>
-                      {auditResults.corruptedPurchaseInvoices?.length > 0 ? (
-                        <span className="px-2.5 py-1 bg-red-500/10 text-red-400 rounded-lg text-[10px] font-black">{auditResults.corruptedPurchaseInvoices.length} بحاجة استعادة</span>
-                      ) : (
-                        <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">سليمة ومحمية</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {auditResults.corruptedPurchaseInvoices?.length > 0 ? (
+                          <>
+                            <span className="px-2.5 py-1 bg-red-500/10 text-red-400 rounded-lg text-[10px] font-black">{auditResults.corruptedPurchaseInvoices.length} بحاجة استعادة</span>
+                            <button
+                              type="button"
+                              onClick={repairCorruptedPurchaseInvoices}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2.5 py-1 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              استعادة القيم
+                            </button>
+                          </>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">سليمة ومحمية</span>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs text-gray-400">حماية وتثبيت قيم فواتير الشراء والتوريد ومنع تصفيرها أو مسحها أثناء التدقيق.</p>
                     {auditResults.corruptedPurchaseInvoices?.length > 0 && (
@@ -1232,17 +1693,39 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         <Wrench size={16} className="text-indigo-400" />
                         <span className="font-bold text-sm text-white">مطابقة الحالات والوضع الفني</span>
                       </div>
-                      {auditResults.statusDiscrepancies.length > 0 ? (
-                        <span className="px-2.5 py-1 bg-amber-500/10 text-amber-400 rounded-lg text-[10px] font-black">{auditResults.statusDiscrepancies.length} اختلافات</span>
-                      ) : (
-                        <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">سليم</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {auditResults.statusDiscrepancies.length > 0 ? (
+                          <>
+                            <span className="px-2.5 py-1 bg-amber-500/10 text-amber-400 rounded-lg text-[10px] font-black">{auditResults.statusDiscrepancies.length} اختلافات</span>
+                            <button
+                              type="button"
+                              onClick={() => repairStatusDiscrepancies()}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2.5 py-1 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              تحديث الحالات
+                            </button>
+                          </>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">سليم</span>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs text-gray-400">مراجعة الحالة الخارجية للفاتورة ومطابقتها بمراحل الصيانة الفنية الفردية.</p>
                     {auditResults.statusDiscrepancies.length > 0 && (
-                      <div className="max-h-24 overflow-y-auto space-y-1.5 p-2 bg-black/30 rounded-xl font-mono text-[10px] text-amber-300">
+                      <div className="max-h-36 overflow-y-auto space-y-1.5 p-2 bg-black/30 rounded-xl font-mono text-[10px] text-amber-300">
                         {auditResults.statusDiscrepancies.map((d: any, idx: number) => (
-                          <p key={idx}>فاتورة #{d.invoiceNumber}: مسجل [{getAuditStatusText(d.currentStatus)}] ↔ الفعلي [{getAuditStatusText(d.expectedStatus)}]</p>
+                          <div key={idx} className="flex items-center justify-between gap-2 p-1 rounded bg-white/5">
+                            <span>فاتورة #{d.invoiceNumber}: مسجل [{getAuditStatusText(d.currentStatus)}] ↔ الفعلي [{getAuditStatusText(d.expectedStatus)}]</span>
+                            <button
+                              type="button"
+                              onClick={() => repairStatusDiscrepancies(d.id)}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2 py-0.5 bg-indigo-700 hover:bg-indigo-600 text-white rounded text-[9px] font-sans font-bold cursor-pointer disabled:opacity-50"
+                            >
+                              تحديث الحالة
+                            </button>
+                          </div>
                         ))}
                       </div>
                     )}
@@ -1255,17 +1738,39 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         <DollarSign size={16} className="text-green-400" />
                         <span className="font-bold text-sm text-white">تطابق الصندوق والمدفوعات</span>
                       </div>
-                      {auditResults.paymentImbalances.length > 0 ? (
-                        <span className="px-2.5 py-1 bg-red-500/10 text-red-500 rounded-lg text-[10px] font-black">{auditResults.paymentImbalances.length} عدم تطابق</span>
-                      ) : (
-                        <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">سليم</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {auditResults.paymentImbalances.length > 0 ? (
+                          <>
+                            <span className="px-2.5 py-1 bg-red-500/10 text-red-500 rounded-lg text-[10px] font-black">{auditResults.paymentImbalances.length} عدم تطابق</span>
+                            <button
+                              type="button"
+                              onClick={() => repairPaymentImbalances()}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2.5 py-1 bg-green-600 hover:bg-green-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              موازنة الكل
+                            </button>
+                          </>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">سليم</span>
+                        )}
+                      </div>
                     </div>
                     <p className="text-xs text-gray-400">مقارنة المقبوض الفعلي في الصندوق مع إجمالي المدفوعات بالفاتورة.</p>
                     {auditResults.paymentImbalances.length > 0 && (
-                      <div className="max-h-24 overflow-y-auto space-y-1.5 p-2 bg-black/30 rounded-xl font-mono text-[10px] text-red-300">
+                      <div className="max-h-36 overflow-y-auto space-y-1.5 p-2 bg-black/30 rounded-xl font-mono text-[10px] text-red-300">
                         {auditResults.paymentImbalances.map((d: any, idx: number) => (
-                          <p key={idx}>فاتورة #{d.invoiceNumber}: الفاتورة ({d.amountPaidOnInvoice}) ↔ المقبوض ({d.amountInLedger})</p>
+                          <div key={idx} className="flex items-center justify-between gap-2 p-1 rounded bg-white/5">
+                            <span>فاتورة #{d.invoiceNumber}: الفاتورة ({d.amountPaidOnInvoice}) ↔ المقبوض ({d.amountInLedger})</span>
+                            <button
+                              type="button"
+                              onClick={() => repairPaymentImbalances(d.invoiceNumber)}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2 py-0.5 bg-green-700 hover:bg-green-600 text-white rounded text-[9px] font-sans font-bold cursor-pointer disabled:opacity-50"
+                            >
+                              تسجيل السند
+                            </button>
+                          </div>
                         ))}
                       </div>
                     )}
@@ -1278,11 +1783,23 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         <AlertTriangle size={16} className="text-yellow-400" />
                         <span className="font-bold text-sm text-white">السجلات اليتيمة وتدقيق المخزون المعلق</span>
                       </div>
-                      {(auditResults.orphanedItems.length > 0 || auditResults.emptyInvoices.length > 0 || (auditResults.orphanedStockParts?.length > 0) || (auditResults.orphanedBatches?.length > 0)) ? (
-                        <span className="px-2.5 py-1 bg-amber-500/10 text-amber-400 rounded-lg text-[10px] font-black">تباينات مكتشفة</span>
-                      ) : (
-                        <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">سليم</span>
-                      )}
+                      <div className="flex items-center gap-2">
+                        {(auditResults.orphanedItems.length > 0 || auditResults.emptyInvoices.length > 0 || (auditResults.orphanedStockParts?.length > 0) || (auditResults.orphanedBatches?.length > 0)) ? (
+                          <>
+                            <span className="px-2.5 py-1 bg-amber-500/10 text-amber-400 rounded-lg text-[10px] font-black">تباينات مكتشفة</span>
+                            <button
+                              type="button"
+                              onClick={repairOrphanedAndEmpty}
+                              disabled={repairProgress.status === 'running'}
+                              className="px-2.5 py-1 bg-yellow-600 hover:bg-yellow-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                            >
+                              تنظيف الآن
+                            </button>
+                          </>
+                        ) : (
+                          <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">سليم</span>
+                        )}
+                      </div>
                     </div>
                     <div className="text-xs space-y-1 text-gray-400">
                       <p>أجهزة/عناصر يتيمة بلا فواتير رئيسية: <strong className="text-white font-mono">{auditResults.orphanedItems.length}</strong></p>

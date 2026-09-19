@@ -4,19 +4,15 @@ import path from 'path';
 import {defineConfig, loadEnv} from 'vite';
 import fs from 'fs';
 
-// Automatically copy correct WASM files from node_modules to public/, public/assets/ and public/sqlite-wasm/ on dev/build
+// Automatically copy correct WASM files from node_modules to public and public/assets on dev/build
 try {
   const publicDir = path.resolve('public');
   const assetsDir = path.resolve('public/assets');
-  const sqliteWasmDir = path.resolve('public/sqlite-wasm');
   if (!fs.existsSync(publicDir)) {
     fs.mkdirSync(publicDir, { recursive: true });
   }
   if (!fs.existsSync(assetsDir)) {
     fs.mkdirSync(assetsDir, { recursive: true });
-  }
-  if (!fs.existsSync(sqliteWasmDir)) {
-    fs.mkdirSync(sqliteWasmDir, { recursive: true });
   }
 
   const filesToCopy = [
@@ -27,55 +23,31 @@ try {
   ];
 
   filesToCopy.forEach(({ file, srcName }) => {
-    // Try multiple possible paths in node_modules
     const possibleSources = [
       path.resolve('node_modules/sql.js/dist', srcName),
       path.resolve('node_modules/jeep-sqlite/dist/jeep-sqlite', srcName),
       path.resolve('node_modules/jeep-sqlite/dist', srcName),
     ];
 
-    let found = false;
     for (const source of possibleSources) {
       if (fs.existsSync(source)) {
         const srcSize = fs.statSync(source).size;
-
-        // Copy to root public/
-        const dest1 = path.resolve(publicDir, file);
-        const destSize1 = fs.existsSync(dest1) ? fs.statSync(dest1).size : 0;
-        if (srcSize !== destSize1) {
-          fs.copyFileSync(source, dest1);
-          console.log(`[WASM Safe-Restore] Restored ${file} to public/ (${srcSize} bytes)`);
-        } else {
-          console.log(`[WASM Safe-Restore] public/${file} is up-to-date (${srcSize} bytes)`);
-        }
-
+        
         // Copy to public/assets/
-        const dest2 = path.resolve(assetsDir, file);
-        const destSize2 = fs.existsSync(dest2) ? fs.statSync(dest2).size : 0;
-        if (srcSize !== destSize2) {
-          fs.copyFileSync(source, dest2);
-          console.log(`[WASM Safe-Restore] Restored ${file} to public/assets/ (${srcSize} bytes)`);
-        } else {
-          console.log(`[WASM Safe-Restore] public/assets/${file} is up-to-date (${srcSize} bytes)`);
+        const destAssets = path.resolve(assetsDir, file);
+        if (!fs.existsSync(destAssets) || fs.statSync(destAssets).size !== srcSize) {
+          fs.copyFileSync(source, destAssets);
         }
 
-        // Copy to public/sqlite-wasm/
-        const dest3 = path.resolve(sqliteWasmDir, file);
-        const destSize3 = fs.existsSync(dest3) ? fs.statSync(dest3).size : 0;
-        if (srcSize !== destSize3) {
-          fs.copyFileSync(source, dest3);
-          console.log(`[WASM Safe-Restore] Restored ${file} to public/sqlite-wasm/ (${srcSize} bytes)`);
-        } else {
-          console.log(`[WASM Safe-Restore] public/sqlite-wasm/${file} is up-to-date (${srcSize} bytes)`);
+        // Copy main wasm to root public/ as well for direct relative requests
+        if (file === 'sql-wasm.wasm') {
+          const destPublic = path.resolve(publicDir, file);
+          if (!fs.existsSync(destPublic) || fs.statSync(destPublic).size !== srcSize) {
+            fs.copyFileSync(source, destPublic);
+          }
         }
-
-        found = true;
         break;
       }
-    }
-    
-    if (!found) {
-      console.warn(`[WASM Safe-Restore] Warning: could not find source for ${file}`);
     }
   });
 } catch (err) {
@@ -98,6 +70,19 @@ export default defineConfig(({mode}) => {
     resolve: {
       alias: {
         '@': path.resolve(__dirname, '.'),
+      },
+    },
+    build: {
+      sourcemap: false,
+      chunkSizeWarningLimit: 1600,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'vendor-react': ['react', 'react-dom'],
+            'vendor-icons': ['lucide-react'],
+            'vendor-firebase': ['firebase/app', 'firebase/firestore', 'firebase/auth'],
+          },
+        },
       },
     },
     server: {

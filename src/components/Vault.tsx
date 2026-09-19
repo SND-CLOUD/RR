@@ -1,10 +1,10 @@
 import { sharePdfFile, openWhatsApp, sendUniversalReminder } from '../lib/shareHelper';
 import PrintPreviewOverlay from './PrintPreviewOverlay';
 import { tafqeet } from '../lib/tafqeet';
-import { parseFundBalance, formatMoney } from '../lib/fundUtils';
+import { parseFundBalance, formatMoney, getCurrencySymbol } from '../lib/fundUtils';
 import { isAccountingTransactionValid, roundCurrencyAmount, normalizeCurrencyCode, repairAllFundBalances } from '../lib/fundRepairService';
 import { SyncEngine } from '../data/SyncEngine';
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { localDb } from '../lib/local-db';
@@ -306,7 +306,6 @@ export default function Vault({
   const [activeSegment, setActiveSegment] = useState<'dashboard' | 'receipt' | 'payment' | 'transfer' | 'funds' | 'customer-ledger' | 'reports'>(initialSegment || 'dashboard');
   const [reportSubSegment, setReportSubSegment] = useState<'revenues' | 'expenses' | 'profits' | 'fund-balances' | 'outstanding-debts'>('revenues');
   const [showAddModal, setShowAddModal] = useState(initialShowAddModal || false);
-  const isInitialMount = React.useRef(true);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
   const [isPosting, setIsPosting] = useState(false);
   const [previewData, setPreviewData] = useState<{ type: 'invoice' | 'voucher' | 'statement' | 'table'; data: any } | null>(null);
@@ -515,9 +514,9 @@ export default function Vault({
       e.voucherNumber ? `#${e.voucherNumber}` : '-',
       e.dateStr,
       e.details,
-      e.debit > 0 ? `+${e.debit.toLocaleString('en-US')}` : '-',
-      e.credit > 0 ? `-${e.credit.toLocaleString('en-US')}` : '-',
-      `${e.runningBalance.toLocaleString('en-US')} ${fund.currency}`
+      e.debit > 0 ? e.debit.toLocaleString('en-US') : '-',
+      e.credit > 0 ? e.credit.toLocaleString('en-US') : '-',
+      `${e.runningBalance.toLocaleString('en-US')} ${getCurrencySymbol(fund.currency)}`
     ]);
 
     setPreviewData({
@@ -528,7 +527,7 @@ export default function Vault({
           subtitle: `النوع: ${fund.type === 'cash' ? 'نقدي' : 'حساب بنكي'} | العملة: ${fund.currency} | الرصيد الحالي: ${parseFundBalance(fund.balance).toLocaleString('en-US')} ${fund.currency}`,
           headers: ['رقم السند', 'التاريخ والوقت', 'البيان والتفاصيل', 'مدين (وارد)', 'دائن (منصرف)', 'الرصيد'],
           rows,
-          footerNotes: `إجمالي المدين (الوارد): +${totalIn.toLocaleString('en-US')} ${fund.currency} | إجمالي الدائن (المنصرف): -${totalOut.toLocaleString('en-US')} ${fund.currency} | الرصيد الفعلي المتوفر: ${lastBalance.toLocaleString('en-US')} ${fund.currency}`
+          footerNotes: `إجمالي المدين (الوارد): ${totalIn.toLocaleString('en-US')} ${fund.currency} | إجمالي الدائن (المنصرف): ${totalOut.toLocaleString('en-US')} ${fund.currency} | الرصيد الفعلي المتوفر: ${lastBalance.toLocaleString('en-US')} ${fund.currency}`
         }
       }
     });
@@ -544,9 +543,9 @@ export default function Vault({
       e.voucherNumber ? `#${e.voucherNumber}` : '-',
       e.dateStr,
       e.details,
-      e.debit > 0 ? `+${e.debit.toLocaleString('en-US')}` : '-',
-      e.credit > 0 ? `-${e.credit.toLocaleString('en-US')}` : '-',
-      `${e.runningBalance.toLocaleString('en-US')} ${fund.currency}`
+      e.debit > 0 ? e.debit.toLocaleString('en-US') : '-',
+      e.credit > 0 ? e.credit.toLocaleString('en-US') : '-',
+      `${e.runningBalance.toLocaleString('en-US')} ${getCurrencySymbol(fund.currency)}`
     ]);
 
     setPreviewData({
@@ -557,7 +556,7 @@ export default function Vault({
           subtitle: `الفترة من: ${fundReportDateFrom || 'البداية'} إلى: ${fundReportDateTo || 'الآن'} | العملة: ${fund.currency} | الرصيد: ${parseFundBalance(fund.balance).toLocaleString('en-US')} ${fund.currency}`,
           headers: ['رقم السند', 'التاريخ والوقت', 'البيان والتفاصيل', 'مدين (وارد)', 'دائن (منصرف)', 'الرصيد'],
           rows,
-          footerNotes: `إجمالي المدين (الوارد): +${totalIn.toLocaleString('en-US')} ${fund.currency} | إجمالي الدائن (المنصرف): -${totalOut.toLocaleString('en-US')} ${fund.currency} | الرصيد الختامي للفترة: ${lastBalance.toLocaleString('en-US')} ${fund.currency}`
+          footerNotes: `إجمالي المدين (الوارد): ${totalIn.toLocaleString('en-US')} ${fund.currency} | إجمالي الدائن (المنصرف): ${totalOut.toLocaleString('en-US')} ${fund.currency} | الرصيد الختامي للفترة: ${lastBalance.toLocaleString('en-US')} ${fund.currency}`
         }
       }
     });
@@ -635,9 +634,9 @@ export default function Vault({
         formatTxDate(tx),
         getFundDisplayName(tx),
         formatFundTxDetails(tx),
-        debit > 0 ? `+${debit.toLocaleString('en-US')}` : '-',
-        credit > 0 ? `-${credit.toLocaleString('en-US')}` : '-',
-        `${amount.toLocaleString('en-US')} ${tx.currency}`
+        debit > 0 ? debit.toLocaleString('en-US') : '-',
+        credit > 0 ? credit.toLocaleString('en-US') : '-',
+        `${amount.toLocaleString('en-US')} ${getCurrencySymbol(tx.currency)}`
       ];
     });
 
@@ -899,6 +898,22 @@ export default function Vault({
   
   const [transferExchangeRate, setTransferExchangeRate] = useState<string>('1');
 
+  // Track active user input in voucher & transfer forms to protect against background sync wipes
+  const isFormDirty = Boolean(
+    voucherAmount.trim() || 
+    customerSearch.trim() || 
+    voucherNotes.trim() || 
+    depositorName.trim() || 
+    referenceNumber.trim() ||
+    transferAmount.trim() ||
+    transferNotes.trim()
+  );
+  const isFormDirtyRef = useRef(false);
+  isFormDirtyRef.current = isFormDirty;
+
+  const showAddModalRef = useRef(false);
+  showAddModalRef.current = showAddModal;
+
   const getFundDisplayName = (tx: any) => {
     if (tx.fundName && tx.fundName.trim() && tx.fundName !== 'غير معروف') return tx.fundName;
     if (tx.fundId) {
@@ -940,8 +955,8 @@ export default function Vault({
   const [currentOutput, setCurrentOutput] = useState<any>(null);
 
   // Fetch all core data from local implementation
-  const loadDatabaseData = async () => {
-    setLoading(true);
+  const loadDatabaseData = async (isBackground = false) => {
+    if (!isBackground) setLoading(true);
     try {
       // 1. Funds
       const fundsRes = await localDb.query("SELECT * FROM fin_funds ORDER BY name ASC");
@@ -986,19 +1001,24 @@ export default function Vault({
       const txRes = await localDb.query("SELECT * FROM vault_transactions ORDER BY timestamp DESC");
       setTransactions((txRes.values || []) as VaultTransaction[]);
 
-      // Reset Form defaults when data shifts
-      if (activeFunds.length > 0 && !selectedFundId) {
-        setSelectedFundId(activeFunds[0].id);
-      }
-      if (activeCurrs.length > 0 && !selectedCurrency) {
-        setSelectedCurrency(activeCurrs[0].name);
-      }
+      // Reset Form defaults when data shifts (ONLY if not already set, and user is NOT in modal or typing)
+      setSelectedFundId(prev => {
+        if (prev) return prev;
+        if (showAddModalRef.current || isFormDirtyRef.current) return prev;
+        return activeFunds.length > 0 ? activeFunds[0].id : '';
+      });
+
+      setSelectedCurrency(prev => {
+        if (prev) return prev;
+        if (showAddModalRef.current || isFormDirtyRef.current) return prev;
+        return activeCurrs.length > 0 ? activeCurrs[0].name : '';
+      });
 
     } catch (err: any) {
       console.error('Error loading vault data:', err);
-      setErrorMsg('فشل تحميل حسابات الخزينة');
+      if (!isBackground) setErrorMsg('فشل تحميل حسابات الخزينة');
     } finally {
-      setLoading(false);
+      if (!isBackground) setLoading(false);
     }
   };
 
@@ -1006,19 +1026,21 @@ export default function Vault({
   useEffect(() => {
     loadDatabaseData();
 
-    // Subscribe to local DB updates
+    // Subscribe to local DB updates in silent background mode
     const unsubFunds = localDb.subscribe('fin_funds', () => {
-      loadDatabaseData();
+      loadDatabaseData(true);
     });
     const unsubTx = localDb.subscribe('vault_transactions', () => {
-      loadDatabaseData();
-      calculateNextVoucherNumber();
+      loadDatabaseData(true);
+      if (!isFormDirtyRef.current && !showAddModalRef.current) {
+        calculateNextVoucherNumber();
+      }
     });
     const unsubCustomers = localDb.subscribe('customers', () => {
-      loadDatabaseData();
+      loadDatabaseData(true);
     });
     const unsubInvoices = localDb.subscribe('invoices', () => {
-      loadDatabaseData();
+      loadDatabaseData(true);
     });
 
     const fetchShopConfig = async () => {
@@ -1040,7 +1062,10 @@ export default function Vault({
     fetchShopConfig();
 
     const handleSyncEvent = () => {
-      loadDatabaseData();
+      loadDatabaseData(true);
+      if (!isFormDirtyRef.current && !showAddModalRef.current) {
+        calculateNextVoucherNumber();
+      }
     };
     window.addEventListener('snd_data_synced', handleSyncEvent);
 
@@ -1089,6 +1114,10 @@ export default function Vault({
 
   // Fetch & Calculate Next Voucher Index
   const calculateNextVoucherNumber = async () => {
+    // If modal is open and user has entered data, do not overwrite expected voucher number
+    if (showAddModalRef.current && isFormDirtyRef.current) {
+      return;
+    }
     try {
       const res = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
       const max = res.values?.[0]?.maxNum || 1000;
@@ -1126,90 +1155,116 @@ export default function Vault({
     setShowPrintPreview(false);
   };
 
+  const isInitializedRef = useRef(false);
   useEffect(() => {
-    if (initialCustomerName) {
-      setCustomerSearch(initialCustomerName);
-    }
-    if (initialCustomerId) {
-      setSelectedCustomerId(initialCustomerId);
-    }
-    if (initialLiabilityCurrency) {
-      setLiabilityCurrency(initialLiabilityCurrency);
-    }
-    if (initialSegment) {
-      setActiveSegment(initialSegment);
-    }
-    if (initialShowAddModal) {
-      setShowAddModal(true);
+    if (!isInitializedRef.current) {
+      isInitializedRef.current = true;
+      if (initialCustomerName) {
+        setCustomerSearch(initialCustomerName);
+      }
+      if (initialCustomerId) {
+        setSelectedCustomerId(initialCustomerId);
+      }
+      if (initialLiabilityCurrency) {
+        setLiabilityCurrency(initialLiabilityCurrency);
+      }
+      if (initialSegment) {
+        setActiveSegment(initialSegment);
+      }
+      if (initialShowAddModal) {
+        setShowAddModal(true);
+      }
     }
   }, [initialCustomerName, initialCustomerId, initialLiabilityCurrency, initialSegment, initialShowAddModal]);
 
-  // Recalculate voucher number whenever segment changes or txTypes are loaded
+  const prevSegmentRef = useRef(activeSegment);
+
+  // Recalculate voucher number on mount and when segment changes
   useEffect(() => {
     calculateNextVoucherNumber();
-    // Default the category selection to the first available category of the current voucher type
-    const matchingCats = txTypes.filter(cat => cat.type === activeSegment);
-    if (!initialCustomerName && !initialShowAddModal) {
-      if (!isInitialMount.current) {
-        resetForm();
-        setShowAddModal(false);
-      }
-    } else {
-      if (initialCustomerName) setCustomerSearch(initialCustomerName);
-      if (initialCustomerId) setSelectedCustomerId(initialCustomerId);
-      if (initialLiabilityCurrency) setLiabilityCurrency(initialLiabilityCurrency);
-      if (initialShowAddModal) setShowAddModal(true);
+    // Only reset form and close modal when activeSegment actually changes (user switches tabs)
+    if (prevSegmentRef.current !== activeSegment) {
+      prevSegmentRef.current = activeSegment;
+      resetForm();
+      setShowAddModal(false);
     }
-    isInitialMount.current = false;
-    if (matchingCats.length > 0) {
-      setSelectedCategory(matchingCats[0]?.name || '');
-    }
-  }, [activeSegment, txTypes, initialCustomerName, initialShowAddModal, initialCustomerId, initialLiabilityCurrency]);
+  }, [activeSegment]);
 
+  // Set default category when txTypes are loaded or segment changes, without resetting the form or closing the modal
+  useEffect(() => {
+    const matchingCats = txTypes.filter(cat => cat.type === activeSegment);
+    if (matchingCats.length > 0) {
+      setSelectedCategory(prev => {
+        if (prev) return prev;
+        return matchingCats[0]?.name || '';
+      });
+    }
+  }, [activeSegment, txTypes]);
+
+  const prevCustomerSearchRef = useRef<string>('');
   // Sync liabilityCurrency when customerSearch changes
   useEffect(() => {
     const trimmed = String(customerSearch || '').trim();
+    if (prevCustomerSearchRef.current === trimmed) {
+      return;
+    }
+    prevCustomerSearchRef.current = trimmed;
     if (!trimmed) {
-      if (initialLiabilityCurrency) {
-        setLiabilityCurrency(initialLiabilityCurrency);
-      } else {
-        setLiabilityCurrency('USD');
-      }
       return;
     }
     const matched = customers.find(c => String(c.name || '').trim().toLowerCase() === trimmed.toLowerCase());
     if (matched && matched.liabilityCurrency) {
       setLiabilityCurrency(matched.liabilityCurrency);
-    } else if (initialLiabilityCurrency) {
-      setLiabilityCurrency(initialLiabilityCurrency);
-    } else {
-      setLiabilityCurrency('USD');
     }
-  }, [customerSearch, customers, initialLiabilityCurrency]);
+  }, [customerSearch, customers]);
 
-  
+  const prevCurrencyPairRef = useRef({ selected: '', liability: '' });
   // Automatically set default exchange rate to 3.8 if SAR is involved
   useEffect(() => {
+    if (
+      prevCurrencyPairRef.current.selected === selectedCurrency &&
+      prevCurrencyPairRef.current.liability === liabilityCurrency
+    ) {
+      return;
+    }
+    prevCurrencyPairRef.current = { selected: selectedCurrency, liability: liabilityCurrency };
+
     if (selectedCurrency && liabilityCurrency && selectedCurrency !== liabilityCurrency) {
-      if ((selectedCurrency === 'SAR' && liabilityCurrency === 'USD') || (selectedCurrency === 'USD' && liabilityCurrency === 'SAR')) {
-        setVoucherExchangeRate('3.8');
-      } else {
-        setVoucherExchangeRate('1');
-      }
+      setVoucherExchangeRate(prev => {
+        if (prev && prev !== '1' && prev !== '3.8') return prev;
+        if ((selectedCurrency === 'SAR' && liabilityCurrency === 'USD') || (selectedCurrency === 'USD' && liabilityCurrency === 'SAR')) {
+          return '3.8';
+        }
+        return '1';
+      });
     } else {
       setVoucherExchangeRate('1');
     }
   }, [selectedCurrency, liabilityCurrency]);
 
+  const prevTransferPairRef = useRef({ src: '', dest: '' });
   useEffect(() => {
     const src = funds.find(f => f.id === transferSourceFundId);
     const dest = funds.find(f => f.id === transferDestFundId);
+    const srcCurr = src?.currency || '';
+    const destCurr = dest?.currency || '';
+
+    if (
+      prevTransferPairRef.current.src === srcCurr &&
+      prevTransferPairRef.current.dest === destCurr
+    ) {
+      return;
+    }
+    prevTransferPairRef.current = { src: srcCurr, dest: destCurr };
+
     if (src && dest && src.currency !== dest.currency) {
-      if ((src.currency === 'SAR' && dest.currency === 'USD') || (src.currency === 'USD' && dest.currency === 'SAR')) {
-        setTransferExchangeRate('3.8');
-      } else {
-        setTransferExchangeRate('1');
-      }
+      setTransferExchangeRate(prev => {
+        if (prev && prev !== '1' && prev !== '3.8') return prev;
+        if ((src.currency === 'SAR' && dest.currency === 'USD') || (src.currency === 'USD' && dest.currency === 'SAR')) {
+          return '3.8';
+        }
+        return '1';
+      });
     } else {
       setTransferExchangeRate('1');
     }
@@ -1224,19 +1279,6 @@ export default function Vault({
       }
     }
   }, [selectedFundId, funds]);
-
-  
-  useEffect(() => {
-    setVoucherAmount('');
-    setVoucherNotes('');
-    setDepositorName('');
-    setReferenceNumber('');
-  }, [selectedFundId, liabilityCurrency]);
-
-  useEffect(() => {
-    setTransferAmount('');
-    setTransferNotes('');
-  }, [transferSourceFundId, transferDestFundId]);
 
   // Form Validity check
   const isFormValid = () => {
@@ -1270,169 +1312,10 @@ export default function Vault({
     }, 300);
   };
 
-  // Handle saving and exporting voucher
-  const handleSaveFinalVoucher = async (e: React.FormEvent, action: 'commit' | 'print' | 'whatsapp') => {
-    e.preventDefault();
-    if (!isFormValid() || isPosting) return;
-
-    if (action === 'print' || action === 'whatsapp') {
-      const originalStyle = document.createElement('style');
-      originalStyle.innerHTML = `
-        @media print {
-          @page { size: auto; margin: 0; }
-          body * { visibility: hidden !important; }
-          #print-area, #print-area * { visibility: visible !important; }
-          #print-area {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 100% !important;
-            margin: 0 !important;
-            padding: 10mm !important;
-            color: #000000 !important;
-            background-color: #ffffff !important;
-          }
-        }
-      `;
-
-      if (action === 'print') {
-        document.head.appendChild(originalStyle);
-        window.print();
-        document.head.removeChild(originalStyle);
-      } else if (action === 'whatsapp') {
-        setIsPosting(true);
-        const element = document.getElementById('print-area');
-        if (element) {
-          const originalGetComputedStyle = window.getComputedStyle;
-          let tempEl: HTMLDivElement | null = null;
-          let restore: (() => void) | null = null;
-          try {
-            tempEl = document.createElement('div');
-            tempEl.style.display = 'none';
-            document.body.appendChild(tempEl);
-
-            const convertToRgb = (color: string) => {
-              if (!color || (!color.includes('oklch') && !color.includes('oklab'))) return color;
-              try {
-                if (!tempEl) return 'rgb(0, 0, 0)';
-                tempEl.style.color = '';
-                tempEl.style.color = color;
-                const rgb = originalGetComputedStyle.call(window, tempEl).color;
-                if (rgb && !rgb.includes('oklch') && !rgb.includes('oklab')) {
-                  return rgb;
-                }
-                return 'rgb(0, 0, 0)';
-              } catch (err) {
-                return 'rgb(0, 0, 0)';
-              }
-            };
-
-            const customGetComputedStyle = (el: Element, pseudoElt?: string | null) => {
-              const style = originalGetComputedStyle.call(window, el, pseudoElt);
-              return new Proxy(style, {
-                get(target: any, prop: string) {
-                  const val = target[prop];
-                  if (typeof val === 'string' && (val.includes('oklch') || val.includes('oklab'))) {
-                    return convertToRgb(val);
-                  }
-                  if (typeof val === 'function') {
-                    return function(...args: any[]) {
-                      const res = val.apply(target, args);
-                      if (typeof res === 'string' && (res.includes('oklch') || res.includes('oklab'))) {
-                        return convertToRgb(res);
-                      }
-                      return res;
-                    };
-                  }
-                  return val;
-                }
-              });
-            };
-
-            window.getComputedStyle = customGetComputedStyle as any;
-
-            restore = await sanitizeDocumentStyles();
-            sanitizeElementInlineStyles(element);
-
-            let clonedAreaHeight = 842;
-            const canvas = await htmlToImage.toCanvas(element, {
-              pixelRatio: 2,
-              backgroundColor: '#ffffff',
-            });
-
-            const imgData = canvas.toDataURL('image/jpeg', 0.95);
-            const pdf = new jsPDF({
-                orientation: 'portrait',
-                unit: 'mm',
-                format: 'a4',
-                compress: true
-              });
-
-              const pdfWidth = pdf.internal.pageSize.getWidth();
-              const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-              let heightLeft = pdfHeight;
-              let position = 0;
-
-              pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight, undefined, 'FAST');
-              heightLeft -= pdf.internal.pageSize.getHeight();
-
-              while (heightLeft > 0.5) {
-                position = heightLeft - pdfHeight;
-                pdf.addPage();
-                pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight, undefined, 'FAST');
-                heightLeft -= pdf.internal.pageSize.getHeight();
-              }
-            
-            const formattedDate = new Date().toISOString().split('T')[0];
-            const custName = customers.find(c => c.id === selectedCustomerId)?.name || customerSearch || 'عام';
-            const reportName = activeSegment === 'receipt' ? 'سند قبض' : 'سند صرف';
-            const filename = `${reportName}_${custName}_${formattedDate}.pdf`;
-            pdf.save(filename);
-
-            const customerPhone = customers.find(c => c.id === selectedCustomerId || c.name === customerSearch)?.phone1 || '';
-            const text = `السلام عليكم ورحمة الله وبركاته...
-مرفق لكم تفاصيل سند ${activeSegment === 'receipt' ? 'قبض' : 'صرف'} رقم (${nextVoucherNum}):
-نوع السند: ${activeSegment === 'receipt' ? 'سند قبض مالي' : 'سند صرف مالي'}
-العميل: ${customerSearch}
-المبلغ: ${voucherAmount} ${selectedCurrency}
-التصنيف: ${selectedCategory}
-الملاحظات: ${voucherNotes || 'لا يوجد'}
-شكراً لتعاملكم معنا.`;
-
-            let sharedNatively = false;
-            if (navigator.share && navigator.canShare) {
-              const pdfBlob = pdf.output('blob');
-              const file = new File([pdfBlob], filename, { type: 'application/pdf' });
-              if (navigator.canShare({ files: [file] })) {
-                 await navigator.share({ files: [file], title: filename, text: text });
-                 sharedNatively = true;
-              }
-            }
-            if (!sharedNatively) {
-              openWhatsApp(text, customerPhone);
-            }
-          } catch (err) {
-            console.error('Failed to generate or share PDF', err);
-          } finally {
-            if (restore) restore();
-            window.getComputedStyle = originalGetComputedStyle;
-            if (tempEl && tempEl.parentNode) {
-              tempEl.parentNode.removeChild(tempEl);
-            }
-            setIsPosting(false);
-          }
-        }
-      }
-    }
-
-    // Now proceed with normal post logic
-    await handlePostVoucher(e);
-  };
-
   // POST / REASSIGN Voucher to Ledger
-  const handlePostVoucher = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!isFormValid() || isPosting) return;
+  const handlePostVoucher = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!isFormValid() || isPosting) return false;
 
     setIsPosting(true);
     try {
@@ -1442,7 +1325,7 @@ export default function Vault({
       if (!matchedFund) {
         setErrorMsg('الصندوق المحدد غير موجود');
         setIsPosting(false);
-        return;
+        return false;
       }
 
       const txId = `vtx-${Math.random().toString(36).substring(2, 8)}`;
@@ -1464,8 +1347,6 @@ export default function Vault({
       const currencyNameText = currencies.find(c => c.name === liabilityCurrency)?.name || liabilityCurrency || '';
       customerStatementNote = `${voucherNotes.trim()} ${statementKeyword} مبلغ ${tafqeet(computedLiabilityAmount)} ${currencyNameText} مقابل ${selectedCategory}`;
 
-
-
       const finalLiabilityCurrency = liabilityCurrency || selectedCurrency;
       const finalLiabilityAmount = computedLiabilityAmount;
       const finalPaymentType = (liabilityCurrency && liabilityCurrency !== selectedCurrency) ? 2 : 1;
@@ -1477,7 +1358,6 @@ export default function Vault({
       try {
         await localDb.run('ALTER TABLE vault_transactions ADD COLUMN statementNote TEXT');
       } catch (e) {}
-
 
       // 1. Insert into database
       const txData1 = {
@@ -1494,11 +1374,10 @@ export default function Vault({
       const balanceAdjustment = isReceipt ? parsedAmount : -parsedAmount;
       await ProviderFactory.getProvider().updateDoc('fin_funds', matchedFund.id, { balance: { type: 'increment', value: balanceAdjustment } });
 
-      
-
       // Successfully processed
-      setSuccessMsg(`تم ترحيل السند رقم (${nextVoucherNum}) بنجاح وتحديث الصناديق المال.`);
+      setSuccessMsg(`تم ترحيل السند رقم (${nextVoucherNum}) بنجاح وتحديث الصناديق.`);
       setTimeout(() => setSuccessMsg(null), 3000);
+      setShowPrintPreview(false);
       setShowAddModal(false);
 
       resetForm();
@@ -1506,13 +1385,35 @@ export default function Vault({
       // Reload everything
       await loadDatabaseData();
       await calculateNextVoucherNumber();
+      return true;
 
     } catch (err: any) {
       console.error(err);
       setErrorMsg(err.message || 'فشل ترحيل قيد الحسابات');
+      return false;
     } finally {
       setIsPosting(false);
     }
+  };
+
+  const handleSaveAndCommit = async () => {
+    return await handlePostVoucher();
+  };
+
+  const handleSaveAndPrint = async () => {
+    const internalBtn = document.getElementById('internal-print-btn');
+    if (internalBtn) {
+      (internalBtn as HTMLElement).click();
+    }
+    return await handlePostVoucher();
+  };
+
+  const handleSaveAndWhatsApp = async () => {
+    const internalWaBtn = document.getElementById('internal-wa-btn');
+    if (internalWaBtn) {
+      (internalWaBtn as HTMLElement).click();
+    }
+    return await handlePostVoucher();
   };
 
   const handlePostTransfer = async (e: React.FormEvent) => {
@@ -2725,303 +2626,53 @@ export default function Vault({
           })()}
 
           {/* 1. RECEIPT OR PAYMENT VOUCHERS SUBMIT SEGMENTS (Now as a modal or dedicated state) */}
-          {(activeSegment === 'receipt' || activeSegment === 'payment') && showAddModal && (
-            <div className="space-y-6 animate-fade-in pb-48">
-              
-              {/* Show PRINT PREVIEW if true */}
-              {showPrintPreview ? (
-                <div className="fixed inset-0 z-[120] bg-black/95 flex flex-col pointer-events-auto" dir="rtl">
-                  {/* Top Actions Bar */}
-                  <div className="flex flex-col sm:flex-row justify-between items-center bg-black/50 p-4 border-b border-white/10 shrink-0 gap-4 print:hidden">
-                    <div className="flex items-center gap-2 w-full sm:w-auto">
-                      <button 
-                        onClick={() => setShowPrintPreview(false)}
-                        className="p-2.5 bg-slate-200 border border-slate-300 rounded-xl text-slate-900 hover:bg-slate-300 transition-all flex items-center shadow-md cursor-pointer"
-                        title="العودة للتعديل"
-                      >
-                        <ArrowRight size={20} />
-                      </button>
-                      <h2 className="text-white font-bold font-cairo">معاينة {activeSegment === 'receipt' ? 'سند قبض' : 'سند صرف'}</h2>
-                    </div>
-                    
-                    <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 w-full sm:w-auto">
-                      {/* Save Voucher */}
-                      <button 
-                        onClick={(e) => handleSaveFinalVoucher(e, 'commit')}
-                        disabled={isPosting}
-                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold transition-all disabled:opacity-50 flex items-center justify-center gap-2 text-xs sm:text-sm shadow-[0_0_15px_rgba(5,150,105,0.3)] font-cairo cursor-pointer"
-                      >
-                        {isPosting ? <Loader2 size={16} className="animate-spin" /> : <Save size={16} />}
-                        حفظ وترحيل
-                      </button>
+          {(activeSegment === 'receipt' || activeSegment === 'payment') && showAddModal && (() => {
+            const currentVoucherData = {
+              id: 'preview',
+              voucherNumber: nextVoucherNum,
+              reference: nextVoucherNum,
+              type: activeSegment, // 'receipt' or 'payment'
+              amount: parseFloat(voucherAmount) || 0,
+              currency: selectedCurrency,
+              liabilityCurrency: liabilityCurrency,
+              liabilityAmount: (liabilityCurrency && liabilityCurrency !== selectedCurrency && (parseFloat(voucherExchangeRate) || 1) > 0)
+                ? Math.round(((parseFloat(voucherAmount) || 0) / (parseFloat(voucherExchangeRate) || 1)) * 100) / 100
+                : (parseFloat(voucherAmount) || 0),
+              exchangeRate: parseFloat(voucherExchangeRate) || 1,
+              customerName: customerSearch.trim() || 'جهة عامة أخرى',
+              customerId: selectedCustomerId || '',
+              customerPhone: customers.find(c => c.id === selectedCustomerId)?.phone1 || '',
+              fundName: funds.find(f => f.id === selectedFundId)?.name || 'الصندوق الرئيسي',
+              fundType: funds.find(f => f.id === selectedFundId)?.type || 'cash',
+              category: selectedCategory,
+              transactionCategory: selectedCategory,
+              details: voucherNotes.trim() || 'لا توجد تفاصيل.',
+              notes: voucherNotes.trim(),
+              referenceNumber: referenceNumber.trim(),
+              depositorName: depositorName.trim(),
+              timestamp: new Date().toISOString(),
+              date: new Date().toISOString(),
+              userName: user?.name || 'المدير العام',
+              userNumber: user?.userNumber || 100
+            };
 
-                      {/* Save and print */}
-                      <button 
-                        onClick={(e) => handleSaveFinalVoucher(e, 'print')}
-                        disabled={isPosting}
-                        className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 text-xs sm:text-sm disabled:opacity-50 font-cairo cursor-pointer"
-                      >
-                        <Printer size={16} />
-                        حفظ وطباعة مباشرة
-                      </button>
+            return (
+              <div className="space-y-6 animate-fade-in pb-48">
+                {/* Standard PrintPreviewOverlay */}
+                {showPrintPreview && (
+                  <PrintPreviewOverlay
+                    type="voucher"
+                    data={{ voucher: currentVoucherData }}
+                    shopConfig={shopConfig}
+                    user={user}
+                    onClose={() => setShowPrintPreview(false)}
+                    onSave={handleSaveAndCommit}
+                    onPrint={handleSaveAndPrint}
+                    onWhatsApp={handleSaveAndWhatsApp}
+                    isSaving={isPosting}
+                  />
+                )}
 
-                      {/* Save and WhatsApp */}
-                      <button 
-                        onClick={(e) => handleSaveFinalVoucher(e, 'whatsapp')}
-                        disabled={isPosting}
-                        className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl font-bold transition-all flex items-center justify-center gap-2 text-xs sm:text-sm shadow-[0_0_15px_rgba(5,150,105,0.3)] disabled:opacity-50 font-cairo cursor-pointer"
-                      >
-                        {isPosting ? <Loader2 size={16} className="animate-spin" /> : <WhatsAppIcon className="w-4 h-4 flex-shrink-0" />}
-                        حفظ وتصدير للواتس
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* High Fidelity Paper (820px) centered to look like an actual generated PDF */}
-                  <div className="flex-1 overflow-x-auto bg-black p-4 md:p-8 pb-24 text-right w-full">
-                    <style>{`
-                      @media print {
-                        body * {
-                          visibility: hidden !important;
-                        }
-                        #print-area, #print-area * {
-                          visibility: visible !important;
-                        }
-                        #print-area {
-                          position: absolute !important;
-                          left: 0 !important;
-                          top: 0 !important;
-                          width: 100% !important;
-                          max-width: 100% !important;
-                          color: #000000 !important;
-                          background-color: #ffffff !important;
-                          box-shadow: none !important;
-                          border: none !important;
-                          padding: 30px !important;
-                          margin: 0 !important;
-                          border-radius: 0 !important;
-                        }
-                      }
-                    `}</style>
-                    <div id="print-area" className="p-8 bg-white text-gray-900 print:p-0 print:bg-white print:text-black w-[794px] min-h-fit mx-auto flex flex-col relative shrink-0 font-cairo text-right" dir="rtl">
-                      {/* Faint print date and time watermark */}
-                      <div className="absolute left-8 top-3 text-[8px] text-gray-400 font-normal select-none opacity-45 font-mono pointer-events-none" dir="rtl">
-                        تاريخ ووقت الطباعة: {new Date().toLocaleDateString('ar-YE')} {new Date().toLocaleTimeString('ar-YE', { hour12: true, hour: '2-digit', minute: '2-digit' })}
-                      </div>
-                      {/* Header Box identical format to device inspection report */}
-                      <div className="flex justify-between items-start border-b-2 border-gray-900 pb-4 mb-6">
-                        {/* Right Corner: Shop Name */}
-                        <div className="text-right flex-1 pt-1">
-                          <h2 className="text-xl font-black text-gray-900 tracking-tight leading-tight font-cairo whitespace-nowrap">{shopConfig?.shopName || 'عالم الصيانة والتجارة'}</h2>
-                          <div className="text-sm font-black text-gray-900 tracking-tight leading-tight mt-1.5 font-cairo">قسم الحسابات والمالية</div>
-                          <div className="mt-2 space-y-1">
-                            {(shopConfig?.phone1 || shopConfig?.phone2) && (
-                              <div className="text-[10px] font-bold text-gray-800 flex items-center justify-start gap-1.5 w-fit">
-                                <span>تلفون :</span>
-                                <span dir="ltr" className="font-mono">
-                                  {shopConfig?.phone1}
-                                  {shopConfig?.phone1 && shopConfig?.phone2 && ' - '}
-                                  {shopConfig?.phone2}
-                                </span>
-                                <div className="flex items-center gap-1 mr-1.5">
-                                  <Smartphone size={10} className="text-gray-700" />
-                                  {(shopConfig?.phone1Whatsapp || shopConfig?.phone2Whatsapp) && (
-                                    <MessageCircle size={10} className="text-green-600" />
-                                  )}
-                                </div>
-                              </div>
-                            )}
-                            {shopConfig?.landline && (
-                              <div className="text-[10px] font-bold text-gray-800 flex items-center justify-start gap-1.5 w-fit">
-                                <span>ثابت :</span>
-                                <span dir="ltr" className="font-mono">{shopConfig.landline}</span>
-                                <div className="flex items-center gap-1 mr-1.5">
-                                  <Phone size={10} className="text-gray-700" />
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Center: Title / Logo */}
-                        <div className="text-center flex-[1.4] flex flex-col items-center justify-center">
-                          {shopConfig?.logoUrl ? (
-                            <img src={shopConfig.logoUrl} alt="Logo" className="h-16 max-w-[150px] object-contain mb-1.5" referrerPolicy="no-referrer" />
-                          ) : (
-                            <div className="w-12 h-12 border border-dashed border-gray-300 rounded-xl mb-1.5 flex items-center justify-center text-gray-400 text-[10px] font-bold font-sans">شعار المحل</div>
-                          )}
-                          <h1 className="text-xl font-black text-gray-950 tracking-tight border-b-2 border-gray-950 px-6 py-0.5 inline-block font-cairo bg-gray-50/50">
-                            {activeSegment === 'receipt' ? 'سَنَد قَبْض مَالِي' : 'سَنَد صَرْف مَالِي'}
-                          </h1>
-                        </div>
-
-                        {/* Left Corner: Metadata */}
-                        <div className="text-left flex-1 space-y-1 pt-1 bg-gray-50/50 p-3 rounded-lg border border-gray-200">
-                          <div className="text-sm font-bold text-gray-700 flex justify-between gap-4">
-                            <span>رقم السند:</span>
-                            <span className="font-mono text-gray-900">{nextVoucherNum}</span>
-                          </div>
-                          <div className="text-sm font-bold text-gray-700 flex justify-between gap-4">
-                            <span>التاريخ:</span>
-                            <span className="font-mono text-gray-900">{new Date().toLocaleDateString('ar-YE', { year: 'numeric', month: 'numeric', day: 'numeric' })}</span>
-                          </div>
-                          <div className="text-sm font-bold text-gray-700 flex justify-between gap-4">
-                            <span>وقت الإصدار:</span>
-                            <span className="font-mono text-gray-900">
-                              {new Date().toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit' })}
-                            </span>
-                          </div>
-                          <div className="text-sm font-bold text-gray-700 flex justify-between gap-4 border-t border-gray-200 pt-1 mt-1 font-cairo">
-                            <span>رقم المستخدم:</span>
-                            <span className="font-mono text-gray-900">{user?.userNumber || '100'}</span>
-                          </div>
-                          {funds.find(f => f.id === selectedFundId)?.type !== 'cash' && referenceNumber && (
-                            <div className="text-sm font-bold text-gray-700 flex justify-between gap-4">
-                              <span>رقم المرجع:</span>
-                              <span className="font-mono text-gray-900">{referenceNumber}</span>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-
-
-
-
-
-
-                      {/* Main Voucher Grid Information */}
-                      <div className="border border-gray-400 rounded-xl overflow-hidden mb-6">
-                        <div className="grid grid-cols-4 bg-gray-50 border-b border-gray-300 text-xs text-gray-700 font-bold">
-                          <div className="col-span-1 px-4 py-2 border-l border-gray-300">البيان المالي</div>
-                          <div className="col-span-3 px-4 py-2">التفاصيل والبيانات المدخلة</div>
-                        </div>
-                        
-                        <div className="divide-y divide-gray-300 text-xs">
-                          {/* 1. Name */}
-                          <div className="grid grid-cols-4">
-                            <div className="col-span-1 bg-gray-50 px-4 py-2.5 font-bold border-l border-gray-300 text-gray-800">
-                              {activeSegment === 'receipt' ? 'مقبوض من السيد:' : 'مدفوع إلى السيد:'}
-                            </div>
-                            <div className="col-span-3 px-4 py-2.5 font-bold text-gray-950">
-                              {customerSearch || 'جهة عامة أخرى'}
-                            </div>
-                          </div>
-
-                          {/* 2. Amount */}
-                          <div className="grid grid-cols-4">
-                            <div className="col-span-1 bg-gray-50 px-4 py-2.5 font-bold border-l border-gray-300 text-gray-800">المبلغ الإجمالي:</div>
-                            <div className="col-span-3 px-4 py-2.5 font-black text-emerald-700 text-sm">
-                              {(() => {
-                                const parsedAmount = parseFloat(voucherAmount) || 0;
-                                let computed = parsedAmount;
-                                if (liabilityCurrency && liabilityCurrency !== selectedCurrency) {
-                                  const rate = parseFloat(voucherExchangeRate) || 1;
-                                  computed = rate > 0 ? Math.round((parsedAmount / rate) * 100) / 100 : 0;
-                                }
-                                return computed.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-                              })()} {currencies.find(c => c.name === liabilityCurrency)?.name || liabilityCurrency || selectedCurrency}
-                            </div>
-                          </div>
-
-                          {/* 3. Category */}
-                          <div className="grid grid-cols-4">
-                            <div className="col-span-1 bg-gray-50 px-4 py-2.5 font-bold border-l border-gray-300 text-gray-800">نوع العملية والتصنيف:</div>
-                            <div className="col-span-3 px-4 py-2.5 text-gray-900 font-semibold">
-                              {selectedCategory}
-                            </div>
-                          </div>
-
-                          {/* 4. Fund Box */}
-                          <div className="grid grid-cols-4">
-                            <div className="col-span-1 bg-gray-50 px-4 py-2.5 font-bold border-l border-gray-300 text-gray-800">رقم الصندوق:</div>
-                            <div className="col-span-3 px-4 py-2.5 text-gray-900 font-semibold flex items-center gap-2">
-                              <span className="font-mono" dir="ltr">{funds.find(f => f.id === selectedFundId)?.id?.replace('fund-', '') || selectedFundId}</span>
-                              <span className="text-[10px] bg-gray-200 text-gray-700 px-2 py-0.5 rounded font-black">
-                                {funds.find(f => f.id === selectedFundId)?.type === 'cash' ? 'نقدي' : 'حساب بنكي'}
-                              </span>
-                            </div>
-                          </div>
-
-                          {/* 5. Bank Info if exists */}
-                          {funds.find(f => f.id === selectedFundId)?.type !== 'cash' && (
-                            <>
-                              <div className="grid grid-cols-4">
-                                <div className="col-span-1 bg-gray-50 px-4 py-2.5 font-bold border-l border-gray-300 text-gray-800">رقم المرجع البنكي:</div>
-                                <div className="col-span-3 px-4 py-2.5 text-gray-955 font-mono font-bold">
-                                  {referenceNumber}
-                                </div>
-                              </div>
-                              <div className="grid grid-cols-4">
-                                <div className="col-span-1 bg-gray-50 px-4 py-2.5 font-bold border-l border-gray-300 text-gray-800">اسم مودع المبلغ:</div>
-                                <div className="col-span-3 px-4 py-2.5 text-gray-955 font-semibold">
-                                  {depositorName}
-                                </div>
-                              </div>
-                            </>
-                          )}
-
-                          {/* 6. Notes */}
-                          <div className="grid grid-cols-4">
-                            <div className="col-span-1 bg-gray-50 px-4 py-2.5 font-bold border-l border-gray-300 text-gray-800">الشرح والبيان:</div>
-                            <div className="col-span-3 px-4 py-2.5 text-gray-900 font-semibold text-sm leading-relaxed">
-                              {(() => {
-                                const parsedAmount = parseFloat(voucherAmount) || 0;
-                                let computed = parsedAmount;
-                                if (liabilityCurrency && liabilityCurrency !== selectedCurrency) {
-                                  const rate = parseFloat(voucherExchangeRate) || 1;
-                                  computed = rate > 0 ? Math.round((parsedAmount / rate) * 100) / 100 : 0;
-                                }
-                                const statementKeyword = activeSegment === 'receipt' ? 'لكم' : 'عليكم';
-                                const currencyNameText = currencies.find(c => c.name === liabilityCurrency)?.name || liabilityCurrency || '';
-                                return `${voucherNotes.trim()} ${statementKeyword} مبلغ ${tafqeet(computed)} ${currencyNameText} مقابل ${selectedCategory}`;
-                              })()}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Stamp & Signatures */}
-                      <div className="grid grid-cols-3 gap-6 text-center mt-12 text-xs pt-4 border-t border-dashed border-gray-300">
-                        <div>
-                          <p className="font-bold text-gray-800 mb-10">المستلم / المحاسب</p>
-                          <p className="text-gray-400">_____________________</p>
-                        </div>
-                        <div>
-                          <p className="font-bold text-gray-800 mb-10">الختم الرسمي</p>
-                          <div className="w-16 h-16 border-2 border-dashed border-gray-300 rounded-full mx-auto flex items-center justify-center text-gray-300 text-[10px]">قسم الصندوق</div>
-                        </div>
-                        <div>
-                          <p className="font-bold text-gray-800 mb-10">المودع / العميل</p>
-                          <p className="text-gray-400">_____________________</p>
-                        </div>
-                      </div>
-
-                      <div className="border-t-[3px] border-black mt-2 mb-1 border-solid"></div>
-                      
-                      {/* Address and Facebook */}
-                      <div className="flex flex-row items-center justify-between text-[10px] font-bold text-black font-cairo py-1 mt-0">
-                        {shopConfig?.address && (
-                          <div className="flex items-center gap-1.5 justify-center flex-row-reverse text-center w-max">
-                             <MapPin size={12} className="text-gray-600" />
-                             <span>{shopConfig.address}</span>
-                          </div>
-                        )}
-
-                        {shopConfig?.facebookUrl && (
-                          <div className="flex items-center gap-1.5 justify-center flex-row-reverse text-center w-max">
-                             <Facebook size={12} className="text-blue-600" />
-                             <span dir="ltr">{shopConfig.facebookUrl}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="mt-2">
-                        <BankAccountsFooter shopConfig={shopConfig} currentOutput={currentOutput || { output_datetime: new Date() }} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              ) : (
                 <div className="space-y-4">
                   {/* Header Title */}
                   <div className="border-b border-white/5 pb-3 flex items-center justify-between gap-4">
@@ -3318,9 +2969,9 @@ export default function Vault({
                      </button>
                   </div>
                 </div>
-              )}
-            </div>
-          )}
+              </div>
+            );
+          })()}
 
           {/* TRANSFER FUNDS VIEW */}
           {activeSegment === 'transfer' && (
@@ -3743,16 +3394,16 @@ export default function Vault({
                   </div>
                 ) : (
                   <div className="border border-white/5 rounded-2xl overflow-auto bg-black/20 max-h-[32rem] scrollbar-thin">
-                    <table className="w-full text-right text-[11px] whitespace-nowrap min-w-[700px]">
+                    <table className="w-full text-right text-[11px] whitespace-nowrap min-w-[720px] table-auto">
                       <thead>
                         <tr className="bg-white/5 text-gray-300 font-bold border-b border-white/5 font-cairo">
-                          <th className="px-3.5 py-3">رقم السند</th>
-                          <th className="px-3.5 py-3">التاريخ والوقت</th>
-                          <th className="px-3.5 py-3">الصندوق</th>
-                          <th className="px-3.5 py-3">البيان والتفاصيل</th>
-                          <th className="px-3.5 py-3 text-center">مدين (وارد)</th>
-                          <th className="px-3.5 py-3 text-center">دائن (منصرف)</th>
-                          <th className="px-3.5 py-3 text-left">المبلغ والعملة</th>
+                          <th className="px-2.5 py-3 text-center w-14 sm:w-16 shrink-0">رقم السند</th>
+                          <th className="px-2.5 py-3 text-center w-28 sm:w-32 shrink-0">التاريخ والوقت</th>
+                          <th className="px-2.5 py-3 w-24 sm:w-28 shrink-0">الصندوق</th>
+                          <th className="px-3.5 py-3 min-w-[200px] w-full">البيان والتفاصيل</th>
+                          <th className="px-2.5 py-3 text-center text-emerald-400 w-20 sm:w-24 shrink-0">مدين (وارد)</th>
+                          <th className="px-2.5 py-3 text-center text-rose-400 w-20 sm:w-24 shrink-0">دائن (منصرف)</th>
+                          <th className="px-3 py-3 text-left w-24 sm:w-28 shrink-0">المبلغ</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5 font-cairo">
@@ -3768,16 +3419,18 @@ export default function Vault({
 
                           return (
                             <tr key={tx.id} className={`hover:bg-white/5 transition-colors ${isRev ? 'opacity-60 bg-red-950/10' : 'bg-[#141414]'}`}>
-                              <td className="px-3.5 py-2.5 font-mono font-bold text-amber-500">
+                              <td className="px-2.5 py-2.5 font-mono font-bold text-amber-500 text-center whitespace-nowrap">
                                 {tx.voucherNumber ? `#${tx.voucherNumber}` : '-'}
                               </td>
-                              <td className="px-3.5 py-2.5 text-gray-400 font-mono text-[10px]">
+                              <td className="px-2.5 py-2.5 text-gray-400 font-mono text-[10px] text-center whitespace-nowrap">
                                 {formatTxDate(tx)}
                               </td>
-                              <td className="px-3.5 py-2.5 font-bold text-gray-300">
-                                {getFundDisplayName(tx)}
+                              <td className="px-2.5 py-2.5 font-bold text-gray-300 whitespace-nowrap">
+                                <span className="px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[10px]">
+                                  {getFundDisplayName(tx)}
+                                </span>
                               </td>
-                              <td className="px-3.5 py-2.5">
+                              <td className="px-3.5 py-2.5 whitespace-normal">
                                 <div className="flex flex-col gap-0.5">
                                   <span className="font-bold text-white text-xs leading-tight">
                                     {formatFundTxDetails(tx)}
@@ -3789,15 +3442,15 @@ export default function Vault({
                                   )}
                                 </div>
                               </td>
-                              <td className="px-3.5 py-2.5 text-center font-mono font-bold text-emerald-400">
-                                {debit > 0 ? `+${debit.toLocaleString('en-US')}` : <span className="text-gray-600 font-normal">-</span>}
+                              <td className="px-2.5 py-2.5 text-center font-mono font-bold text-emerald-400 whitespace-nowrap">
+                                {debit > 0 ? debit.toLocaleString('en-US') : <span className="text-gray-600 font-normal">-</span>}
                               </td>
-                              <td className="px-3.5 py-2.5 text-center font-mono font-bold text-rose-400">
-                                {credit > 0 ? `-${credit.toLocaleString('en-US')}` : <span className="text-gray-600 font-normal">-</span>}
+                              <td className="px-2.5 py-2.5 text-center font-mono font-bold text-rose-400 whitespace-nowrap">
+                                {credit > 0 ? credit.toLocaleString('en-US') : <span className="text-gray-600 font-normal">-</span>}
                               </td>
-                              <td className="px-3.5 py-2.5 text-left font-mono font-black text-white">
+                              <td className="px-3 py-2.5 text-left font-mono font-black text-white whitespace-nowrap">
                                 <span>{amount.toLocaleString('en-US')}</span>
-                                <span className="text-[10px] text-gray-500 font-sans mr-1">{tx.currency}</span>
+                                <span className="text-[11px] text-gray-400 font-cairo mr-1 font-semibold">{getCurrencySymbol(tx.currency)}</span>
                                 {isRev && (
                                   <span className="mr-1.5 px-1.5 py-0.5 rounded text-[9px] bg-rose-500/20 text-rose-400 font-bold">ملغي</span>
                                 )}
@@ -5019,25 +4672,25 @@ export default function Vault({
                   </div>
                 ) : (
                   <div className="border border-white/10 rounded-xl overflow-x-auto w-full scrollbar-thin bg-black/20 shadow-inner">
-                    <table className="w-full text-right text-xs whitespace-nowrap min-w-[820px] table-auto">
+                    <table className="w-full text-right text-xs whitespace-nowrap min-w-[720px] table-auto">
                       <thead>
                         <tr className="bg-white/5 text-gray-300 font-bold border-b border-white/5 font-cairo">
-                          <th className="px-3.5 py-3 text-center w-20">رقم السند</th>
-                          <th className="px-3.5 py-3 w-36">التاريخ والوقت</th>
-                          <th className="px-3.5 py-3 min-w-[280px]">البيان والتفاصيل</th>
-                          <th className="px-3.5 py-3 text-center w-28">مدين (وارد)</th>
-                          <th className="px-3.5 py-3 text-center w-28">دائن (منصرف)</th>
-                          <th className="px-3.5 py-3 text-left w-32">الرصيد</th>
+                          <th className="px-2.5 py-3 text-center w-14 sm:w-16 shrink-0">رقم السند</th>
+                          <th className="px-2.5 py-3 text-center w-28 sm:w-32 shrink-0">التاريخ والوقت</th>
+                          <th className="px-3.5 py-3 min-w-[220px] w-full">البيان والتفاصيل</th>
+                          <th className="px-2.5 py-3 text-center text-emerald-400 w-20 sm:w-24 shrink-0">مدين (وارد)</th>
+                          <th className="px-2.5 py-3 text-center text-rose-400 w-20 sm:w-24 shrink-0">دائن (منصرف)</th>
+                          <th className="px-3 py-3 text-left w-24 sm:w-28 shrink-0">الرصيد</th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5 font-cairo">
                         {filteredEntries.map(entry => (
                           <tr key={entry.id} className="hover:bg-white/5 transition-colors">
-                            <td className="px-3.5 py-2.5 font-mono font-bold text-amber-500 text-center">
+                            <td className="px-2.5 py-2.5 font-mono font-bold text-amber-500 text-center whitespace-nowrap">
                               {entry.voucherNumber ? `#${entry.voucherNumber}` : '-'}
                             </td>
-                            <td className="px-3.5 py-2.5 font-mono text-gray-400 text-[11px] whitespace-nowrap">{entry.dateStr}</td>
-                            <td className="px-3.5 py-2.5 whitespace-normal max-w-[340px]">
+                            <td className="px-2.5 py-2.5 font-mono text-gray-400 text-[10px] text-center whitespace-nowrap">{entry.dateStr}</td>
+                            <td className="px-3.5 py-2.5 whitespace-normal">
                               <div className="flex flex-col gap-0.5">
                                 <span className="font-bold text-white text-xs leading-tight">
                                   {entry.details}
@@ -5049,14 +4702,15 @@ export default function Vault({
                                 )}
                               </div>
                             </td>
-                            <td className="px-3.5 py-2.5 text-center font-mono font-bold text-emerald-400 whitespace-nowrap">
+                            <td className="px-2.5 py-2.5 text-center font-mono font-bold text-emerald-400 whitespace-nowrap">
                               {entry.debit > 0 ? `+${entry.debit.toLocaleString('en-US')}` : <span className="text-gray-600 font-normal">-</span>}
                             </td>
-                            <td className="px-3.5 py-2.5 text-center font-mono font-bold text-rose-400 whitespace-nowrap">
+                            <td className="px-2.5 py-2.5 text-center font-mono font-bold text-rose-400 whitespace-nowrap">
                               {entry.credit > 0 ? `-${entry.credit.toLocaleString('en-US')}` : <span className="text-gray-600 font-normal">-</span>}
                             </td>
-                            <td className="px-3.5 py-2.5 text-left font-mono font-black text-blue-400 whitespace-nowrap">
-                              {entry.runningBalance.toLocaleString('en-US')} <span className="text-[10px] text-gray-500 font-sans">{fund.currency}</span>
+                            <td className="px-3 py-2.5 text-left font-mono font-black text-blue-400 whitespace-nowrap">
+                              <span>{entry.runningBalance.toLocaleString('en-US')}</span>
+                              <span className="text-[11px] text-blue-300/80 font-cairo mr-1 font-semibold">{getCurrencySymbol(fund.currency)}</span>
                             </td>
                           </tr>
                         ))}

@@ -1,22 +1,23 @@
 # وثيقة التوثيق التقني الشاملة للنظام (System Technical Documentation)
 
 **اسم المشروع:** نظام إدارة الصيانة والحسابات والمخزون المتقدم (Maintenance, Accounting & Inventory System)  
-**إصدار الوثيقة:** 1.0.0  
-**تاريخ التوثيق:** أغسطس 2026  
-**نطاق الوثيقة:** التوثيق التقني الشامل للهندسة المعمارية، المكونات، قواعد البيانات، الدورات المستندية، العمليات المالية، وحوكمة الصلاحيات بدون أي تعديل على كود المشروع.
+**إصدار الوثيقة:** 2.0.0 (المحدث والمطابق لكامل النظام)  
+**تاريخ التوثيق:** سبتمبر 2026  
+**نطاق الوثيقة:** التوثيق التقني الشامل للهندسة المعمارية، المكونات، قواعد البيانات (25 جدولاً)، الدورات المستندية، العمليات المالية، محركات التدقيق والإصلاح، وحوكمة الصلاحيات والأمان.
 
 ---
 
 ## 1. مكونات المشروع (Project Components)
 
 ### 1.1 التقنيات الأساسية (Core Technologies)
-* **واجهة المستخدم (Frontend Framework):** React 19.0.0 مع TypeScript 5.8.2 لتطوير واجهات تفاعلية عالية الأداء ومعتمدة على الأنماط القوية للأنواع (Strict Typing).
+* **واجهة المستخدم (Frontend Framework):** React 19.0.0 مع TypeScript 5.8.2 لتطوير واجهات تفاعلية عالية الأداء ومعتمدة على الأنماط الصارمة للأنواع (Strict Typing).
 * **أداة البناء (Build Tool & Bundler):** Vite 6.2.0 لسرعة التجميع وتجهيز حزم الإنتاج المتقدمة.
 * **إطار التطبيق الهجين / الهاتف المحمول (Mobile & Cross-Platform Runtime):** Capacitor 8.0.0 (تشمل `@capacitor/core`, `@capacitor/cli`, `@capacitor/android`, `@capacitor/filesystem`).
+* **المصادقة البيومترية للأجهزة الذكية (Biometrics):** `capacitor-native-biometric` 8.0.0 للمصادقة عبر بصمة الإصبع وبصمة الوجه.
 * **محرك قواعد البيانات المحلي (Local SQLite Database):** `@capacitor-community/sqlite` 7.0.0 مع دعم `sql.js` 1.12.0 للعمل على البيئة المتصفحية (Web/PWA).
 * **محرك قواعد البيانات السحابي (Cloud Database):** Firebase Firestore Web SDK 12.0.0.
 * **التصميم والأنماط (Styling):** Tailwind CSS 4.0.9 لتصميم واجهات عصرية ومتجاوبة بالكامل.
-* **الخادم البرمجي وخادم التطوير (Server & Runtime):** Express 4.21.2 مع `tsx` للتشغيل المحلي المدمج للباك إند.
+* **الخادم البرمجي وخادم التطوير (Server & Runtime):** Express 4.21.2 مع `tsx` للتشغيل المحلي المدمج للباك إند و `esbuild` لتجميع الإنتاج.
 * **محرك اللغات والتدويل (Internationalization):** `i18next` 24.2.2 و `react-i18next` 15.4.0 ودعم كامل للغة العربية والإنجليزية والترجمة الفورية.
 
 ---
@@ -54,53 +55,67 @@
     │   ├── AccountingInputs.tsx     # مدخلات البيانات المالية الرئيسية (العملات، الصناديق، طرق الدفع)
     │   ├── AddCustomerModal.tsx     # نافذة إضافة عميل جديد
     │   ├── BankAccountsFooter.tsx   # شريط عرض واستعلام أرصدة الحسابات والصناديق
-    │   ├── CategoriesTable.tsx      # جدول إدارة تصنيفات الأجهزة والقطع
+    │   ├── CategoriesTable.tsx      # جدول إدارة تصنيفات الأجهزة
     │   ├── CustomerAutocomplete.tsx  # الإكمال التلقائي للبحث عن العملاء
     │   ├── Customers.tsx            # صفحة إدارة العملاء وكشوفات الحساب
-    │   ├── DeviceEntry.tsx          # صفحة استقبال وأمر دخول الأجهزة للصيانة
+    │   ├── Dashboard.tsx            # لوحة المؤشرات والإحصاءات التشغيلية السريعة
+    │   ├── DataAuditModal.tsx       # مركز تدقيق ومطابقة سلامة البيانات المالية وإصلاح الفروقات
     │   ├── DeviceManagement.tsx     # حوكمة وتصحيح وإدارة مسارات الأجهزة والتسليم
-    │   ├── DeviceMovement.tsx       # حركة ومتابعة مسار الأجهزة الموحد
+    │   ├── DeviceStatisticalSummaryModal.tsx # نافذة الإحصائيات الشاملة ومؤشرات أداء الأجهزة
     │   ├── EngineersTable.tsx       # جدول إدارة بيانات وخبرات المهندسين
-    │   ├── Inventory.tsx            # إدارة قطع الغيار ومخزون الصيانة
-    │   ├── Login.tsx                # صفحة تسجيل الدخول والتحقق من المستخدمين والأجهزة
+    │   ├── FinancialReportsTab.tsx  # تبويب التقارير المالية المتخصصة والمطابقات
+    │   ├── Inventory.tsx            # إدارة قطع الغيار والمخزون الموحد
+    │   ├── Login.tsx                # صفحة تسجيل الدخول والتحقق من المستخدمين والأجهزة والبيومترية
+    │   ├── MaintenanceActionForm.tsx # نموذج تسجيل الإجراءات الفنية وقطع الغيار
     │   ├── OtherServiceInvoice.tsx  # فاتورة الخدمات الخارجية والمستقلة
-    │   ├── PrintPreviewOverlay.tsx  # شاشة طباعة وتصدير المستندات والسندات
+    │   ├── PartsAutocomplete.tsx    # الإكمال التلقائي الذكي لقطع الغيار
+    │   ├── PartsCatalogTable.tsx    # كتالوج قطع الغيار المرجعية المعتمدة
+    │   ├── PrintPreviewOverlay.tsx  # شاشة طباعة وتصدير المستندات والسندات وأرشفة الـ PDF
     │   ├── ReportActions.tsx        # أزرار وإجراءات طباعة وتصدير التقارير
     │   ├── Reports.tsx              # صفحة التقارير المالية والإدارية الشاملة
     │   ├── SearchInvoice.tsx        # البحث المتقدم عن الفواتير واستكمال الدفع
-    │   ├── Settings.tsx             # إعدادات النظام المتقدمة والنسخ الاحتياطي
+    │   ├── SecurityGuard.tsx        # حارس الأمان اللحظي لمراقبة حالة الأجهزة والجلسات
+    │   ├── Settings.tsx             # إعدادات النظام المتقدمة، الإدارة المتقدمة، والنسخ الاحتياطي
     │   ├── SetupWizard.tsx          # معالج الإعداد الأولي للنظام والشركات
+    │   ├── ShopPartsStockView.tsx   # إدارة مخزون قطع ورشة الصيانة ولوطات التفكيك (التشليح)
     │   ├── UserManagement.tsx       # إدارة المستخدمين، الأدوار، والأجهزة المعتمدة
     │   ├── Vault.tsx                # صفحة الخزنة/الصندوق وسندات القبض والصرف والتحويل
     │   │
     │   ├── entry-exit/              # مكونات الدخول والخروج الخاصة
-    │   │   ├── DeviceEntryModal.tsx # نافذة إدخال جهاز جديد
-    │   │   ├── DeviceExit.tsx      # صفحة تسليم الأجهزة وخروجها
+    │   │   ├── DeviceEntry.tsx      # صفحة استقبال وأمر دخول الأجهزة للصيانة
+    │   │   ├── DeviceExit.tsx       # صفحة تسليم الأجهزة وخروجها والتحصيل المالي
     │   │   └── index.tsx            # المجمّع الموحد للدخول والخروج
     │   │
     │   └── movement/                # مسارات حركة الصيانة المتقدمة
     │       ├── ApprovalAndParts.tsx # مرحلة موافقات العملاء وقطع الغيار
     │       ├── Inspection.tsx       # مرحلة الفحص والتشخيص الفني
-    │       └── Maintenance.tsx      # مرحلة تنفيذي عمليات الصيانة
+    │       ├── Maintenance.tsx      # مرحلة تنفيذ عمليات الصيانة
+    │       └── index.tsx            # المجمّع الموحد لحركة الأجهزة
     │
     ├── data/                        # طبقة مزودي قواعد البيانات والمزامنة
     │   ├── IDataProvider.ts         # الواجهة البرمجية الموحدة لمزود البيانات
     │   ├── LocalProvider.ts         # مزود قواعد البيانات المحلية (SQLite)
     │   ├── FirebaseProvider.ts      # مزود قواعد البيانات السحابية (Firestore)
     │   ├── ProviderFactory.ts       # مصنع اختيار المزود النشط (Local / Cloud / Auto)
-    │   └── SyncEngine.ts            # محرك المزامنة الخلفية والـ Outbox Pattern
+    │   └── SyncEngine.ts            # محرك المزامنة الخلفية ونمط الصندوق الصادر مع التحديث الصامت
     │
     ├── hooks/                       # الخُطافات البرمجية المخصصة (Custom Hooks)
     │   ├── useBackHandler.ts        # معالجة زر العودة للموبايل والأجهزة الذكية
     │   └── usePermissions.ts        # التحقق التلقائي من صلاحيات المستخدم الحالي
     │
-    └── lib/                         # المكتبات والأدوات المساعدة (Utilities)
+    └── lib/                         # المكتبات والخدمات المساعدة (Utilities & Services)
+        ├── backup.ts                # محرك النسخ الاحتياطي والتصدير والاسترجاع
+        ├── biometricAuth.ts         # خدمة التحقق والمصادقة البيومترية (بصمة الإصبع/الوجه)
+        ├── contactPicker.ts         # خدمة جلب جهات الاتصال مباشرة من هاتف العميل
         ├── dateUtils.ts             # معالجة وتنسيق التواريخ والوقت
         ├── db-bridge.ts             # الجسر الموحد للاتصال بقواعد البيانات
         ├── error-handler.ts         # معالج أخطاء Firestore والعمليات
+        ├── fundRepairService.ts     # خدمة التدقيق والإصلاح التلقائي لأرصدة الخزائن والصناديق
+        ├── fundUtils.ts             # أدوات معالجة وحساب أرصدة الصناديق
         ├── html2canvasHelper.ts     # تحسين أداء وتنسيقات طباعة أجزاء الشاشة
         ├── i18n.ts                  # تهيئة خيارات الترجمة واللغات
-        ├── local-db.ts              # إنشاء وتهيئة وجداول SQLite المحلية
+        ├── invoiceCascadeService.ts # خدمة المعالجة المتسلسلة لحذف وتعديل الفواتير والسندات
+        ├── local-db.ts              # إنشاء وتهيئة وهيكلة جداول SQLite الـ 25
         ├── shareHelper.ts           # أدوات مشاركة الملفات وواتساب
         └── tafqeet.ts               # تحويل الأرقام المالية إلى كلمات عربية
 ```
@@ -110,456 +125,220 @@
 ### 1.4 طبقات التطبيق (Application Layers)
 
 1. **طبقة العرض والواجهات (Presentation Layer):**
-   تتكون من مكونات React مع Tailwind CSS و Motion. تعتمد على النمط التفاعلي المباشر وتدعم الإكمال التلقائي، النوافذ المنبثقة، ومعاينة الطباعة والمشاركة.
+   تتكون من مكونات React مع Tailwind CSS و Motion. تعتمد على النمط التفاعلي المباشر وتدعم الإكمال التلقائي، النوافذ المنبثقة، ومعاينة الطباعة والأرشفة، وتتميز بالحماية ضد فقدان المدخلات (`Form Dirty State`) والتحديث الصامت في الخلفية.
 
-2. **طبقة منطق الأعمال والحالة (Business Logic & State Layer):**
-   تتضمن التحقق من الصلاحيات عبر `usePermissions` و معالجة قواعد حركة الصيانة، قيود الحسابات المالية، تفقيت المبالغ، والتحقق من الذمم والديون.
+2. **طبقة منطق الأعمال والخدمات المحاسبية (Business Logic & Core Services Layer):**
+   تتضمن التحقق من الصلاحيات عبر `usePermissions`، ومحرك التدقيق المحاسبي `fundRepairService`، والخدمة المتسلسلة `invoiceCascadeService`، والمصادقة البيومترية `biometricAuth`، وقواعد الحسابات المالية والذمم.
 
 3. **طبقة الجسر والمزودات (Data Access & Bridge Layer):**
    تستخدم `db-bridge.ts` للربط بـ `ProviderFactory.ts`. تضمن هذه الطبقة تجريد نوع قاعدة البيانات المستعملة وتدعم أنماط `LOCAL` و `CLOUD` و `AUTO`.
 
-4. **طبقة التخزين المزدوجة والمزامنة (Storage & Sync Layer):**
-   * **المحلي (Local):** قاعدة بيانات SQLite تعمل هجينياً عبر المحاكي المباشر في المتصفح أجهزة المحمول.
-   * **السحابي (Cloud):** مجموعة Firestore Collections مع قواعد أمان سحابية.
-   * **محرك المزامنة (Sync Engine):** يعتمد على نمط الصندوق الصادر `outbox` لمعالجة التغييرات بالترتيب (FIFO) متى ما توفر الاتصال الشبكي.
+4. **طبقة التخزين المزدوجة والمزامنة الصامتة (Storage & Silent Sync Layer):**
+   * **المحلي (Local):** قاعدة بيانات SQLite متكاملة تشتمل على 25 جدولاً تعمل هجينياً عبر المحاكي المباشر في المتصفح وأجهزة المحمول.
+   * **السحابي (Cloud):** مجموعات Firestore Collections مع قواعد أمان متقدمة.
+   * **محرك المزامنة (Sync Engine):** يعتمد على نمط الصندوق الصادر `outbox` لمعالجة التغييرات بالترتيب (FIFO) مع تحديث الواجهات بصمت (`Silent Refresh`) دون قطع تجربة المستخدم.
 
 ---
 
-### 1.5 طريقة اتصال الواجهات بقاعدة البيانات (Interface-to-DB Connection)
-
-تتبع الواجهات النمط الموحد التالي في إجراء الاستعلامات والعمليات:
-* **القراءة المباشرة (Direct Reads):** تُستخدم الدالة `localDb.query(sql, params)` أو الاستماع المباشر عبر `onSnapshot` لقواعد Firestore المحددة.
-* **الكتابة والتعديل (Writes & Updates):** تنفذ الواجهات عمليات الإضافة والتعديل والحذف عبر `ProviderFactory.getProvider()`، حيث يتم توجيه الأمر إلى `LocalProvider` أو `FirebaseProvider` بناءً على الوضع المعتمد.
-* **ضمان استمرارية العمل دون إنترنت (Offline First):** في وضع `AUTO` أو `LOCAL`، تُكتب جميع المعاملات محلياً أولاً بداخل معاملات SQLite المباشرة، وتُسجل الحركة في جدول `outbox` ليقوم `SyncEngine.ts` بمزامنتها تلقائياً مع السحابة فور عودة الاتصال.
-
----
-
-## 2. صفحات البرنامج وحصر الوظائف (System Pages Inventory)
+## 2. صفحات البرنامج وحصر الوظائف الشامل (System Pages Inventory)
 
 | # | اسم الصفحة / المكون | المسار / الكود | الوظيفة التقنية والتفصيلية |
 |---|---|---|---|
-| 1 | **تسجيل الدخول** | `Login.tsx` | التحقق من بيانات المستخدم (اسم المستخدم وكلمة المرور)، قراءة الأجهزة المعتمدة والتحقق من معرف الجهاز (Device UUID / IMEI) وحالته (نشط، معطل، محظور)، وتخزين جلسة العمل. |
-| 2 | **لوحة التحكم الموحدة** | `App.tsx` / `Dashboard.tsx` | ملخص مؤشرات الأداء (عدد الأجهزة، الإيرادات، الأجهزة الجاهزة، التنبيهات)، شريط الأرصدة البنكية والمشغلات السريعة لكافة أقسام النظام. |
-| 3 | **استقبال ودخول الأجهزة** | `DeviceEntry.tsx` | تسجيل دخول أجهزة جديدة للصيانة، ربطها بالعميل، إدخال الشكوى والعطل الظاهري، تحديد الملحقات وسعر الصيانة التقديري، وإنشاء الفاتورة الأولى برقم تسلسلي تلقائي. |
-| 4 | **تسليم وخروج الأجهزة** | `DeviceExit.tsx` | استعراض الأجهزة الجاهزة للتسليم (حالة 50/60)، احتساب الحساب النهائي، تسجيل الدفعات المسددة والخصومات، وطباعة كشوفات وأوامر الخروج. |
-| 5 | **إدارة وحركة الأجهزة** | `DeviceManagement.tsx` | المتابعة المركزية لحالة الأجهزة في مسار الصيانة، التعديل الإداري للحالات والتصحيح الاستثنائي مع إمكانية عكس القيود المالية تلقائياً عند تغيير حالة جهاز مسلّم. |
-| 6 | **الفحص والتشخيص الفني** | `movement/Inspection.tsx` | تسجيل نتائج الفحص الفني للمهندس، تحديد الأجزاء التالفة، تحديث الحالة إلى (قيد الفحص / التشخيص - 20) وتحديد خطة الصيانة. |
-| 7 | **الموافقات وقطع الغيار** | `movement/ApprovalAndParts.tsx` | إدارة مرحلة انتظار موافقة العميل (حالة 30) أو انتظار توفير قطع الغيار (حالة 35)، تسجيل التكلفة الإضافية وطلب القطع من المخزن. |
-| 8 | **تنفيذ الصيانة الفنية** | `movement/Maintenance.tsx` | تسجيل الإجراءات التنفيذية للمهندسين (حالة 40 - قيد الصيانة)، إضافة الملاحظات والقطع المستهلكة وتحويل الجهاز إلى حالة (جاهز للتسليم - 50). |
-| 9 | **إدارة العملاء** | `Customers.tsx` | إضافة وتعديل بيانات العملاء، استعراض كشوفات الحساب الموحدة حسب العملة، متابعة أرصدة الديون والذمم، وتصدير أو مشاركة الكشوفات. |
-| 10 | **الحسابات والخزنة** | `Vault.tsx` | إدارة الخزائن والصناديق، تحرير سندات القبض المالي، سندات الصرف المالي، سندات التحويل بين الصناديق، معالجة فروق فروقات أسعار الصرف، وعكس القيود المالية. |
-| 11 | **مدخلات الحسابات والبيانات** | `AccountingInputs.tsx` | تعريف وتحديث بيانات الصناديق والخزائن (`fin_funds`)، العملات وسعر الصرف (`fin_currencies`)، أنواع المعاملات المالية (`fin_transaction_types`)، وطرق الدفع (`fin_payment_methods`). |
-| 12 | **المخزون وقطع الغيار** | `Inventory.tsx` | إدارة عناصر قطع الغيار والمستلزمات (`inventory_items`)، المتابعة الكمية، تحديد أسعار الشراء والبيع، الموردين، وإشعارات حد الطلب. |
-| 13 | **التقارير المتاحة** | `Reports.tsx` | تقارير حركة الإيرادات، المصروفات، الأرباح والخسائر التشغيلية، أرصدة الخزائن والصناديق، تقارير الديون والذمم المعلقة، وتقارير أداء المهندسين. |
-| 14 | **فواتير الخدمات الأخرى** | `OtherServiceInvoice.tsx` | إصدار فواتير مستقلة للخدمات البرمجية، الصيانة الخارجية، بيع قطع الغيار المباشر دون المرور بمسار استلام أجهزة صيانة. |
-| 15 | **إصدار وطباعة المستندات** | `PrintPreviewOverlay.tsx` | شاشة معاينة وتنسيق الفواتير وسندات القبض/الصرف قبل الطباعة، تحويل المستند إلى صور أو ملفات PDF، وتسهيل مشاركته عبر الواتساب. |
-| 16 | **البحث والاستعلام عن فواتير** | `SearchInvoice.tsx` | محرك بحث مخصص برقم الفاتورة أو اسم العميل، عرض تفاصيل الفاتورة، واستكمال الدفع المالي وسداد المتبقي. |
-| 17 | **تصنيفات الأجهزة** | `CategoriesTable.tsx` | إدارة أنواع وتصنيفات الأجهزة المعتمدة للنظام (هواتف، أجهزة كمبيوتر، شاشات، إلخ) وموديلاتها. |
-| 18 | **بيانات المهندسين** | `EngineersTable.tsx` | إدارة قائمة الفنيين والمهندسين، التخصصات، ونسب أو تكاليف الصيانة المرتبطة بكل مهندس. |
-| 19 | **إدارة المستخدمين والأجهزة** | `UserManagement.tsx` | إضافة الموظفين، تحديد الصلاحيات والمصادقات (`AppPermissions`)، وإدارة قائمة الأجهزة المصرح لها بالاتصال بالهاردوير. |
-| 20 | **إعدادات النظام المتقدمة** | `Settings.tsx` | ضبط هويّة الورشة/الشركة (`company_details`)، ضبط وضع قاعدة البيانات (محلي/سحابي)، النسخ الاحتياطي وتفريغ البيانات. |
+| 1 | **تسجيل الدخول والمصادقة** | `Login.tsx` | التحقق من المستخدم، المصادقة البيومترية (البصمة/الوجه عبر `biometricAuth.ts`)، والتحقق من حالة الجهاز المصرح به (Device UUID / IMEI). |
+| 2 | **لوحة التحكم الموحدة** | `Dashboard.tsx` / `App.tsx` | ملخص مؤشرات الأداء (عدد الأجهزة، الإيرادات، الأجهزة الجاهزة، التنبيهات)، شريط الأرصدة البنكية والمشغلات السريعة. |
+| 3 | **استقبال ودخول الأجهزة** | `entry-exit/DeviceEntry.tsx` | تسجيل دخول أجهزة جديدة، جلب العميل من دفتر الهاتف (`contactPicker.ts`)، تحديد العطل والملحقات، وتوليد الفاتورة التسلسلية. |
+| 4 | **تسليم وخروج الأجهزة** | `entry-exit/DeviceExit.tsx` | استعراض الأجهزة الجاهزة، احتساب الحساب النهائي، سداد الدفعات وتحديث الصناديق ذرياً، وإصدار أوامر التسليم. |
+| 5 | **إدارة وحركة الأجهزة** | `DeviceManagement.tsx` | المتابعة المركزية لمسار الصيانة، التعديل الاستثنائي للحالات، مع عكس القيود المالية تلقائياً عند إعادة فتح جهاز مسلّم. |
+| 6 | **الإحصائيات الشاملة للأجهزة** | `DeviceStatisticalSummaryModal.tsx` | نافذة تحليلية متقدمة لعرض الإحصاءات التراكمية، ومؤشرات الأداء للمهندسين ونسب إنجاز الأجهزة. |
+| 7 | **الفحص والتشخيص الفني** | `movement/Inspection.tsx` | تسجيل نتائج الفحص والتشخيص للمهندس، تحديد القطع التالفة، وتحديث الحالة إلى (20 - قيد الفحص). |
+| 8 | **الموافقات وقطع الغيار** | `movement/ApprovalAndParts.tsx` | إدارة انتظار موافقة العميل (حالة 30) أو انتظار توفير قطع الغيار (حالة 35)، وطلب القطع من المخزن. |
+| 9 | **تنفيذ الصيانة الفنية** | `movement/Maintenance.tsx` | تسجيل الإجراءات التنفيذية والقطع المستهلكة عبر `MaintenanceActionForm.tsx` ونقل الجهاز إلى (50 - جاهز للتسليم). |
+| 10 | **إدارة العملاء والذمم** | `Customers.tsx` | إدارة بيانات العملاء، كشوفات الحساب التفصيلية بكل عملة، تتبع الذمم والديون، وتصدير ومشاركة الكشوفات. |
+| 11 | **الحسابات والخزنة** | `Vault.tsx` | إدارة الخزائن والصناديق، تحرير سندات القبض والصرف والتحويل، معالجة فروق العملات، مع الحماية الكاملة للمدخلات من المسح التلقائي. |
+| 12 | **مدخلات الحسابات والبيانات** | `AccountingInputs.tsx` | تعريف وتحديث بيانات الصناديق (`fin_funds`)، العملات (`fin_currencies`)، أنواع المعاملات (`fin_transaction_types`)، وطرق الدفع. |
+| 13 | **مركز تدقيق ومطابقة البيانات** | `DataAuditModal.tsx` | الفحص الآلي والشامل لسلامة البيانات المحاسبية، كشف الفروقات بين الفواتير وسندات القبض، واستدعاء خدمة إصلاح الصناديق `fundRepairService`. |
+| 14 | **المخزون العام وقطع الغيار** | `Inventory.tsx` | الشاشة الرئيسية للمخزون التي تضم تبويبات قطع الغيار، وكتالوج القطع، ومخزون الورشة ولوطات التفكيك. |
+| 15 | **كتالوج قطع الغيار المعتمد** | `PartsCatalogTable.tsx` | إدارة الدليل المرجعي الموحد لقطع الغيار والتكلفة الافتراضية وسعر البيع المقترح. |
+| 16 | **مخزون ورشة الصيانة والتشليح** | `ShopPartsStockView.tsx` | إدارة المخزون التفصيلي لقطع الصيانة، ونظام لوطات التفكيك (التشليح `disassembly_batches`) ومتابعة استرداد تكلفة اللوطات. |
+| 17 | **التقارير الإدارية والمالية** | `Reports.tsx` | تقارير حركة الإيرادات، المصروفات، الأرباح، أرصدة الخزائن، والديون المعلقة. |
+| 18 | **التقارير المالية المتخصصة** | `FinancialReportsTab.tsx` | تبويب مالي مخصص لعرض حركة النقدية، التدفقات اليومية، تفاصيل السندات، ومطابقة الصناديق. |
+| 19 | **فواتير الخدمات الأخرى** | `OtherServiceInvoice.tsx` | إصدار فواتير بيع قطع غيار مباشرة أو خدمات برمجية خارجية دون الحاجة لاستلام جهاز صيانة. |
+| 20 | **إصدار وأرشفة المستندات** | `PrintPreviewOverlay.tsx` | شاشة معاينة وطباعة الفواتير والسندات، التصدير لـ PDF وتخزين النسخ في جدول `saved_pdfs` ومشاركتها عبر الواتساب. |
+| 21 | **البحث والاستعلام المالي** | `SearchInvoice.tsx` | محرك بحث مخصص برقم الفاتورة أو اسم العميل، عرض تفاصيل الفاتورة، واستكمال الدفع المالي وسداد المتبقي. |
+| 22 | **تصنيفات الأجهزة** | `CategoriesTable.tsx` | إدارة أنواع وتصنيفات الأجهزة المعتمدة للنظام (هواتف، لابتوبات، شاشات، إلخ) وموديلاتها. |
+| 23 | **بيانات المهندسين** | `EngineersTable.tsx` | إدارة قائمة الفنيين والمهندسين، التخصصات، وتوزيع المهام. |
+| 24 | **إدارة المستخدمين والأجهزة** | `UserManagement.tsx` | إدارة حسابات الموظفين، تحديد الصلاحيات (`AppPermissions`)، وإدارة قائمة الأجهزة المصرح لها بالاتصال. |
+| 25 | **حارس الأمان والجلسات** | `SecurityGuard.tsx` | مكون أمني نشط في الخلفية لمراقبة حالة الجهاز المصرح به لحظياً وفصل الجلسة فوراً عند التجميد أو الحظر. |
+| 26 | **إعدادات النظام المتقدمة** | `Settings.tsx` | ضبط هوية الشركة، إدارة أوضاع قواعد البيانات، النسخ الاحتياطي، وفحص وتدقيق النظام. |
 
 ---
 
-## 3. قاعدة البيانات والشفرة التشغيلية (Database & Schema Specification)
+## 3. قواعد البيانات والمخطط الشامل للـ 25 جدولاً (Database & 25-Table Schema Specification)
 
-### 3.1 أوضاع قاعدة البيانات وطريقة تحديد وضع البيانات النشط
-يدعم النظام ثلاثة أوضاع حصرية مفعلة عبر `ProviderFactory.ts`:
+### 3.1 أوضاع قاعدة البيانات (Database Operating Modes)
+يدعم النظام ثلاثة أوضاع حصرية عبر `ProviderFactory.ts`:
 1. **`LOCAL` (محلي):** الاعتماد الكلي على محرك SQLite الداخلي.
 2. **`CLOUD` (سحابي):** الاتصال المباشر بمجموعات Firebase Firestore.
-3. **`AUTO` (تلقائي هجين - الافتراضي):** القراءة والكتابة محلياً بسرعة عالية، مع التمرير لجدول `outbox` ليقوم محرك المزامنة `SyncEngine` برفع البيانات سحابياً تلقائياً فور توفر الاتصال الشبكي.
-
-تحدد الدالة `ProviderFactory.getMode()` الوضع النشط بناءً على التكوين المخزن في جدول `settings` أو قيمة المتغير التشغيلي، وتتيح الدالة `setMode(mode)` التبديل الديناميكي الحسي بين الأوضاع.
+3. **`AUTO` (تلقائي هجين - الافتراضي):** القراءة والكتابة محلياً بسرعة فائقة، مع تسجيل التغييرات في جدول `outbox` ليقوم محرك المزامنة `SyncEngine` بمزامنتها سحابياً تلقائياً مع تحديث الواجهات بصمت.
 
 ---
 
-### 3.2 حصر شامل لجميع الجداول وقواعد التثبيت (Full Schema Breakdown)
+### 3.2 الحصر الشامل لجميع الجداول الـ 25 (Full 25-Table Breakdown)
 
-يتم تعريف كافة الجداول والإنشاء الأولي في ملف `/src/lib/local-db.ts`. وفيما يلي التوثيق الشامل لجميع الجداول الـ 21 الموجودة في النظام:
+يتم تعريف وهيكلة الجداول بالكامل في ملف `/src/lib/local-db.ts`:
 
-#### 1. جدول المستخدمين (`users`)
-* **الوظيفة:** تخزين بيانات الحسابات والموظفين وصلاحياتهم وكلمات المرور المشفرة.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): معرف فريد UUID.
-  * `username` (TEXT, UNIQUE): اسم المستخدم للدخول.
-  * `password` (TEXT): كلمة المرور المعتمدة.
-  * `name` (TEXT): الاسم الكامل للموظف.
-  * `role` (TEXT): الدور الوظيفي (`admin`, `manager`, `accountant`, `engineer`, `receptionist`, `storekeeper`).
-  * `userNumber` (INTEGER): الرقم التسلسلي للمستخدم.
-  * `permissions` (TEXT): نص JSON يحتوي مصفوفة الصلاحيات المخصصة (`AppPermissions`).
-  * `jobTitleId` (TEXT): معرف المسمى الوظيفي المرتبط.
-  * `isPrimary` (INTEGER, DEFAULT 0): علم يحدد ما إذا كان المدير الرئيسي المالي للنظام.
-  * `createdAt` (TEXT), `updatedAt` (TEXT): التواريخ بالصيغة الزمانية ISO.
+#### 1. جدول المسميات الوظيفية (`job_titles`)
+* **الحقول:** `id` (PK, TEXT), `name` (TEXT, UNIQUE), `description` (TEXT), `createdAt` (TEXT).
 
-#### 2. جدول المسميات الوظيفية (`job_titles`)
-* **الوظيفة:** تصنيف المسميات الوظيفية للهيكل الإداري.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `name` (TEXT, UNIQUE): اسم المسمى الوظيفي (مثل: مهندس صيانة دقيقة، محاسب صندوق).
-  * `description` (TEXT): وصف المهام.
-  * `createdAt` (TEXT).
+#### 2. جدول المستخدمين (`users`)
+* **الحقول:** `id` (PK, TEXT), `username` (TEXT, UNIQUE), `password` (TEXT), `name` (TEXT), `role` (TEXT), `userNumber` (INTEGER), `permissions` (TEXT - JSON), `jobTitleId` (TEXT), `isPrimary` (INTEGER, DEFAULT 0), `createdAt` (TEXT), `updatedAt` (TEXT).
 
 #### 3. جدول إعدادات النظام (`settings`)
-* **الوظيفة:** تخزين خيارات التكوين التشغيلية للنظام ووضع قاعدة البيانات.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): المفتاح.
-  * `key` (TEXT, UNIQUE): اسم الخيار (مثل: `database_mode`, `currency_default`).
-  * `value` (TEXT): القيمة النصية للخيار.
-  * `updatedAt` (TEXT).
+* **الحقول:** `id` (PK, TEXT), `key` (TEXT, UNIQUE), `value` (TEXT), `updatedAt` (TEXT).
 
 #### 4. جدول بيانات الشركة / الورشة (`company_details`)
-* **الوظيفة:** تخزين الهوية التجارية والتروييسة للتطبيق والطباعة.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): المفتاح (`main_details`).
-  * `name` (TEXT): اسم المحل أو الورشة.
-  * `logo` (TEXT): رابط أو ترميز اللوجو Base64.
-  * `phone1` (TEXT), `phone2` (TEXT): أرقام التواصل.
-  * `address` (TEXT): العنوان المطبوع.
-  * `terms` (TEXT): الشروط والأحكام المطبوعة على الفواتير والسندات.
-  * `headerText` (TEXT), `footerText` (TEXT): نصوص الترويسة والتذييل.
+* **الحقول:** `id` (PK, TEXT), `name` (TEXT), `logo` (TEXT), `phone1` (TEXT), `phone2` (TEXT), `address` (TEXT), `terms` (TEXT), `headerText` (TEXT), `footerText` (TEXT).
 
 #### 5. جدول العملاء (`customers`)
-* **الوظيفة:** تخزين بيانات العملاء والشركات وأرصدتهم.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `customerNumber` (INTEGER): رقم تسلسلي فريد للعميل.
-  * `name` (TEXT): اسم العميل.
-  * `companyName` (TEXT): اسم الشركة أو الجهة.
-  * `phone1` (TEXT), `phone2` (TEXT): أرقام الهاتف.
-  * `email` (TEXT), `address` (TEXT), `notes` (TEXT).
-  * `liabilityCurrency` (TEXT, DEFAULT 'USD'): عملة الحساب والذمة المعتمدة.
-  * `createdAt` (TEXT), `updatedAt` (TEXT).
+* **الحقول:** `id` (PK, TEXT), `customerNumber` (INTEGER), `name` (TEXT), `companyName` (TEXT), `phone1` (TEXT), `phone2` (TEXT), `email` (TEXT), `address` (TEXT), `notes` (TEXT), `liabilityCurrency` (TEXT, DEFAULT 'USD'), `createdAt` (TEXT), `updatedAt` (TEXT).
 
 #### 6. جدول الفواتير الرئيسية (`invoices`)
-* **الوظيفة:** السجل الرئيسي لأوامر استلام الصيانة والخدمات.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `invoiceNumber` (TEXT, UNIQUE): رقم الفاتورة التسلسلي التلقائي.
-  * `customerId` (TEXT, FOREIGN KEY -> `customers.id`): العميل.
-  * `customerName` (TEXT): اسم العميل المخزن لتسريع الاستعلام.
-  * `currency` (TEXT, DEFAULT 'USD'): عملة الفاتورة.
-  * `totalCost` (REAL, DEFAULT 0): الإجمالي الكلي للفاتورة.
-  * `amountPaid` (REAL, DEFAULT 0): المبلغ المدفوع المستلم فعلياً.
-  * `discount` (REAL, DEFAULT 0): الخصم الممنوح.
-  * `tax` (REAL, DEFAULT 0): قيمة الضريبة.
-  * `status` (TEXT): حالة الفاتورة التشغيلية (`10` دخول جديد, `20` فحص, `30` موافقة, `35` قطع, `40` صيانة, `50` جاهز, `60` مسلم, `70` ملغى).
-  * `notes` (TEXT), `cancelReason` (TEXT): السبب والملاحظات.
-  * `deliveryDate` (TEXT), `createdAt` (TEXT), `updatedAt` (TEXT).
+* **الحقول:** `id` (PK, TEXT), `invoiceNumber` (TEXT, UNIQUE), `customerId` (TEXT, FK -> customers.id), `customerName` (TEXT), `currency` (TEXT, DEFAULT 'USD'), `totalCost` (REAL, DEFAULT 0), `amountPaid` (REAL, DEFAULT 0), `discount` (REAL, DEFAULT 0), `tax` (REAL, DEFAULT 0), `status` (TEXT: 10, 20, 30, 35, 40, 50, 60, 70), `notes` (TEXT), `cancelReason` (TEXT), `deliveryDate` (TEXT), `createdAt` (TEXT), `updatedAt` (TEXT).
 
-#### 7. جدول أجهزة البنود المشمولة بالفاتورة (`invoice_items`)
-* **الوظيفة:** تفاصيل الأجهزة أو القطع المشمولة في كل فاتورة.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `invoiceId` (TEXT, FOREIGN KEY -> `invoices.id`): معرف الفاتورة الأم.
-  * `invoiceNumber` (TEXT): رقم الفاتورة.
-  * `customerId` (TEXT), `customerName` (TEXT).
-  * `deviceType` (TEXT): نوع الجهاز (مثل: iPhone 13 Pro).
-  * `deviceName` (TEXT), `serialNumber` (TEXT): السيريال أو الرقم المميز.
-  * `faultType` (TEXT): العطل المحدد أو الشكوى.
-  * `technician` (TEXT): المهندس المسؤول.
-  * `quantity` (INTEGER, DEFAULT 1): الكمية.
-  * `unitCost` (REAL, DEFAULT 0): تكلفة الوحدة.
-  * `cost` (REAL, DEFAULT 0): الإجمالي للبند (`quantity * unitCost`).
-  * `status` (TEXT), `subStatus` (TEXT): حالة البند الفردي.
-  * `engineerReport` (TEXT), `failureReason` (TEXT): تقرير الفني أو سبب عدم الإصلاح.
-  * `createdAt` (TEXT), `updatedAt` (TEXT).
+#### 7. جدول بنود الفواتير والأجهزة (`invoice_items`)
+* **الحقول:** `id` (PK, TEXT), `invoiceId` (TEXT, FK -> invoices.id), `invoiceNumber` (TEXT), `customerId` (TEXT), `customerName` (TEXT), `deviceType` (TEXT), `deviceName` (TEXT), `serialNumber` (TEXT), `faultType` (TEXT), `technician` (TEXT), `quantity` (INTEGER, DEFAULT 1), `unitCost` (REAL, DEFAULT 0), `cost` (REAL, DEFAULT 0), `status` (TEXT), `subStatus` (TEXT), `engineerReport` (TEXT), `failureReason` (TEXT), `createdAt` (TEXT), `updatedAt` (TEXT).
 
 #### 8. جدول حركة الحسابات والخزنة (`vault_transactions`)
-* **الوظيفة:** التوثيق المحاسبي لكافة سندات القبض والصرف والتحويلات المالية.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `voucherNumber` (INTEGER): رقم السند التسلسلي المالي التلقائي.
-  * `type` (TEXT): نوع الحركة (`receipt` سند قبض, `payment` سند صرف).
-  * `transactionCategory` (TEXT): تصنيف المعاملة المالية.
-  * `amount` (REAL): المبلغ المالي الحركة (+ للقبض, - للصرف).
-  * `currency` (TEXT): عملة النقد الفعلي.
-  * `liabilityCurrency` (TEXT): عملة الذمة / حساب العميل.
-  * `liabilityAmount` (REAL): قيمة المبلغ المحسوب على عملة الذمة.
-  * `fundId` (TEXT, FOREIGN KEY -> `fin_funds.id`): الصندوق أو الحساب المالي.
-  * `fundName` (TEXT): اسم الصندوق المباشر.
-  * `customerId` (TEXT), `customerName` (TEXT): العميل المرتبط.
-  * `invoiceNumber` (TEXT): رقم الفاتورة المرتبطة إن وجدت.
-  * `linkedTxId` (TEXT): معرف الحركة المزدوجة في حالة التحويل بين الصناديق.
-  * `userName` (TEXT), `userNumber` (INTEGER), `userId` (TEXT): المستخدم المنفذ للسند.
-  * `isReversed` (INTEGER, DEFAULT 0): هل تم عكس القيد (1 = نعم).
-  * `isReversal` (INTEGER, DEFAULT 0): هل هذا القيد نفسه قيد عكسي لقيد آخر.
-  * `reversalOf` (TEXT): معرف القيد الأصلي المعكوس.
-  * `bankDetails` (TEXT): نص JSON لبيانات الحوالة البنكية أو أرقام المراجع.
-  * `statementNote` (TEXT): النص المالي التفصيلي المطبوع لكشف الحساب.
-  * `timestamp` (TEXT), `updatedAt` (TEXT).
+* **الحقول:** `id` (PK, TEXT), `voucherNumber` (INTEGER), `type` (TEXT: receipt, payment), `transactionCategory` (TEXT), `amount` (REAL), `currency` (TEXT), `liabilityCurrency` (TEXT), `liabilityAmount` (REAL), `fundId` (TEXT, FK -> fin_funds.id), `fundName` (TEXT), `customerId` (TEXT), `customerName` (TEXT), `invoiceNumber` (TEXT), `linkedTxId` (TEXT), `userName` (TEXT), `userNumber` (INTEGER), `userId` (TEXT), `isReversed` (INTEGER, DEFAULT 0), `isReversal` (INTEGER, DEFAULT 0), `reversalOf` (TEXT), `bankDetails` (TEXT), `statementNote` (TEXT), `timestamp` (TEXT), `updatedAt` (TEXT).
 
 #### 9. جدول الإجراءات الفنية للصيانة (`maintenance_actions`)
-* **الوظيفة:** تتبع تاريخ الأعمال والعمليات المنفذة على كل جهاز.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `itemId` (TEXT, FOREIGN KEY -> `invoice_items.id`).
-  * `action` (TEXT): وصف الإجراء الفني.
-  * `technicianName` (TEXT): اسم الفني المنفذ.
-  * `cost` (REAL, DEFAULT 0): التكلفة الإضافية.
-  * `createdAt` (TEXT).
+* **الحقول:** `id` (PK, TEXT), `itemId` (TEXT, FK -> invoice_items.id), `action` (TEXT), `technicianName` (TEXT), `cost` (REAL, DEFAULT 0), `createdAt` (TEXT).
 
-#### 10. جدول عناصر قطع الغيار والمخزون (`inventory_items`)
-* **الوظيفة:** إدارة أصناف قطع الغيار والمخزون.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `code` (TEXT, UNIQUE): كود أو باركود القطعة.
-  * `name` (TEXT): اسم قطعة الغيار.
-  * `category` (TEXT): تصنيف القطعة.
-  * `quantity` (INTEGER, DEFAULT 0): الكمية المتوفرة.
-  * `minQuantity` (INTEGER, DEFAULT 5): حد إعادة الطلب.
-  * `purchasePrice` (REAL): سعر الشراء والتكلفة.
-  * `sellingPrice` (REAL): سعر البيع المحدد.
-  * `supplier` (TEXT): المورد.
-  * `createdAt` (TEXT), `updatedAt` (TEXT).
+#### 10. جدول عناصر قطع الغيار والمخزون العام (`inventory_items`)
+* **الحقول:** `id` (PK, TEXT), `code` (TEXT, UNIQUE), `name` (TEXT), `category` (TEXT), `quantity` (INTEGER, DEFAULT 0), `minQuantity` (INTEGER, DEFAULT 5), `purchasePrice` (REAL), `sellingPrice` (REAL), `supplier` (TEXT), `createdAt` (TEXT), `updatedAt` (TEXT).
 
 #### 11. جدول تصنيفات الأجهزة (`device_categories`)
-* **الوظيفة:** تعريف التصنيفات الرئيسية للأجهزة.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `name` (TEXT, UNIQUE): اسم التصنيف (مثل: هواتف ذكية, كمبيوتر محمول).
-  * `icon` (TEXT): اسم الأيقونة.
-  * `createdAt` (TEXT).
+* **الحقول:** `id` (PK, TEXT), `name` (TEXT, UNIQUE), `icon` (TEXT), `createdAt` (TEXT).
 
 #### 12. جدول موديلات الأجهزة (`device_models`)
-* **الوظيفة:** توثيق موديلات الأجهزة التابعة لكل تصنيف.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `categoryId` (TEXT, FOREIGN KEY -> `device_categories.id`).
-  * `name` (TEXT): اسم الموديل (مثل: iPhone 15 Pro Max).
-  * `createdAt` (TEXT).
+* **الحقول:** `id` (PK, TEXT), `categoryId` (TEXT, FK -> device_categories.id), `name` (TEXT), `createdAt` (TEXT).
 
 #### 13. جدول بيانات المهندسين (`engineers`)
-* **الوظيفة:** توثيق المهندسين وتخصصاتهم.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `name` (TEXT): اسم المهندس.
-  * `specialties` (TEXT): التخصصات النصية.
-  * `phone` (TEXT).
-  * `createdAt` (TEXT).
+* **الحقول:** `id` (PK, TEXT), `name` (TEXT), `specialties` (TEXT), `phone` (TEXT), `createdAt` (TEXT).
 
 #### 14. جدول إجراءات الموافقات والقطع (`approval_actions`)
-* **الوظيفة:** تسجيل تواريخ وملاحظات أخذ موافقة العميل وطلب القطع.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `itemId` (TEXT, FOREIGN KEY -> `invoice_items.id`).
-  * `approvalStatus` (TEXT): حالة الموافقة (`approved`, `refused`, `pending`).
-  * `notes` (TEXT).
-  * `createdAt` (TEXT).
+* **الحقول:** `id` (PK, TEXT), `itemId` (TEXT, FK -> invoice_items.id), `approvalStatus` (TEXT), `notes` (TEXT), `createdAt` (TEXT).
 
-#### 15. جدول الأجهزة المعتمدة والمصرح لها (`user_devices`)
-* **الوظيفة:** حوكمة الربط بين حساب الموظف والجهاز الفيزيائي (Hardware Access Control).
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID معرف السجل.
-  * `linkedUserId` (TEXT, FOREIGN KEY -> `users.id`): معرف المستخدم المربوط.
-  * `linkedUserName` (TEXT): اسم الموظف.
-  * `deviceName` (TEXT): اسم وشكل الجهاز (مثل: Samsung Galaxy Tab S8).
-  * `serialImei` (TEXT, UNIQUE): الرقم التسلسلي الفيزيائي أو معرف الجهاز الفريد UUID.
-  * `status` (TEXT, DEFAULT 'active'): حالة الجهاز (`active` نشط ومسموح, `frozen` معطل مؤقتاً, `blocked` محظور نهائياً).
-  * `isFrozen` (INTEGER, DEFAULT 0): علم التجميد السريع.
-  * `lastLogin` (TEXT): تاريخ ووقت آخر دخول.
-  * `lastLogout` (TEXT): تاريخ ووقت آخر خروج.
-  * `createdAt` (TEXT), `updatedAt` (TEXT).
+#### 15. جدول أنواع المعاملات المالية (`fin_transaction_types`)
+* **الحقول:** `id` (PK, TEXT), `name` (TEXT, UNIQUE), `type` (TEXT: receipt, payment).
 
-#### 16. جدول أنواع المعاملات المالية (`fin_transaction_types`)
-* **الوظيفة:** تصنيف سندات القبض والصرف.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `name` (TEXT, UNIQUE): اسم التصنيف (مثل: صيانة أجهزة, شراء قطع غيار, إيجار المحل).
-  * `type` (TEXT): نوع الحركة المرتبطة (`receipt` أو `payment`).
+#### 16. جدول الأجهزة المعتمدة والمصرح لها (`user_devices`)
+* **الحقول:** `id` (PK, TEXT), `linkedUserId` (TEXT, FK -> users.id), `linkedUserName` (TEXT), `deviceName` (TEXT), `serialImei` (TEXT, UNIQUE), `status` (TEXT: active, frozen, blocked), `isFrozen` (INTEGER, DEFAULT 0), `lastLogin` (TEXT), `lastLogout` (TEXT), `createdAt` (TEXT), `updatedAt` (TEXT).
 
 #### 17. جدول الصناديق والحسابات المالية (`fin_funds`)
-* **الوظيفة:** تخزين الخزائن والصناديق المالية والحسابات البنكية.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `name` (TEXT, UNIQUE): اسم الصندوق (مثل: الخزينة الرئيسية, حساب بنك الكريمي).
-  * `type` (TEXT): نوع الحساب (`cash` نقدي, `bank` بنكي/حوالة).
-  * `currency` (TEXT): العملة الأساسية للصندوق.
-  * `balance` (REAL, DEFAULT 0): الرصيد المالي الحالي المباشر.
-  * `status` (TEXT, DEFAULT 'active'): الحالة.
-  * `createdAt` (TEXT).
+* **الحقول:** `id` (PK, TEXT), `name` (TEXT, UNIQUE), `type` (TEXT: cash, bank), `currency` (TEXT), `balance` (REAL, DEFAULT 0), `status` (TEXT, DEFAULT 'active'), `createdAt` (TEXT).
 
-#### 18. جدول العملات المعرفات (`fin_currencies`)
-* **الوظيفة:** تعريف العملات المتداولة وأسعار الصرف الافتراضية.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `name` (TEXT, UNIQUE): كود العملة (مثل: `USD`, `YER`, `SAR`).
-  * `symbol` (TEXT): رمز العملة (مثل: `$`, `ر.ي`, `ر.س`).
-  * `decimals` (INTEGER, DEFAULT 2): عدد الخانات العشرية.
-  * `status` (TEXT, DEFAULT 'active').
+#### 18. جدول العملات المتداولة (`fin_currencies`)
+* **الحقول:** `id` (PK, TEXT), `name` (TEXT, UNIQUE), `symbol` (TEXT), `decimals` (INTEGER, DEFAULT 2), `status` (TEXT, DEFAULT 'active').
 
 #### 19. جدول طرق الدفع (`fin_payment_methods`)
-* **الوظيفة:** تحديد الوسائل المالية المتاحة للدفع.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `name` (TEXT, UNIQUE): اسم طريقة الدفع (نقداً, حوالة بنكية, بطاقة ائتمان).
-  * `status` (TEXT, DEFAULT 'active').
+* **الحقول:** `id` (PK, TEXT), `name` (TEXT, UNIQUE), `status` (TEXT, DEFAULT 'active').
 
 #### 20. جدول مخرجات المستندات والطباعة (`document_outputs`)
-* **الوظيفة:** التوثيق والأرشيف لكافة عمليات طباعة ومشاركة المستندات والسندات دون التأثير على الحسابات.
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `document_id` (TEXT): معرف الفاتورة أو السند.
-  * `document_number` (TEXT): رقم الفاتورة أو رقم السند.
-  * `output_type` (TEXT): نوع المخرج (`print` طباعة, `share` مشاركة ملف, `whatsapp` واتساب).
-  * `output_datetime` (TEXT): تاريخ ووقت الإجراء.
-  * `user_id` (TEXT): معرف الموظف الذي قام بالطباعة أو المشاركة.
-  * `notes` (TEXT).
+* **الحقول:** `id` (PK, TEXT), `document_id` (TEXT), `document_number` (TEXT), `output_type` (TEXT: print, share, whatsapp), `output_datetime` (TEXT), `user_id` (TEXT), `notes` (TEXT).
 
-#### 21. جدول صندوق الرسائل الصادرة للمزامنة (`outbox`)
-* **الوظيفة:** النواة المحركة للمزامنة غير المتزامنة (Offline-First Outbox Queue).
-* **الحقول:**
-  * `id` (TEXT, PRIMARY KEY): UUID.
-  * `collectionName` (TEXT): اسم المجموعة أو الجدول المراد مزامنته سحابياً.
-  * `recordId` (TEXT): معرف السجل الهدف.
-  * `action` (TEXT): نوع العملية (`CREATE`, `UPDATE`, `DELETE`).
-  * `payload` (TEXT): نص JSON الممثل للبيانات الكاملة.
-  * `status` (TEXT, DEFAULT 'PENDING'): حالة المزامنة (`PENDING`, `SYNCED`, `FAILED`, `PERMISSION_DENIED`).
-  * `retryCount` (INTEGER, DEFAULT 0): عدد محاولات إعادة المزامنة.
-  * `lastError` (TEXT): نص الخطأ إن وجد.
-  * `createdAt` (TEXT), `updatedAt` (TEXT).
+#### 21. جدول ملفات الـ PDF المحفوظة محلياً (`saved_pdfs`) [محدث]
+* **الوظيفة:** التخزين والأرشفة المحلية المباشرة لملفات PDF المولدة لكشوفات الحساب والفواتير للرجوع إليها دون الحاجة لإعادة التوليد.
+* **الحقول:** `id` (PK, TEXT), `customerId` (TEXT), `customerName` (TEXT), `filename` (TEXT), `createdAt` (TEXT), `fileSize` (INTEGER), `fileData` (TEXT - Base64).
 
----
+#### 22. جدول كتالوج قطع الغيار المرجعي (`parts_catalog`) [محدث]
+* **الوظيفة:** الدليل المرجعي والتعريف القياسي لقطع الغيار والتكلفة وسعر البيع المقترح لتوحيد مسميات القطع بالمخزن.
+* **الحقول:** `id` (PK, TEXT), `name` (TEXT), `category` (TEXT), `defaultCost` (REAL), `defaultSalePrice` (REAL), `notes` (TEXT), `createdAt` (TEXT), `updatedAt` (TEXT).
 
-## 4. دورة البيانات الكاملة (End-to-End Data Lifecycle)
+#### 23. جدول مخزون قطع ورشة الصيانة (`shop_parts_inventory`) [محدث]
+* **الوظيفة:** التتبع الدقيق لكميات قطع الغيار المتاحة بالورشة وتكلفتها الفعلية وربطها بفواتير الشراء أو لوطات التشليح.
+* **الحقول:** `id` (PK, TEXT), `partId` (TEXT), `name` (TEXT), `category` (TEXT), `quantity` (INTEGER), `unitCost` (REAL), `salePrice` (REAL), `isDisassemblyBatch` (INTEGER, DEFAULT 0), `batchId` (TEXT), `batchName` (TEXT), `batchTotalCost` (REAL), `supplierName` (TEXT), `purchaseInvoiceId` (TEXT), `purchaseInvoiceNumber` (TEXT), `currency` (TEXT), `purchaseDate` (TEXT), `createdAt` (TEXT), `updatedAt` (TEXT).
 
-### تسلسل مسار البيانات التشغيلي والمالي:
-1. **مرحلة إدخال واستلام الجهاز (Data Entry & Device Receipt):**
-   * يتم تعبئة بيانات استلام الجهاز بصفحة `DeviceEntry.tsx`.
-   * يتم إنشاء سجل جديد في جدول العملاء `customers` (إذا كان العميل جديداً)، ثم إنشاء سجل في جدول الفواتير `invoices` برقم تسلسلي تلقائي وحالة `10` (دخول جديد).
-   * تُنشأ أجهزة البنود بجدول `invoice_items` مرتبطة بـ `invoiceNumber`.
-   * تُحفظ البيانات محلياً بـ SQLite، وتُمرر حركة إنشاء إلى جدول `outbox`.
+#### 24. جدول لوطات التفكيك والتشليح (`disassembly_batches`) [محدث]
+* **الوظيفة:** إدارة عمليات شراء أجهزة تالفة وتشليحها واستخراج القطع منها، مع تتبع استرداد التكلفة التراكمية للوط.
+* **الحقول:** `id` (PK, TEXT), `batchNumber` (TEXT), `batchName` (TEXT), `supplierName` (TEXT), `currency` (TEXT), `totalBatchCost` (REAL), `recoveredAmount` (REAL, DEFAULT 0), `isCostFullyRecovered` (INTEGER, DEFAULT 0), `itemsCount` (INTEGER, DEFAULT 0), `fundId` (TEXT), `purchaseDate` (TEXT), `notes` (TEXT), `createdAt` (TEXT), `updatedAt` (TEXT).
 
-2. **مرحلة الفحص والتشخيص (Inspection & Diagnosis):**
-   * يستلم المهندس الجهاز بصفحة `movement/Inspection.tsx` ويقوم بالتحديث إلى حالة `20`.
-   * يتم تسجيل التقرير المبدئي في حقل `engineerReport` وملاحظات الفحص.
-
-3. **مرحلة الموافقة وتوفر القطع (Approvals & Parts):**
-   * بصفحة `movement/ApprovalAndParts.tsx` تُحدث حالة الجهاز إلى `30` (في انتظار العميل) أو `35` (طلب قطع غيار).
-   * عند موافقة العميل أو توفر القطع، تُحدث التكلفة التقديرية للبند بجدول `invoice_items` وتنتقل الحالة إلى `40` (قيد الصيانة).
-
-4. **مرحلة تنفيذ الصيانة وإجهاد الجهاز (Maintenance Execution):**
-   * بصفحة `movement/Maintenance.tsx` يكمل المهندس العمليات ويُسجل القطع المستهلكة والتكلفة النهائية.
-   * تُحدث حالة الجهاز إلى `50` (جاهز للتسليم).
-
-5. **مرحلة التسليم والتحصيل المالي (Delivery & Financial Settlement):**
-   * بصفحة `DeviceExit.tsx` يتم اختيار الفاتورة الجاهزة.
-   * يتم استلام مبلغ الدفع النقدي أو البنكي.
-   * يُنشأ سجل مالي بجدول `vault_transactions` بنوع `receipt` ومبلغ مالي موجَب، ومرتبط برقم الفاتورة `invoiceNumber` والعميل `customerId`.
-   * يُحدث رصيد الصندوق المحدد بجدول `fin_funds` فوراً بإضافة المبلغ المستلم.
-   * يُحسب المبلغ المتبقي، وإذا أصبحت جميع بنود الفاتورة مسددة، تُحدث حالة الفاتورة الرئيسية بجدول `invoices` إلى `60` (تم تسليمها ومغادرتها).
-
-6. **مرحلة كشف الحساب والتقارير (Customer Ledger & Reports):**
-   * يقرأ مكون `Customers.tsx` ومكون `Reports.tsx` جميع العمليات المترتبة بجدول `invoices` وجدول `vault_transactions`.
-   * يُحسب صافي ذمة العميل وقائمة الإيرادات والمصروفات بدقة متناهية.
+#### 25. جدول صندوق الرسائل الصادرة للمزامنة (`outbox`)
+* **الوظيفة:** طابور العمليات غير المتزامنة للمزامنة السحابية وفق نمط Outbox Pattern.
+* **الحقول:** `id` (PK, TEXT), `collectionName` (TEXT), `recordId` (TEXT), `action` (TEXT), `payload` (TEXT), `status` (TEXT: PENDING, SYNCED, FAILED), `retryCount` (INTEGER, DEFAULT 0), `lastError` (TEXT), `createdAt` (TEXT), `updatedAt` (TEXT).
 
 ---
 
-## 5. العمليات المالية وآلية منع تكرار التسديد (Financial Operations Governance)
+## 4. الخدمات المحاسبية المتقدمة وحماية البيانات (Advanced Architectural Services)
+
+### 4.1 محرك التدقيق المحاسبي ومطابقة الصناديق (`fundRepairService.ts`)
+* **المشكلة التي يعالجها:** أي عدم تطابق بين رصيد الصندوق المخزن وحاصل جمع سندات القبض والصرف الفعلية.
+* **آلية العمل:**
+  1. يقوم بقراءة حركات السندات بجدول `vault_transactions` المرتبطة بكل صندوق (`receipt` موجب، `payment` سالب).
+  2. يقارن المجموع الفعلي برصيد `fin_funds.balance`.
+  3. في حال وجود فارق، يتيح النظام خيارين: التعديل المباشر أو إنشاء سند تسوية تدقيقي تلقائي لمعالجة الفرق وتوثيق العملية في سجل التدقيق المالي.
+
+---
+
+### 4.2 محرك الحذف والتعديل المتسلسل الذري (`invoiceCascadeService.ts`)
+* **المشكلة التي يعالجها:** منع ترك قيود يتيمة أو فواتير بدون سندات عند الحذف أو التعديل الاستثنائي.
+* **آلية العمل:**
+  1. عند طلب حذف أو تعديل فاتورة، تقوم الخدمة بحصر جميع البنود التابعة بـ `invoice_items` وحركات السندات بـ `vault_transactions`.
+  2. تقوم بعكس وإعادة المبالغ المالية إلى الصناديق المعنية بجدول `fin_funds`.
+  3. تنفيذ العملية داخل معاملة ذرية تضمن عدم فقدان أي بيانات مالية.
+
+---
+
+### 4.3 محرك المزامنة الصامتة وحماية النماذج النشطة (`Silent Background Sync & Form Protection`)
+* **التحديث الصامت (`Silent Refresh`):** تم تعديل دالة جلب البيانات `loadDatabaseData(isBackground = true)` بحيث تحدث قواعد البيانات في الخلفية دون تفعيل مؤشر التحميل العام أو إعادة بناء الواجهة بالكامل.
+* **حماية النماذج النشطة (`isFormDirty`):** يمتلك المكون رصداً ذكياً لحالة الإدخال؛ إذا كان المستخدم يكتب سنداً أو فاتورة، يُمنع محرك المزامنة من مسح الحقول أو استبدال الصناديق أو تغيير رقم السند المتوقع حتى ينتهي المستخدم من الحفظ.
+* **عزل تصادم الحذف المتتالي:** حماية النوافذ المنبثقة من الإغلاق القسري عند وصول تحديثات متزامنة من أجهزة أخرى.
+
+---
+
+### 4.4 حوكمة الأمان المتقدم والمصادقة البيومترية (`Security & Biometrics`)
+* **المصادقة البيومترية (`biometricAuth.ts`):** إمكانية تسجيل الدخول عبر مستشعر البصمة أو الوجه في الأجهزة المدعومة محلياً.
+* **المراقبة اللحظية للأجهزة (`SecurityGuard.tsx`):** مكون حماية يعمل كحارس أمني في جذر التطبيق، يراقب حالة الجهاز المصرح به في جدول `user_devices`؛ إذا قام المدير العام بتجميد أو حظر الجهاز من الإدارة، يتم طرد المستخدم وإنهاء جلسته محلياً في نفس اللحظة.
+* **اختيار جهات الاتصال (`contactPicker.ts`):** تسهيل إدخال بيانات العملاء دون أخطاء إملائية عبر قراءة دفتر هواتف الجهاز مباشرة.
+
+---
+
+## 5. العمليات المالية وآلية منع تكرار التسديد (Financial Governance)
 
 ### 5.1 معادلات الحسابات الرئيسية
-* **التكلفة الإجمالية للفاتورة (Total Invoice Cost):**  
-  $$\text{TotalCost} = \sum (\text{quantity} \times \text{unitCost}) - \text{Discount} + \text{Tax}$$
-* **المبلغ المتبقي على العميل (Remaining Balance):**  
+* **التكلفة الإجمالية لفاتورة الصيانة (قاعدة القرار الفني ومطابقة الخروج المعتمدة):**  
+  تعتمد التكلفة الإجمالية للفاتورة حصر الأجهزة المؤهلة للفوترة فقط (`isBillableMaintenanceItem`)؛ حيث **يتم استبعاد مبالغ الأجهزة التي كان قرارها الفني لا تصلح (`unrepairable` / `failed`)، أو عدم موافقة العميل (`refused`)، أو سليمة بدون صيانة (`intact`)، أو ملغاة (`cancelled`)**، ولا يتم احتساب سوى الأجهزة المنجزة بنجاح (`ready`)، مطابقة بنسبة 100% للآلية المتبعة في شاشة خروج الأجهزة (`DeviceExit.tsx`):
+  $$\text{TotalCost} = \sum_{\text{Billable Devices}} (\text{quantity} \times \text{unitCost}) - \text{Discount} + \text{Tax}$$
+* **المبلغ المتبقي على العميل:**  
   $$\text{RemainingAmount} = \text{TotalCost} - \text{AmountPaid}$$
-* **التحويل بين العملات (Currency Conversion Rate):**  
-  إذا كانت عملة الدفع تختلف عن عملة ذمة العميل، يتم استخدام سعر الصرف (`voucherExchangeRate`) لحساب المبلغ المقابل بالذمة:  
+* **معادلة التحويل بين العملات (سعر الصرف الافتراضي 3.8 للريال السعودي والدولار):**  
   $$\text{LiabilityAmount} = \frac{\text{ReceiptAmount}}{\text{ExchangeRate}}$$
 
----
-
-### 5.2 آلية منع تسجيل السداد مرتين (Preventing Double Payment & Duplicate Entries)
-
-يتبع النظام استراتيجيات حازمة لمنع تكرار القيد المالي أو تسجيل دفعات مكررة لنفس الفاتورة:
-1. **ربط الحركة المالي بالمعرف الفريد للفاتورة (`invoiceNumber` & `linkedTxId`):**  
-   كل دفعة سداد مسجلة بجدول `vault_transactions` ترتبط مباشرة برقم الفاتورة الأصلي `invoiceNumber` وبمعرف UUID فريد لعملية السداد.
-2. **التحقق الفوري من المتبقي قبل الاستلام (Remaining Balance Validation):**  
-   عند إجراء أي دفعة بصفحة `SearchInvoice.tsx` أو `DeviceExit.tsx` أو `Vault.tsx` يُحسب المبلغ المتبقي الحقيقي عبر طرح إجمالي المقبوضات السابقة المسجلة بجدول `vault_transactions` من إجمالي الفاتورة. يمنع النظام الاستلام المفرط وتنبيه المستخدم في حال تكرار النقر.
-3. **التحديث الذري المتزامن (Atomic Writes & Batches):**  
-   يتم إضافة سند القبض بجدول `vault_transactions` وتحديث المبلغ المدفوع `amountPaid` بجدول `invoices` وتحديث رصيد الصندوق بجدول `fin_funds` في معاملة واحدة ذاتية مجمعة (Atomic Batch Transaction).
-4. **منع التكرار المحاذي لمحرك المزامنة (Idempotent Outbox Sync):**  
-   في محرك المزامنة `SyncEngine.ts` يُعطى كل سجل معرفاً فريداً `recordId`. في حال إرسال نفس الطلب سحابياً مرتين بسبب انقطاع الشبكة، يتعامل Firestore مع العملية كـ `SET` تحديثي إيدمبوتنت دون تكرار إنشاء السند.
-5. **معالجة العكس المالي الاستثنائي (Financial Reversal Governance):**  
-   في حال تغيير حالة فاتورة مسلّمة بصفحة `DeviceManagement.tsx` إلى حالة سابقة، لا يتم حذف القيد القديم، بل يتم إنشاء "قيد عكسي تلقائي" (`isReversal = 1`) وترتبط بالحركة الأولى عبر `reversalOf` مع تعطيل القيد الأصلي (`isReversed = 1`) لضمان صحة التدقيق المالي وعدم التكرار.
+### 5.2 حوكمة منع تكرار السداد
+1. **الربط بالمعرف الفريد للفاتورة (`invoiceNumber` & `linkedTxId`):** ترتبط كل دفعة بسند قبض فريد مسجل في الخزينة.
+2. **التحقق من المتبقي الفعلي:** النظام يمنع استلام مبالغ تزيد عن المتبقي المحسوب.
+3. **التحديث الذري المتزامن:** ربط تحديث الفاتورة وسند الخزنة ورصيد الصندوق في معاملة موحدة.
+4. **أمان الطباعة التام:** معاينة أو طباعة أو إعادة مشاركة الفواتير عبر الواتساب لا تُنشئ أي قيد مالي جديد مطلقاً، بل تُسجل كحركة إخراج في جدول `document_outputs`.
 
 ---
 
-## 6. دورة حياة المستندات وضمان أمان الطباعة (Documents Lifecycle & Reprint Safety)
+## 6. دورة المخزون ولوطات التفكيك (Inventory & Disassembly System)
 
-### 6.1 مراحل المستند
-1. **الإنشاء (Creation):** إنشاء الفاتورة أو السند وحفظ بياناتهما في قواعد البيانات.
-2. **العرض والمعاينة (Print Preview):** استخدام المكون `PrintPreviewOverlay.tsx` لمعاينة التنسيق قبل إخراجه.
-3. **الترحيل (Posting):** اعتماد المستند رسمياً وتعديل الأرصدة المالية بجدول `fin_funds`.
-4. **الطباعة والمشاركة (Print & Share):** استخدام طباعة المتصفح/النظام المحلي أو التصدير لملفات PDF عبر `jsPDF` و `html2canvas` وإتاحة المشاركة المباشرة عبر الواتساب.
-
----
-
-### 6.2 التأكيد التقني: الطباعة وإعادة المشاركة لا تنشئ أي قيد مالي جديد
-* **الفصل المطلق بين العرض والحسابات (Strict Decoupling):**  
-  تم تصميم مكون المعاينة والطباعة `PrintPreviewOverlay.tsx` ومساعدات المشاركة `shareHelper.ts` كواجهات قراءة فقط (Read-Only Views).
-* **آلية التسجيل الموازي (Output Logging):**  
-  عند النقر على زر "طباعة" أو "مشاركة عبر الواتساب" لمستند أو سند مرحّل، يقوم النظام فقط بإضافة سجل بجدول `document_outputs` لتوثيق تاريخ المخرج واسم المستخدم، ورفع العداد `printCount` بالفاتورة، **دون إجراء أي دالة إدخال بجدول `vault_transactions` أو تعديل أي رصيد بجدول `fin_funds`**.
+1. **المخزون العام (`inventory_items`):** مراقبة قطع الغيار الجاهزة، وأسعار الشراء والبيع، وتنبيهات حد الطلب الأدنى.
+2. **كتالوج القطع القياسي (`parts_catalog`):** مرجع موحد لمواصفات وتكاليف وأسعار القطع.
+3. **مخزون ورشة الصيانة (`shop_parts_inventory`):** تتبع تفصيلي للقطع المتوفرة فعلياً للاستهلاك في أوامر الصيانة.
+4. **نظام لوطات التفكيك والتشليح (`disassembly_batches`):**
+   * شراء أجهزة تالفة وتشليحها إلى قطع غيار مفردة.
+   * ربط تكلفة شراء الجهاز باللوط.
+   * حساب قيمة القطع المستخرجة ومتابعة استرداد تكلفة اللوط (`recoveredAmount`) حتى تغطية التكلفة بالكامل (`isCostFullyRecovered = 1`).
 
 ---
 
-## 7. المخزون وضابط أجهزة الصيانة (Inventory System Specification)
+## 7. الخلاصة والاعتمادية التقنية (System Reliability Summary)
 
-يتكون المخزون في النظام من شقين رئيسيين:
-1. **مخزون أجهزة الصيانة (Maintenance Device Inventory):**  
-   تتبع حركة الأجهزة المستلمة من العملاء عبر دورة حياتها التشغيلية بجدولي `invoices` و `invoice_items` وحالات الأجهزة المحددة (10 إلى 70).
-2. **مخزون قطع الغيار والمستلزمات (`inventory_items`):**  
-   إدارة قطع الغيار والقطع المستهلكة (شاشات، بطاريات، مدخلات شحن). يتم تسجيل الكميات المتاحة، أسعار الشراء والبيع، وحد الطلب الأدنى لتشغيل التنبيهات مع كل عملية صيانة.
+* **الشمولية:** يشمل النظام **25 جدولاً** متكاملاً في قاعدة البيانات SQLite المحلية المتطابقة مع مجموعات Firestore السحابية.
+* **الاعتمادية (Offline-First):** استقلالية تامة عن الاتصال بالإنترنت مع مزامنة خلفية صامتة فائقة الأمان.
+* **الأمان المحاسبي:** فصل تام بين طبقة العرض والطباعة وبين الحسابات المالية، مع حماية المدخلات النشطة ونظام تدقيق ومطابقة آلي للأرصدة.
 
 ---
-
-## 8. المستخدمون وصلاحيات النظام والأجهزة المصرح بها (Users, Permissions & Approved Devices)
-
-### 8.1 أداور وصلاحيات المستخدمين (User Roles & Matrix)
-* **المدير العام (General Admin - `isPrimary = 1`):** صلاحيات مطلقة لكل وظائف النظام، تغيير إعدادات قواعد البيانات، تعديل الصلاحيات، وعكس القيود المالية.
-* **مدير النظام (System Manager):** صلاحيات كاملة على الأجهزة والصيانة والحسابات والتقارير دون إمكانية إلغاء المدير الرئيسي.
-* **المحاسب (Accountant):** الوصول للحسابات، الخزنة، السندات، تقارير الأرباح والديون، والعملاء.
-* **المهندس / الفني (Engineer):** الوصول المباشر لصفحات الفحص والصيانة وقطع الغيار والتراشخ الفني.
-* **موظف الاستقبال (Receptionist):** الوصول لاستلام الأجهزة الجديدة والتسليم.
-* **أمين المخزن (Storekeeper):** الوصول المباشر لصفحة المخزون وجرد القطع.
-
-تتم إدارة الصلاحيات الجزئية لكل مستخدم بمرونة فائقة بواسطة هيكل JSON المسمى `AppPermissions` بجدول `users`.
-
----
-
-### 8.2 حوكمة الأجهزة المصرح لها والربط بالهاردوير (Approved Devices Management)
-
-يحتوي النظام على نظام مستقل لحماية ومراقبة أجهزة الاتصال بالهاردوير المربوطة بجدول `user_devices`:
-* **ربط المستخدم بالجهاز:** يتم ربط كل مستخدم بأجهزة فيزيائية محددة عبر `serialImei` (المعرف الفريد للجهاز أو UUID المتصفح/التطبيق).
-* **حالات الجهاز المخزنة (`status`):**
-  * `active`: جهاز نشط ومصرح له بالدخول للنظام.
-  * `frozen`: جهاز موقوف مؤقتاً بواسطة الإدارة (`isFrozen = 1`).
-  * `blocked`: جهاز محظور نهائياً من الوصول إلى النظام.
-* **إمكانية تعطيل جهاز معين وسلسلة الجلسات:**  
-  يتيح مكون `UserManagement.tsx` لمدير النظام استعراض جميع الأجهزة المرتبطة بحساب موظف معين، وتعطيل جهاز محدد بنقرة واحدة، أو تسجيل خروج الموظف من كافة الأجهزة المعتمدة فوراً عن طريق تحديث حقل `status` بجدول `user_devices`.
-
----
-
-## 9. الإدارة المتقدمة والمزامنة والنسخ الاحتياطي (Advanced Management)
-
-### 9.1 محرك المزامنة وقواعد البيانات الهجينة (Hybrid DB Sync Engine)
-* **الصندوق الصادر (Outbox Queue):**  
-  يتم تسجيل كل عملية إنشاء أو تعديل أو حذف بجدول `outbox` محلياً مع حالة `PENDING`.
-* **المعالجة التسلسلية (FIFO Processing):**  
-  يقوم `SyncEngine.ts` بفحص جدول `outbox` وتسليم السجلات سحابياً إلى Firestore بالتسلسل، وتحويل حالة السجل إلى `SYNCED` فور النجاح، وإعادة المحاولة التلقائية في حال الفشل الشبكي.
-* **المستمعات السحابية الحية (Firestore Snapshot Listeners):**  
-  يستمع النظام للتغييرات السحابية الواردة من الأجهزة الأخرى ويحدث قاعدة بيانات SQLite المحلية تلقائياً لتحديث الواجهات لحظياً.
-
----
-
-### 9.2 النسخ الاحتياطي واستعادة البيانات (Backup & Disaster Recovery)
-* **التصدير الكامل (JSON Export):**  
-  تتيح صفحة `Settings.tsx` تصدير قاعدة البيانات المحلية بالكامل إلى ملف JSON محمي يشتمل على كافة الجداول والسجلات عبر `Capacitor Filesystem` أو التنزيل المباشر.
-* **الاستعادة واستعادة ضبط المصنع (Restore & Factory Reset):**  
-  إمكانية قراءة ملف نسخ احتياطي واسترجاع الجداول، أو تنفيذ مسح تام وشامل لقواعد البيانات لإعادة تهيئة النظام فور الحاجة.
-
----
-
-### 9.3 حوكمة الأجهزة المعتمدة والتصاريح
-تأمين النظام ضد الدخول غير المصرح به من أجهزة خارجية من خلال التحقق المزدوج بصفحة `Login.tsx` من معرف الجهاز الفيزيائي المرتبط بالحساب مع جدولي `users` و `user_devices`.
-
----
-*تم إعداد هذه الوثيقة التقنية لتكون المرجع الشامل والنهائي لهندسة وتصميم وبنية هذا النظام.*
+*تم تحديث وتوثيق هذه الوثيقة لتكون المرجع الشامل والنهائي والمطابق بنسبة 100% لكامل الهيكل البرمجي والتشغيلي للنظام.*

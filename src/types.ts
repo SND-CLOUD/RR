@@ -312,19 +312,26 @@ export function isShopMaintenanceItem(item: any, inv?: any): boolean {
 
   // 3. Source check
   const source = String(item.source || '').toLowerCase().trim();
-  if (
-    source.startsWith('sale_') ||
-    source.includes('sale') ||
-    source.includes('software') ||
-    source.includes('outside') ||
-    source.includes('external') ||
-    source.includes('parts') ||
-    source.includes('accessory') ||
-    source.includes('other_service') ||
-    source.includes('purchase') ||
-    source.includes('disassembly')
-  ) {
-    return false;
+  // If the source is an internal transition of maintenance parts (arrival/absence), it is explicitly a shop maintenance item
+  const isMaintenancePartsFlow = source === 'parts_available' || source === 'parts_not_available' || source === 'waiting_parts' || source === 'parts_arrival';
+  if (!isMaintenancePartsFlow) {
+    if (
+      source.startsWith('sale_') ||
+      source.includes('sale') ||
+      source.includes('software') ||
+      source.includes('outside') ||
+      source.includes('external') ||
+      source.includes('parts_sale') ||
+      source.includes('sale_parts') ||
+      source === 'parts' ||
+      source === 'spare_parts' ||
+      source.includes('accessory') ||
+      source.includes('other_service') ||
+      source.includes('purchase') ||
+      source.includes('disassembly')
+    ) {
+      return false;
+    }
   }
 
   // 4. Invoice type check on item
@@ -334,7 +341,8 @@ export function isShopMaintenanceItem(item: any, inv?: any): boolean {
     invType.includes('sale') ||
     invType.includes('software') ||
     invType.includes('outside') ||
-    invType.includes('parts') ||
+    invType === 'parts' ||
+    invType.includes('sale_parts') ||
     invType.includes('purchase') ||
     invType.includes('other_service')
   ) {
@@ -413,6 +421,62 @@ export function isInShopMaintenanceDevice(item: any, inv?: any): boolean {
   }
 
   return true;
+}
+
+/**
+ * Resolves the operational sub-status for an invoice item, identical to the DeviceExit logic.
+ */
+export function getItemSubStatus(item: any): string {
+  if (!item) return 'new';
+  if (item.subStatus) {
+    return String(item.subStatus).toLowerCase().trim();
+  }
+  
+  const status = String(item.status || '').toLowerCase().trim();
+
+  // For legacy items, fall back on their status field:
+  if (status === 'ready') return 'ready';
+  if (status === 'intact') return 'intact';
+  if (status === 'unrepairable') return 'unrepairable';
+  if (status === 'no_parts') return 'no_parts';
+  if (status === 'refused') return 'refused';
+  if (status === '70' || status === 'cancelled') return 'cancelled';
+  if (status === '55') return 'unrepairable';
+  
+  // Structural technical decision & outcome fields
+  const decision = String(item.decision || item.technicalDecision || '').toLowerCase().trim();
+  if (decision === 'unrepairable' || decision === 'failed') return 'unrepairable';
+  if (decision === 'intact') return 'intact';
+  if (decision === 'refused') return 'refused';
+  
+  const outcome = String(item.outcome || item.approvalStatus || '').toLowerCase().trim();
+  if (outcome === 'failed' || outcome === 'unrepairable') return 'unrepairable';
+  if (outcome === 'refused') return 'refused';
+
+  // Fallback for code '50' with no subStatus
+  if (status === '50') {
+    const report = String(item.engineerReport || '').toLowerCase();
+    const reason = String(item.failureReason || '').toLowerCase();
+    
+    if (reason.includes('لم يوافق') || report.includes('لم يوافق') || reason.includes('refused')) return 'refused';
+    if (reason.includes('لا يصلح') || report.includes('لا يصلح') || reason.includes('unrepairable') || report.includes('unrepairable')) return 'unrepairable';
+    if (report.includes('سليم') || report.includes('intact')) return 'intact';
+    if (
+      reason.includes('قطع') ||
+      report.includes('قطع') ||
+      reason.includes('no_parts') ||
+      report.includes('no_parts') ||
+      reason.includes('عدم توفر') ||
+      reason.includes('غير متوفر') ||
+      report.includes('عدم توفر') ||
+      report.includes('غير متوفر')
+    ) {
+      return 'no_parts';
+    }
+    return 'ready';
+  }
+  
+  return status || 'new';
 }
 
 export interface PartCatalogItem {

@@ -1,10 +1,21 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { parseDate, renderSafeValue } from '../lib/dateUtils';
+import { getCurrencySymbol } from '../lib/fundUtils';
 import { ArrowLeft, ArrowRight, Printer, Share2, Smartphone, MessageCircle, Phone, Loader2, FileText, Settings2, MapPin, Facebook, AlertTriangle, Mail, Landmark, ArrowUp, Save, Check, ZoomIn, ZoomOut } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import * as htmlToImage from 'html-to-image';
 import { db, doc, updateDoc, increment, collection, getDocs } from '../firebase';
 import { sharePdfFile, openWhatsApp } from '../lib/shareHelper';
+import { tafqeet } from '../lib/tafqeet';
+
+function getCurrencyFullName(curr?: string) {
+  if (!curr) return '';
+  if (curr === 'USD' || curr === '$') return 'دولار أمريكي';
+  if (curr === 'SAR') return 'ريال سعودي';
+  if (curr === 'YER') return 'ريال يمني';
+  if (curr === 'EUR') return 'يورو';
+  return curr;
+}
 
 import ReportActions, { WhatsAppIcon } from './ReportActions';
 
@@ -273,23 +284,23 @@ export default function PrintPreviewOverlay({
         {/* Left Corner: Info */}
         <div className="text-left flex-1 space-y-0.5 pt-0.5 bg-gray-50/50 p-2 rounded-lg border border-gray-200 text-[11px]">
           <div className="font-bold text-gray-700 flex justify-between gap-4">
-            <span>{type === 'invoice' ? (templateType === 'quotation' ? 'رقم العرض:' : 'رقم المستند:') : (type === 'statement' ? 'رقم الحساب:' : (type === 'table' ? 'رقم التقرير:' : 'رقم المرجع:'))}</span>
-            <span className="font-mono text-gray-900">
+            <span>{type === 'invoice' ? (templateType === 'quotation' ? 'رقم العرض:' : 'رقم المستند:') : (type === 'statement' ? 'رقم الحساب:' : (type === 'table' ? 'رقم التقرير:' : (type === 'voucher' ? 'رقم السند:' : 'رقم المرجع:')))}</span>
+            <span className="font-mono text-gray-900 font-black">
               {type === 'invoice' 
                 ? invoice?.invoiceNumber 
                 : (type === 'statement' 
                     ? (statement?.customerNumber || statement?.id?.substring(0, 5)) 
-                    : (type === 'table' ? (tableData?.reportNumber || '00000') : voucher?.reference))}
+                    : (type === 'table' ? (tableData?.reportNumber || '00000') : (voucher?.voucherNumber || voucher?.reference || '0000')))}
             </span>
           </div>
           <div className="font-bold text-gray-700 flex justify-between gap-4">
-            <span>تاريخ السند:</span>
+            <span>{type === 'invoice' ? (templateType === 'quotation' ? 'تاريخ العرض:' : 'تاريخ المستند:') : (type === 'statement' ? 'تاريخ التقرير:' : 'تاريخ السند:')}</span>
             <span className="font-mono text-gray-900">
               {type === 'invoice' 
                 ? `${formatDate(invoice?.createdAt)} - ${formatTime(invoice?.createdAt)}`
                 : (type === 'statement'
                     ? `${formatDate(previewDate)} - ${formatTime(previewDate)}`
-                    : `${formatDate(voucher?.timestamp || voucher?.date)} - ${formatTime(voucher?.timestamp || voucher?.date)}`)}
+                    : `${formatDate(voucher?.timestamp || voucher?.date || voucher?.createdAt || new Date())} - ${formatTime(voucher?.timestamp || voucher?.date || voucher?.createdAt || new Date())}`)}
             </span>
           </div>
           <div className="font-bold text-gray-700 flex justify-between gap-4 border-t border-gray-200 pt-0.5 mt-0.5 font-cairo">
@@ -303,9 +314,9 @@ export default function PrintPreviewOverlay({
       <div className="bg-gray-100 p-1.5 rounded-lg mb-1.5 border border-gray-300 flex flex-row items-center justify-start gap-4 px-4 shrink-0 text-xs whitespace-nowrap">
         <div className="font-black text-gray-900 flex items-center">
           <span className="text-[10px] text-gray-600 ml-2 whitespace-nowrap">
-            {['purchase', 'purchase_parts', 'purchase_batch'].includes(templateType) || invoice?.isPurchase === 1 || invoice?.type === 'purchase' ? 'المورد / البائع:' : 'إسم العميل:'}
+            {['purchase', 'purchase_parts', 'purchase_batch'].includes(templateType) || invoice?.isPurchase === 1 || invoice?.type === 'purchase' ? 'المورد / البائع:' : (type === 'voucher' ? (voucher?.type === 'receipt' ? 'مقبوض من السيد:' : 'مدفوع إلى السيد:') : 'إسم العميل:')}
           </span>
-          <span className="text-gray-900 font-black">{getOverlayCustomerDetails().name}</span>
+          <span className="text-gray-900 font-black">{getOverlayCustomerDetails().name || voucher?.customerName || 'جهة عامة أخرى'}</span>
         </div>
         {getOverlayCustomerDetails().company && (
           <div className="font-black text-gray-900 border-r border-gray-300 pr-3 flex items-center">
@@ -329,15 +340,24 @@ export default function PrintPreviewOverlay({
       
       <div className="flex justify-between items-start text-[11px] font-bold text-gray-900 leading-snug mb-1 px-4 font-cairo">
         {type === 'voucher' ? (
-          <>
-            <div className="text-right space-y-0.5">
-                <p className="pt-0.5">اسم المهندس المختص: ........................</p>
-                <p className="pt-0.5 font-black">التوقيع / ........................................</p>
+          <div className="w-full grid grid-cols-3 gap-4 text-center items-center py-2 border-t border-dashed border-gray-300 font-cairo">
+            <div className="space-y-1">
+              <p className="font-black text-gray-900 text-xs">المستلم / المحاسب</p>
+              <p className="text-gray-400 text-xs tracking-widest">___________________</p>
+              <p className="text-[10px] text-gray-500 font-bold">{user?.name || user?.displayName || 'أمين الصندوق'}</p>
             </div>
-            <div className="text-left space-y-0.5">
-                <p className="pt-1.5">المستلم المقر بما فيه /.............. التوقيع /.............</p>
+            <div className="flex flex-col items-center justify-center">
+              <p className="font-black text-gray-900 text-xs mb-1">الختم الرسمي</p>
+              <div className="w-14 h-14 border-2 border-dashed border-gray-300 rounded-full flex items-center justify-center text-gray-400 text-[9px] font-bold">
+                قسم الصندوق
+              </div>
             </div>
-          </>
+            <div className="space-y-1">
+              <p className="font-black text-gray-900 text-xs">{voucher?.type === 'receipt' ? 'المودع / العميل' : 'المستلم / المقر بالصرف'}</p>
+              <p className="text-gray-400 text-xs tracking-widest">___________________</p>
+              <p className="text-[10px] text-gray-500 font-bold">{voucher?.customerName || 'توقيع الطرف المعني'}</p>
+            </div>
+          </div>
         ) : type === 'statement' ? (
           <>
             <div className="text-right space-y-0.5">
@@ -525,12 +545,12 @@ export default function PrintPreviewOverlay({
                   <div className="bg-gray-100 border-b-2 border-black text-black font-cairo font-black flex items-stretch text-[11px] shrink-0">
                     <div className="py-2 px-1.5 text-center w-8 border-l border-black flex items-center justify-center shrink-0">م</div>
                     <div className="py-2 px-2 text-center border-l border-black w-24 flex items-center justify-center shrink-0 whitespace-nowrap" dir="ltr">تاريخ القيد</div>
-                    <div className="py-2 px-2 border-l border-black text-right flex items-center justify-start whitespace-nowrap overflow-hidden" style={{flex: 1}}>المستند</div>
-                    <div className="py-2 px-2 text-center border-l border-black w-20 flex items-center justify-center shrink-0 whitespace-nowrap" dir="ltr">رقمه</div>
-                    <div className="py-2 px-2 border-l border-black text-right w-44 flex items-center justify-start shrink-0 whitespace-nowrap overflow-hidden">البيان والتفاصيل</div>
-                    <div className="py-2 px-2 text-rose-900 text-center border-l border-black bg-rose-50/10 w-24 flex items-center justify-center shrink-0 whitespace-nowrap">مدين</div>
-                    <div className="py-2 px-2 text-emerald-900 text-center border-l border-black bg-emerald-50/10 w-24 flex items-center justify-center shrink-0 whitespace-nowrap">دائن</div>
-                    <div className="py-2 px-2 text-center font-black bg-gray-100 w-28 flex items-center justify-center shrink-0 whitespace-nowrap">الرصيد</div>
+                    <div className="py-2 px-2 border-l border-black text-center w-24 flex items-center justify-center shrink-0 whitespace-nowrap">المستند</div>
+                    <div className="py-2 px-1.5 text-center border-l border-black w-14 flex items-center justify-center shrink-0 whitespace-nowrap font-mono" dir="ltr">رقمه</div>
+                    <div className="py-2 px-2.5 border-l border-black text-right flex-1 flex items-center justify-start whitespace-nowrap overflow-hidden">البيان والتفاصيل</div>
+                    <div className="py-2 px-2 text-rose-900 text-center border-l border-black bg-rose-50/10 w-20 flex items-center justify-center shrink-0 whitespace-nowrap">مدين</div>
+                    <div className="py-2 px-2 text-emerald-900 text-center border-l border-black bg-emerald-50/10 w-20 flex items-center justify-center shrink-0 whitespace-nowrap">دائن</div>
+                    <div className="py-2 px-2 text-center font-black bg-gray-100 w-24 flex items-center justify-center shrink-0 whitespace-nowrap">الرصيد</div>
                   </div>
                   {/* Body List */}
                   <div className="divide-y divide-black font-bold bg-white flex flex-col">
@@ -549,28 +569,28 @@ export default function PrintPreviewOverlay({
                             <div className="px-2 font-mono text-[9px] text-gray-700 text-center border-l border-black w-24 flex items-center justify-center shrink-0 whitespace-nowrap overflow-hidden text-ellipsis" dir="ltr">
                               {renderSafeValue(entry.formattedDate)}
                             </div>
-                            <div className="px-2 font-cairo font-bold text-black border-l border-black text-right flex-1 flex items-center justify-start whitespace-normal">
+                            <div className="px-2 font-cairo font-bold text-black border-l border-black text-center w-24 flex items-center justify-center shrink-0 whitespace-nowrap text-ellipsis overflow-hidden">
                               {renderSafeValue(entry.type)}
                             </div>
-                            <div className="px-2 font-mono font-bold text-gray-800 text-center border-l border-black w-20 flex items-center justify-center shrink-0 whitespace-nowrap text-ellipsis overflow-hidden" dir="ltr">
+                            <div className="px-1.5 font-mono font-bold text-gray-800 text-center border-l border-black w-14 flex items-center justify-center shrink-0 whitespace-nowrap text-ellipsis overflow-hidden" dir="ltr">
                               {renderSafeValue(entry.reference)}
                             </div>
-                            <div className="px-2 py-1 font-cairo text-black w-44 border-l border-black text-right flex flex-col items-start justify-center shrink-0 whitespace-normal">
-                              <span className="font-bold leading-normal break-words" title={typeof entry.label === 'string' ? entry.label : ''}>{renderSafeValue(entry.label)}</span>
+                            <div className="px-2.5 py-1 font-cairo text-black flex-1 border-l border-black text-right flex flex-col items-start justify-center whitespace-normal">
+                              <span className="font-bold leading-tight break-words" title={typeof entry.label === 'string' ? entry.label : ''}>{renderSafeValue(entry.label)}</span>
                               {entry.notes && String(entry.notes).trim() !== String(entry.label).trim() && (
-                                <span className="font-semibold text-gray-600 text-[8px] leading-tight break-words" title={typeof entry.notes === 'string' ? entry.notes : ''}>
+                                <span className="font-semibold text-gray-600 text-[8px] leading-tight break-words mt-0.5" title={typeof entry.notes === 'string' ? entry.notes : ''}>
                                   {renderSafeValue(entry.notes)}
                                 </span>
                               )}
                             </div>
-                            <div className="px-2 font-mono font-black text-rose-800 text-center border-l border-black bg-rose-50/5 w-24 flex items-center justify-center shrink-0 whitespace-nowrap text-ellipsis overflow-hidden" dir="ltr">
+                            <div className="px-2 font-mono font-black text-rose-800 text-center border-l border-black bg-rose-50/5 w-20 flex items-center justify-center shrink-0 whitespace-nowrap text-ellipsis overflow-hidden" dir="ltr">
                               {entry.debit > 0 ? entry.debit.toLocaleString('en-US') : '---'}
                             </div>
-                            <div className="px-2 font-mono font-black text-emerald-800 text-center border-l border-black bg-emerald-50/5 w-24 flex items-center justify-center shrink-0 whitespace-nowrap text-ellipsis overflow-hidden" dir="ltr">
+                            <div className="px-2 font-mono font-black text-emerald-800 text-center border-l border-black bg-emerald-50/5 w-20 flex items-center justify-center shrink-0 whitespace-nowrap text-ellipsis overflow-hidden" dir="ltr">
                               {entry.credit > 0 ? entry.credit.toLocaleString('en-US') : '---'}
                             </div>
-                            <div className={`px-2 font-mono font-black text-center w-28 flex items-center justify-center shrink-0 whitespace-nowrap text-ellipsis overflow-hidden ${entry.runningBalance > 0.01 ? 'text-rose-800' : entry.runningBalance < -0.01 ? 'text-emerald-800' : 'text-gray-600'}`} dir="ltr">
-                              {entry.runningBalance.toLocaleString('en-US')} {statement?.currency}
+                            <div className={`px-2 font-mono font-black text-center w-24 flex items-center justify-center shrink-0 whitespace-nowrap text-ellipsis overflow-hidden ${entry.runningBalance > 0.01 ? 'text-rose-800' : entry.runningBalance < -0.01 ? 'text-emerald-800' : 'text-gray-600'}`} dir="ltr">
+                              {entry.runningBalance.toLocaleString('en-US')} {getCurrencySymbol(statement?.currency)}
                             </div>
                           </div>
                         );
@@ -643,6 +663,134 @@ export default function PrintPreviewOverlay({
     });
   };
 
+  const getTableColumnProps = (header: string, index: number, total: number) => {
+    const h = (header || '').trim();
+    
+    if (h === 'رقم السند' || h === 'رقم المستند' || h === 'السند' || h === 'المستند' || h === 'مسلسل' || h === 'رقم' || h === 'رقم الفاتورة') {
+      return {
+        headerClass: 'w-14 shrink-0 text-center',
+        cellClass: 'w-14 shrink-0 text-center font-mono font-bold text-amber-900',
+        style: { width: '56px', flexShrink: 0 }
+      };
+    }
+
+    if (h === 'التاريخ والوقت' || h === 'التاريخ' || h === 'تاريخ القيد') {
+      return {
+        headerClass: 'w-24 shrink-0 text-center',
+        cellClass: 'w-24 shrink-0 text-center font-mono text-[9px] text-gray-700',
+        style: { width: '92px', flexShrink: 0 }
+      };
+    }
+
+    if (h === 'نوع الحركة' || h === 'النوع' || h === 'نوع السند' || h === 'الحركة') {
+      return {
+        headerClass: 'w-16 shrink-0 text-center',
+        cellClass: 'w-16 shrink-0 text-center font-bold text-[9px] text-gray-800',
+        style: { width: '64px', flexShrink: 0 }
+      };
+    }
+
+    if (h === 'الصندوق' || h === 'المصدر (الصندوق)' || h === 'اسم الصندوق' || h === 'اسم الصندوق المالي') {
+      return {
+        headerClass: 'w-24 shrink-0 text-center',
+        cellClass: 'w-24 shrink-0 text-center font-bold text-[9px] text-gray-800',
+        style: { width: '90px', flexShrink: 0 }
+      };
+    }
+
+    if (h.includes('مدين') || h.includes('وارد') || h.includes('إيداع')) {
+      return {
+        headerClass: 'w-20 shrink-0 text-center text-emerald-950 bg-emerald-50/40',
+        cellClass: 'w-20 shrink-0 text-center font-mono font-black text-emerald-800 bg-emerald-50/10',
+        style: { width: '80px', flexShrink: 0 }
+      };
+    }
+
+    if (h.includes('دائن') || h.includes('منصرف') || h.includes('صرف')) {
+      return {
+        headerClass: 'w-20 shrink-0 text-center text-rose-950 bg-rose-50/40',
+        cellClass: 'w-20 shrink-0 text-center font-mono font-black text-rose-800 bg-rose-50/10',
+        style: { width: '80px', flexShrink: 0 }
+      };
+    }
+
+    if (h === 'الرصيد' || h === 'الرصيد الفعلي' || h === 'الرصيد الفعلي الحالي' || h === 'المبلغ والعملة' || h.includes('صافي')) {
+      return {
+        headerClass: 'w-24 shrink-0 text-center text-blue-950 bg-blue-50/30',
+        cellClass: 'w-24 shrink-0 text-center font-mono font-black text-blue-900 bg-blue-50/10',
+        style: { width: '96px', flexShrink: 0 }
+      };
+    }
+
+    if (h === 'المبلغ' || h === 'السعر' || h === 'إجمالي السعر' || h === 'الديون المتبقية' || h === 'المبلغ المتبقي') {
+      return {
+        headerClass: 'w-20 shrink-0 text-center',
+        cellClass: 'w-20 shrink-0 text-center font-mono font-black text-gray-900',
+        style: { width: '80px', flexShrink: 0 }
+      };
+    }
+
+    if (h === 'العملة' || h === 'العملة الأساسية') {
+      return {
+        headerClass: 'w-12 shrink-0 text-center',
+        cellClass: 'w-12 shrink-0 text-center font-bold text-gray-700',
+        style: { width: '48px', flexShrink: 0 }
+      };
+    }
+
+    if (h === 'المستخدم' || h === 'المسؤول') {
+      return {
+        headerClass: 'w-14 shrink-0 text-center',
+        cellClass: 'w-14 shrink-0 text-center text-[8px] text-gray-600',
+        style: { width: '56px', flexShrink: 0 }
+      };
+    }
+
+    if (h.includes('هاتف') || h.includes('الهاتف')) {
+      return {
+        headerClass: 'w-24 shrink-0 text-center',
+        cellClass: 'w-24 shrink-0 text-center font-mono text-[9px] text-gray-700',
+        style: { width: '90px', flexShrink: 0 }
+      };
+    }
+
+    if (h === 'اسم العميل' || h === 'العميل' || h === 'الجهة المستلم منها' || h === 'الصرف لصالح' || h === 'اسم الشركة' || h === 'المورد') {
+      return {
+        headerClass: 'w-28 shrink-0 text-right px-2',
+        cellClass: 'w-28 shrink-0 text-right px-2 font-bold text-gray-900',
+        style: { width: '110px', flexShrink: 0 }
+      };
+    }
+
+    if (h.includes('تصنيف') || h.includes('التصنيف')) {
+      return {
+        headerClass: 'w-20 shrink-0 text-center',
+        cellClass: 'w-20 shrink-0 text-center font-bold text-[9px] text-gray-800',
+        style: { width: '80px', flexShrink: 0 }
+      };
+    }
+
+    // Default (e.g. البيان والتفاصيل / تفاصيل / الوصف): flex: 1 taking all available space!
+    return {
+      headerClass: 'flex-1 text-right px-2.5 min-w-[140px]',
+      cellClass: 'flex-1 text-right px-2.5 font-bold text-gray-900 whitespace-normal break-words min-w-[140px] leading-tight',
+      style: { flex: '1 1 0%', minWidth: '140px' }
+    };
+  };
+
+  const formatPrintCellValue = (val: any) => {
+    if (val === null || val === undefined) return '-';
+    if (typeof val !== 'string') return renderSafeValue(val);
+    const str = String(val);
+    return str
+      .replace(/\bUSD\b/g, '$')
+      .replace(/\bSAR\b/g, 'ر.س')
+      .replace(/\bYER\b/g, 'ر.ي')
+      .replace(/دولار/g, '$')
+      .replace(/ريال سعودي/g, 'ر.س')
+      .replace(/ريال يمني/g, 'ر.ي');
+  };
+
   const renderTablePages = () => {
     const tableHeaders = tableData?.headers || [];
     const rowsPerPage = 24;
@@ -682,15 +830,18 @@ export default function PrintPreviewOverlay({
                       {/* Header Row */}
                       <div className="bg-gray-100 border-b-2 border-black text-black font-cairo font-black flex items-stretch text-[10px] shrink-0">
                         <div className="py-2 px-1 text-center w-8 border-l border-black flex items-center justify-center shrink-0">م</div>
-                        {tableHeaders.map((header: string, hIdx: number) => (
-                          <div 
-                            key={hIdx} 
-                            className={`py-2 px-1 text-center border-black flex items-center justify-center overflow-hidden whitespace-nowrap ${hIdx < tableHeaders.length - 1 ? 'border-l' : ''}`}
-                            style={{ flex: 1 }}
-                          >
-                            {header}
-                          </div>
-                        ))}
+                        {tableHeaders.map((header: string, hIdx: number) => {
+                          const colProps = getTableColumnProps(header, hIdx, tableHeaders.length);
+                          return (
+                            <div 
+                              key={hIdx} 
+                              className={`py-2 border-black flex items-center justify-center overflow-hidden whitespace-nowrap ${colProps.headerClass} ${hIdx < tableHeaders.length - 1 ? 'border-l' : ''}`}
+                              style={colProps.style}
+                            >
+                              {header}
+                            </div>
+                          );
+                        })}
                       </div>
                       {/* Body List */}
                       <div className="divide-y divide-black font-bold bg-white flex flex-col">
@@ -706,15 +857,19 @@ export default function PrintPreviewOverlay({
                                 <div className="px-1 font-mono text-center text-gray-800 border-l border-black bg-gray-50/50 w-8 flex items-center justify-center shrink-0 whitespace-nowrap">
                                   {globalIndex}
                                 </div>
-                                {row.map((cell: any, cIdx: number) => (
-                                  <div 
-                                    key={cIdx} 
-                                    className={`px-1 py-1 font-cairo text-black text-center flex items-center justify-center whitespace-normal break-words leading-tight ${cIdx < row.length - 1 ? 'border-l border-black' : ''}`}
-                                    style={{ flex: 1 }}
-                                  >
-                                    {renderSafeValue(cell)}
-                                  </div>
-                                ))}
+                                {row.map((cell: any, cIdx: number) => {
+                                  const headerName = tableHeaders[cIdx] || '';
+                                  const colProps = getTableColumnProps(headerName, cIdx, tableHeaders.length);
+                                  return (
+                                    <div 
+                                      key={cIdx} 
+                                      className={`py-1 font-cairo text-black flex items-center justify-center ${colProps.cellClass} ${cIdx < row.length - 1 ? 'border-l border-black' : ''}`}
+                                      style={colProps.style}
+                                    >
+                                      {formatPrintCellValue(cell)}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             );
                           })
@@ -774,15 +929,18 @@ export default function PrintPreviewOverlay({
                   {/* Header Row */}
                   <div className="bg-gray-100 border-b-2 border-black text-black font-cairo font-black flex items-stretch text-[10px] shrink-0">
                     <div className="py-2 px-1 text-center w-8 border-l border-black flex items-center justify-center shrink-0">م</div>
-                    {tableHeaders.map((header: string, hIdx: number) => (
-                      <div 
-                        key={hIdx} 
-                        className={`py-2 px-1 text-center border-black flex items-center justify-center overflow-hidden whitespace-nowrap ${hIdx < tableHeaders.length - 1 ? 'border-l' : ''}`}
-                        style={{ flex: 1 }}
-                      >
-                        {header}
-                      </div>
-                    ))}
+                    {tableHeaders.map((header: string, hIdx: number) => {
+                      const colProps = getTableColumnProps(header, hIdx, tableHeaders.length);
+                      return (
+                        <div 
+                          key={hIdx} 
+                          className={`py-2 border-black flex items-center justify-center overflow-hidden whitespace-nowrap ${colProps.headerClass} ${hIdx < tableHeaders.length - 1 ? 'border-l' : ''}`}
+                          style={colProps.style}
+                        >
+                          {header}
+                        </div>
+                      );
+                    })}
                   </div>
                   {/* Body List */}
                   <div className="divide-y divide-black font-bold bg-white flex flex-col">
@@ -798,15 +956,19 @@ export default function PrintPreviewOverlay({
                             <div className="px-1 font-mono text-center text-gray-800 border-l border-black bg-gray-50/50 w-8 flex items-center justify-center shrink-0 whitespace-nowrap">
                               {globalIndex}
                             </div>
-                            {row.map((cell: any, cIdx: number) => (
-                              <div 
-                                key={cIdx} 
-                                className={`px-1 py-1 font-cairo text-black text-center flex items-center justify-center whitespace-normal break-words leading-tight ${cIdx < row.length - 1 ? 'border-l border-black' : ''}`}
-                                style={{ flex: 1 }}
-                              >
-                                {renderSafeValue(cell)}
-                              </div>
-                            ))}
+                            {row.map((cell: any, cIdx: number) => {
+                              const headerName = tableHeaders[cIdx] || '';
+                              const colProps = getTableColumnProps(headerName, cIdx, tableHeaders.length);
+                              return (
+                                <div 
+                                  key={cIdx} 
+                                  className={`py-1 font-cairo text-black flex items-center justify-center ${colProps.cellClass} ${cIdx < row.length - 1 ? 'border-l border-black' : ''}`}
+                                  style={colProps.style}
+                                >
+                                  {formatPrintCellValue(cell)}
+                                </div>
+                              );
+                            })}
                           </div>
                         );
                       })
@@ -906,6 +1068,10 @@ export default function PrintPreviewOverlay({
     } else if (type === 'table' && tableData) {
       phone = tableData.customerPhone || '';
       customerName = tableData.customerName || '';
+    } else if (type === 'voucher' && voucher) {
+      const details = getOverlayCustomerDetails();
+      phone = details.phone || voucher.customerPhone || voucher.phone || '';
+      customerName = details.name || voucher.customerName || '';
     }
     const cleanPhone = phone ? phone.replace(/\D/g, '') : '';
     
@@ -927,7 +1093,12 @@ export default function PrintPreviewOverlay({
     const invNum = invoice?.invoiceNumber && invoice.invoiceNumber !== 'معاينة' ? ` #${invoice.invoiceNumber}` : '';
     
     let msg = `مرفق ${docName}${invNum}`;
-    if (customerName) {
+    if (type === 'voucher') {
+      const isReceipt = voucher?.type === 'receipt';
+      const vTypeName = isReceipt ? 'سند قبض مالي' : 'سند صرف مالي';
+      const vNum = voucher?.voucherNumber ? ` #${voucher.voucherNumber}` : '';
+      msg = `*${vTypeName}${vNum}*\nعزيزي *${customerName || 'العميل'}* المحترم،\nمرفق لكم تفاصيل السند المالي بمبلغ: ${Number(voucher?.amount || 0).toLocaleString('en-US')} ${voucher?.currency || ''}.\n• التصنيف: ${voucher?.category || voucher?.transactionCategory || 'عام'}\n• البيان: ${voucher?.details || voucher?.notes || '-'}`;
+    } else if (customerName) {
       msg = `*${docName}${invNum}*\nعزيزي ${isPurchaseDoc ? 'المورد' : 'العميل'} *${customerName}* المحترم،\nمرفق لكم الفاتورة الإلكترونية.`;
       if (invoice?.totalCost !== undefined) {
         msg += `\n• الإجمالي: ${invoice.totalCost} ${invoice.currency || 'USD'}`;
@@ -1051,7 +1222,9 @@ export default function PrintPreviewOverlay({
     }
     switch(tmpl) {
       case 'entry': return 'فاتورة دخول أجهزة';
-      case 'exit': return 'فاتورة خروج وملخص مالي';
+      case 'exit': 
+        if (data?.isPartialExit) return 'فاتورة خروج أجهزة جزئية';
+        return 'فاتورة خروج أجهزة';
       case 'inspection': return 'تقرير فحص فني';
       case 'quotation': return 'عرض سعر صيانة';
       case 'assignment': return 'تقرير حالة وإسناد';
@@ -1124,8 +1297,8 @@ export default function PrintPreviewOverlay({
       {/* Top Navbar */}
       <div className="flex justify-between items-center bg-black/50 p-4 border-b border-white/10 shrink-0 flex-wrap gap-4">
         <div className="flex items-center gap-2">
-          <h2 className="text-white font-bold hidden sm:block border-l border-white/20 pl-4">
-            {type === 'invoice' ? `${getTemplateName(templateType)} - #${invoice?.invoiceNumber || ''}` : (type === 'statement' ? `كشف حساب - ${statement?.customerName}` : (type === 'table' ? tableData?.title : `استعراض السند - #${voucher?.reference}`))}
+          <h2 className="text-white font-bold hidden sm:block border-l border-white/20 pl-4 font-cairo">
+            {type === 'invoice' ? `${getTemplateName(templateType)} - #${invoice?.invoiceNumber || ''}` : (type === 'statement' ? `كشف حساب - ${statement?.customerName}` : (type === 'table' ? tableData?.title : `${voucher?.type === 'receipt' ? 'معاينة سند قبض' : 'معاينة سند صرف'} - #${voucher?.voucherNumber || voucher?.reference || ''}`))}
           </h2>
 
           <div className="flex items-center gap-1 bg-black/40 rounded-lg p-1 border border-white/10 mr-2">
@@ -1165,7 +1338,7 @@ export default function PrintPreviewOverlay({
                 else if (handleWhatsApp) await handleWhatsApp();
               }}
               disabled={isGeneratingPDF || isSaving}
-              className="w-10 h-10 flex items-center justify-center bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-50 active:scale-95 cursor-pointer shrink-0"
+              className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-50 active:scale-95 cursor-pointer shrink-0 font-cairo"
               title="مشاركة عبر واتساب"
             >
               {isGeneratingPDF ? (
@@ -1173,6 +1346,7 @@ export default function PrintPreviewOverlay({
               ) : (
                 <WhatsAppIcon className="w-5 h-5" />
               )}
+              <span className="text-xs md:text-sm font-bold">واتساب</span>
             </button>
           )}
 
@@ -1184,10 +1358,11 @@ export default function PrintPreviewOverlay({
                 else if (handlePrint) await handlePrint();
               }}
               disabled={isSaving}
-              className="w-10 h-10 flex items-center justify-center bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0"
+              className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0 font-cairo"
               title="طباعة"
             >
               <Printer size={18} />
+              <span className="text-xs md:text-sm font-bold">طباعة</span>
             </button>
           )}
 
@@ -1196,7 +1371,7 @@ export default function PrintPreviewOverlay({
             <button 
               onClick={onSave}
               disabled={isSaving}
-              className="h-10 px-5 flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold text-sm transition-all shadow-md active:scale-95 cursor-pointer font-cairo shrink-0"
+              className="h-10 px-4 md:px-5 flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold text-xs md:text-sm transition-all shadow-md active:scale-95 cursor-pointer font-cairo shrink-0"
               title="ترحيل وحفظ التغييرات"
             >
               {isSaving ? (
@@ -1213,10 +1388,11 @@ export default function PrintPreviewOverlay({
           {/* Back/Close Button */}
           <button 
             onClick={onClose}
-            className="w-10 h-10 flex items-center justify-center bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0"
-            title="خروج"
+            className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0 font-cairo"
+            title="رجوع / إغلاق المعاينة"
           >
             <ArrowRight size={18} />
+            <span className="text-xs md:text-sm font-bold">رجوع</span>
           </button>
         </div>
       </div>
@@ -1249,39 +1425,117 @@ export default function PrintPreviewOverlay({
                 {/* Dynamic Bodies based on Type & Template */}
                 <div className="flex-1 mb-4 flex flex-col">
                 {type === 'voucher' && voucher && (
-              <div className="mt-3 border-2 border-gray-900 rounded-lg overflow-hidden">
-                 <div className="flex border-b-2 border-gray-900">
-                    <div className="w-1/4 bg-gray-100 p-2 font-black text-gray-700 border-l-2 border-gray-900 text-center flex items-center justify-center text-xs">نوع السند</div>
-                    <div className="w-3/4 p-2 font-black text-lg text-center bg-white">{voucher.type === 'receipt' ? 'سند قبض مالي' : 'سند صرف مالي'}</div>
-                 </div>
-                 <div className="flex border-b-2 border-gray-900">
-                    <div className="w-1/4 bg-gray-100 p-2 font-black text-gray-700 border-l-2 border-gray-900 text-center flex items-center justify-center text-xs">المبلغ</div>
-                    <div className="w-3/4 p-2 font-mono font-black text-xl text-center bg-white">
-                      {Number(voucher.amount).toLocaleString('en-US')} <span className="text-sm font-sans mr-1">{voucher.currency || 'USD'}</span>
-                    </div>
-                 </div>
-                 <div className="flex border-b-2 border-gray-900">
-                    <div className="w-1/4 bg-gray-100 p-2 font-black text-gray-700 border-l-2 border-gray-900 text-center flex items-center justify-center text-xs">البيان والتفاصيل</div>
-                    <div className="w-3/4 p-2 font-bold text-sm leading-relaxed bg-white">
-                      {voucher.details || 'لا توجد تفاصيل.'}
-                    </div>
-                 </div>
-                 <div className="flex">
-                    <div className="w-1/4 bg-gray-100 p-2 font-black text-gray-700 border-l-2 border-gray-900 text-center flex items-center justify-center text-xs">التصنيف المحاسبي</div>
-                    <div className="w-3/4 p-2 font-bold text-xs bg-white">
-                      {voucher.category || 'عام'}
-                    </div>
-                 </div>
-                 {voucher.notes && (
-                   <div className="flex border-t-2 border-gray-900">
-                      <div className="w-1/4 bg-gray-100 p-2 font-black text-gray-700 border-l-2 border-gray-900 text-center flex items-center justify-center text-xs">ملاحظات</div>
-                      <div className="w-3/4 p-2 font-bold text-xs text-gray-600 bg-white leading-relaxed">
-                        {voucher.notes}
-                      </div>
-                   </div>
-                 )}
-              </div>
-            )}
+                <div className="w-full border-2 border-black rounded-lg overflow-hidden my-3 text-black font-cairo shadow-sm">
+                  <table className="w-full border-collapse text-xs table-fixed">
+                    <tbody className="divide-y-2 divide-black">
+                      {/* 1. Counterparty / Customer */}
+                      <tr className="bg-white">
+                        <td className="w-1/4 bg-gray-100 py-2.5 px-3 font-black text-gray-900 border-l-2 border-black text-right text-xs whitespace-nowrap">
+                          {voucher.type === 'receipt' ? 'مقبوض من السيد / الجهة:' : 'مدفوع إلى السيد / الجهة:'}
+                        </td>
+                        <td className="w-3/4 py-2.5 px-3 font-black text-sm bg-white text-gray-950 text-right">
+                          <span className="text-base text-gray-900">{voucher.customerName || 'جهة عامة أخرى'}</span>
+                          {voucher.customerId && voucher.customerId !== 'walk-in' && (
+                            <span className="text-[10px] text-gray-600 font-mono mr-2 bg-gray-100 px-2 py-0.5 rounded border border-gray-300">
+                              كود: {voucher.customerId}
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+
+                      {/* 2. Amount, Currency & Arabic Tafqeet */}
+                      <tr className="bg-white">
+                        <td className="w-1/4 bg-gray-100 py-2.5 px-3 font-black text-gray-900 border-l-2 border-black text-right text-xs whitespace-nowrap">
+                          المبلغ رقماً وكتابةً:
+                        </td>
+                        <td className="w-3/4 py-2.5 px-3 bg-white text-gray-950 text-right">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="flex items-baseline gap-1 font-mono font-black text-lg text-emerald-950 bg-emerald-50/70 px-3 py-1 rounded border border-emerald-400" dir="ltr">
+                              <span>{Number(voucher.amount || 0).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</span>
+                              <span className="text-xs font-sans font-black text-emerald-900 ml-1">{voucher.currency || 'USD'}</span>
+                            </div>
+                            <div className="text-xs font-bold text-gray-800 bg-gray-50 px-2.5 py-1 rounded border border-gray-300">
+                              فقط وقدره: <span className="font-black text-gray-950">{tafqeet(Number(voucher.amount || 0))}</span> {getCurrencyFullName(voucher.currency)} لا غير
+                            </div>
+                          </div>
+
+                          {/* Exchange rate info if cross-currency */}
+                          {voucher.liabilityCurrency && voucher.liabilityCurrency !== voucher.currency && (
+                            <div className="mt-2 pt-2 border-t border-dashed border-gray-300 text-[11px] text-gray-700 flex flex-wrap items-center gap-2">
+                              <span className="font-bold text-gray-900">المبلغ المحتسب في الحساب:</span>
+                              <span className="font-mono font-black text-gray-950 bg-amber-50 px-2 py-0.5 rounded border border-amber-200" dir="ltr">
+                                {Number(voucher.liabilityAmount || 0).toLocaleString('en-US')} {voucher.liabilityCurrency}
+                              </span>
+                              <span className="text-gray-500 text-[10px]">
+                                (سعر الصرف المعتمد: {voucher.exchangeRate || 1})
+                              </span>
+                            </div>
+                          )}
+                        </td>
+                      </tr>
+
+                      {/* 3. Fund / Payment method */}
+                      <tr className="bg-white">
+                        <td className="w-1/4 bg-gray-100 py-2.5 px-3 font-black text-gray-900 border-l-2 border-black text-right text-xs whitespace-nowrap">
+                          طريقة الدفع / الصندوق:
+                        </td>
+                        <td className="w-3/4 py-2.5 px-3 bg-white text-right font-bold text-xs text-gray-950">
+                          <div className="flex flex-wrap items-center gap-2.5">
+                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[11px] font-black bg-blue-50 text-blue-900 border border-blue-200">
+                              {voucher.fundType === 'bank' ? 'حساب بنكي / تحويل' : 'صندوق نقدي (كاش)'}
+                            </span>
+                            <span className="font-black text-gray-900">{voucher.fundName || 'الصندوق الرئيسي'}</span>
+                            {voucher.referenceNumber && (
+                              <span className="text-gray-600 font-mono text-[11px] bg-gray-50 px-2 py-0.5 rounded border border-gray-200">
+                                رقم المرجع: <strong className="text-black">{voucher.referenceNumber}</strong>
+                              </span>
+                            )}
+                            {voucher.depositorName && (
+                              <span className="text-gray-600 text-[11px] bg-gray-50 px-2 py-0.5 rounded border border-gray-200">
+                                اسم المودع: <strong className="text-black">{voucher.depositorName}</strong>
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+
+                      {/* 4. Accounting Category */}
+                      <tr className="bg-white">
+                        <td className="w-1/4 bg-gray-100 py-2.5 px-3 font-black text-gray-900 border-l-2 border-black text-right text-xs whitespace-nowrap">
+                          التصنيف المحاسبي:
+                        </td>
+                        <td className="w-3/4 py-2.5 px-3 bg-white text-right font-bold text-xs text-gray-900">
+                          <span className="bg-gray-100 px-2.5 py-0.5 rounded border border-gray-300 font-black">
+                            {voucher.category || voucher.transactionCategory || 'عام'}
+                          </span>
+                        </td>
+                      </tr>
+
+                      {/* 5. Statement Details */}
+                      <tr className="bg-white">
+                        <td className="w-1/4 bg-gray-100 py-2.5 px-3 font-black text-gray-900 border-l-2 border-black text-right text-xs whitespace-nowrap">
+                          البيان والشرح المالي:
+                        </td>
+                        <td className="w-3/4 py-2.5 px-3 bg-white text-right font-bold text-xs leading-relaxed text-gray-950">
+                          {voucher.details || voucher.notes || 'لا يوجد بيان مسجل.'}
+                        </td>
+                      </tr>
+
+                      {/* 6. Extra Notes */}
+                      {voucher.notes && voucher.notes.trim() !== String(voucher.details || '').trim() && (
+                        <tr className="bg-white">
+                          <td className="w-1/4 bg-gray-100 py-2.5 px-3 font-black text-gray-900 border-l-2 border-black text-right text-xs whitespace-nowrap">
+                            ملاحظات إضافية:
+                          </td>
+                          <td className="w-3/4 py-2.5 px-3 bg-white text-right font-semibold text-xs leading-relaxed text-gray-700">
+                            {voucher.notes}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
 
 
@@ -1508,38 +1762,103 @@ export default function PrintPreviewOverlay({
                         })()}
                       </tbody>
                       <tfoot>
+                        {/* Header Total Row */}
                         <tr className="bg-gray-100 border-t-2 border-black font-black text-xs h-9">
                           <td colSpan={4} className="py-1.5 px-4 border-l border-black text-right font-black">
-                            إجمالي عدد الأجهزة ومبلغ الفاتورة
+                            {data?.isPartialExit ? 'إجمالي عدد الأجهزة ومبلغ الفاتورة (الجزئي)' : 'إجمالي عدد الأجهزة ومبلغ الفاتورة'}
                           </td>
                           <td className="py-1.5 px-2 border-l border-black text-center font-mono font-black text-sm" dir="ltr">
                             {items.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 1), 0)}
                           </td>
                           <td className="py-1.5 px-2 text-center font-mono font-black text-sm" dir="ltr">
-                            {subTotal.toLocaleString('en-US')} <span className="text-[10px] font-bold">{currency}</span>
+                            {(data?.currentItemsTotal !== undefined ? Number(data.currentItemsTotal) : subTotal).toLocaleString('en-US')} <span className="text-[10px] font-bold">{currency}</span>
                           </td>
                         </tr>
-                        {discount <= 0 ? (
-                          <tr className="bg-white border-t border-black font-black text-xs h-9">
-                            <td colSpan={3} className="py-1.5 px-4 border-l border-black text-right">
-                              المبلغ المدفوع: <span className="font-mono text-emerald-700 text-sm font-black">{paid.toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
-                            </td>
-                            <td colSpan={3} className="py-1.5 px-4 text-center">
-                              المبلغ المتبقي: <span className="font-mono text-rose-700 text-sm font-black">{remaining.toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
-                            </td>
-                          </tr>
+
+                        {data?.isPartialExit ? (
+                          <>
+                            {/* Partial Exit: باقي من سابق إن وجد + مبلغ الخصم إن وجد */}
+                            {(Number(data?.previousRemaining || 0) > 0 || Number(data?.discountAmount !== undefined ? data.discountAmount : discount) > 0) && (
+                              <tr className="bg-gray-50 border-t border-black font-black text-xs h-8">
+                                {Number(data?.previousRemaining || 0) > 0 && (
+                                  <td colSpan={Number(data?.discountAmount !== undefined ? data.discountAmount : discount) > 0 ? 3 : 6} className="py-1 px-4 border-l border-black text-right text-amber-900">
+                                    باقي من سابق: <span className="font-mono font-black text-amber-700 text-sm">{Number(data.previousRemaining).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                  </td>
+                                )}
+                                {Number(data?.discountAmount !== undefined ? data.discountAmount : discount) > 0 && (
+                                  <td colSpan={Number(data?.previousRemaining || 0) > 0 ? 3 : 6} className="py-1 px-4 border-l border-black text-right text-purple-900">
+                                    مبلغ الخصم: <span className="font-mono font-black text-purple-700 text-sm">{Number(data?.discountAmount !== undefined ? data.discountAmount : discount).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                  </td>
+                                )}
+                              </tr>
+                            )}
+
+                            {/* Partial Exit: المبلغ الواصل (مع تفصيل واصل سابق إذا زاد عن أجهزة الفاتورة) + المبلغ المتبقي */}
+                            <tr className="bg-white border-t border-black font-black text-xs h-9">
+                              {Number(data?.paidForPrevious || 0) > 0 ? (
+                                <>
+                                  <td colSpan={2} className="py-1.5 px-3 border-l border-black text-right">
+                                    المبلغ الواصل (أجهزة الفاتورة): <span className="font-mono text-emerald-700 text-sm font-black">{Number(data.paidForCurrent || 0).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                  </td>
+                                  <td colSpan={2} className="py-1.5 px-3 border-l border-black text-right text-cyan-900 bg-cyan-50/20">
+                                    واصل متبقي عليه من سابق: <span className="font-mono text-cyan-700 text-sm font-black">{Number(data.paidForPrevious || 0).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                  </td>
+                                  <td colSpan={2} className="py-1.5 px-3 text-center">
+                                    المبلغ المتبقي: <span className="font-mono text-rose-700 text-sm font-black">{Number(data?.remainingAmount !== undefined ? data.remainingAmount : remaining).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                  </td>
+                                </>
+                              ) : (
+                                <>
+                                  <td colSpan={3} className="py-1.5 px-4 border-l border-black text-right">
+                                    المبلغ الواصل: <span className="font-mono text-emerald-700 text-sm font-black">{Number(data?.paidAmount !== undefined ? data.paidAmount : paid).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                  </td>
+                                  <td colSpan={3} className="py-1.5 px-4 text-center">
+                                    المبلغ المتبقي: <span className="font-mono text-rose-700 text-sm font-black">{Number(data?.remainingAmount !== undefined ? data.remainingAmount : remaining).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                  </td>
+                                </>
+                              )}
+                            </tr>
+                          </>
                         ) : (
-                          <tr className="bg-white border-t border-black font-black text-xs h-9">
-                            <td colSpan={2} className="py-1.5 px-4 border-l border-black text-right">
-                              الخصم: <span className="font-mono text-amber-700 text-sm font-black">{discount.toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
-                            </td>
-                            <td colSpan={2} className="py-1.5 px-4 border-l border-black text-center">
-                              المبلغ المدفوع: <span className="font-mono text-emerald-700 text-sm font-black">{paid.toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
-                            </td>
-                            <td colSpan={2} className="py-1.5 px-4 text-center">
-                              المبلغ المتبقي: <span className="font-mono text-rose-700 text-sm font-black">{remaining.toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
-                            </td>
-                          </tr>
+                          <>
+                            {/* Full Exit: مبلغ السداد السابق إن وجد + الخصم إن وجد */}
+                            {Number(data?.previousPaid || 0) > 0 && (
+                              <tr className="bg-gray-50 border-t border-black font-black text-xs h-8">
+                                <td colSpan={Number(data?.discountAmount !== undefined ? data.discountAmount : discount) > 0 ? 3 : 6} className="py-1 px-4 border-l border-black text-right text-cyan-900">
+                                  مبلغ السداد السابق: <span className="font-mono font-black text-cyan-700 text-sm">{Number(data.previousPaid).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                </td>
+                                {Number(data?.discountAmount !== undefined ? data.discountAmount : discount) > 0 && (
+                                  <td colSpan={3} className="py-1 px-4 border-l border-black text-right text-amber-900">
+                                    الخصم: <span className="font-mono font-black text-amber-700 text-sm">{Number(data?.discountAmount !== undefined ? data.discountAmount : discount).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                  </td>
+                                )}
+                              </tr>
+                            )}
+
+                            {/* Full Exit: Payment row */}
+                            {!(Number(data?.previousPaid || 0) > 0) && Number(data?.discountAmount !== undefined ? data.discountAmount : discount) > 0 ? (
+                              <tr className="bg-white border-t border-black font-black text-xs h-9">
+                                <td colSpan={2} className="py-1.5 px-4 border-l border-black text-right">
+                                  الخصم: <span className="font-mono text-amber-700 text-sm font-black">{Number(data?.discountAmount !== undefined ? data.discountAmount : discount).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                </td>
+                                <td colSpan={2} className="py-1.5 px-4 border-l border-black text-center">
+                                  المبلغ المدفوع: <span className="font-mono text-emerald-700 text-sm font-black">{Number(data?.paidAmount !== undefined ? data.paidAmount : paid).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                </td>
+                                <td colSpan={2} className="py-1.5 px-4 text-center">
+                                  المبلغ المتبقي: <span className="font-mono text-rose-700 text-sm font-black">{Number(data?.remainingAmount !== undefined ? data.remainingAmount : remaining).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                </td>
+                              </tr>
+                            ) : (
+                              <tr className="bg-white border-t border-black font-black text-xs h-9">
+                                <td colSpan={3} className="py-1.5 px-4 border-l border-black text-right">
+                                  المبلغ المدفوع: <span className="font-mono text-emerald-700 text-sm font-black">{Number(data?.paidAmount !== undefined ? data.paidAmount : paid).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                </td>
+                                <td colSpan={3} className="py-1.5 px-4 text-center">
+                                  المبلغ المتبقي: <span className="font-mono text-rose-700 text-sm font-black">{Number(data?.remainingAmount !== undefined ? data.remainingAmount : remaining).toLocaleString('en-US')}</span> <span className="text-[10px] font-bold">{currency}</span>
+                                </td>
+                              </tr>
+                            )}
+                          </>
                         )}
                       </tfoot>
                     </table>

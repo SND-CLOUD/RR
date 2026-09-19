@@ -5,7 +5,7 @@ import { collection, onSnapshot, doc, writeBatch, serverTimestamp, getDoc, updat
 import { db } from '../../firebase';
 import { Invoice, InvoiceItem, User, Customer, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../../types';
 import { useTranslation } from 'react-i18next';
-import { Search, Loader2, X, Clock, Check, RefreshCw, ArrowUpRight, Save, Plus, Printer, Share2, FileText, Phone, Smartphone, Building, ArrowLeft, ArrowRight, MessageCircle, MapPin, Facebook, Edit2, Trash2, ZoomIn, ZoomOut } from 'lucide-react';
+import { Search, Loader2, X, Clock, Check, RefreshCw, ArrowUpRight, Save, Plus, Printer, Share2, FileText, Phone, Smartphone, Building, ArrowLeft, ArrowRight, MessageCircle, MapPin, Facebook, Edit2, Trash2, ZoomIn, ZoomOut, User as UserIcon } from 'lucide-react';
 import BankAccountsFooter from '../BankAccountsFooter';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
@@ -1631,52 +1631,56 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
 
     return (
       <div className="w-full max-w-full overflow-x-hidden space-y-0 pb-32 md:pb-8 text-right font-sans" dir="rtl">
-        {/* Unified Navigation Header (Non-sticky, scrolls with the page) */}
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between px-4 py-4 border-b border-white/10 bg-[#141414] gap-4 w-full">
-          <div className="flex items-center gap-3">
-            <button onClick={() => setSelectedInvoice(null)} className="p-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl transition-all shrink-0 cursor-pointer">
+        {/* Navigation Header */}
+        <div className="flex items-center px-4 py-3 border-b border-white/10 bg-[#0a0a0a]/40 backdrop-blur-md">
+          <div className="flex items-center gap-2">
+            <button onClick={() => setSelectedInvoice(null)} className="p-1.5 bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-white border border-amber-500/20 rounded-xl transition-all shadow-md cursor-pointer">
               <ArrowRight size={18} />
             </button>
-            <h1 className="text-base sm:text-lg font-black tracking-tight flex items-center gap-2 text-white m-0 p-0">
-              <Clock size={18} className="text-amber-500 animate-pulse shrink-0" />
+            <h1 className="text-base font-black text-white m-0 p-0 flex items-center gap-2">
+              <Clock size={16} className="text-amber-500" />
               <span>{subTab === 'parts' ? 'إجراء انتظار قطع الغيار' : 'إجراء انتظار الموافقة والقطع'} - #{selectedInvoice.invoiceNumber}</span>
             </h1>
           </div>
-          <div className="flex items-center gap-2 w-full sm:w-auto">
-            <button 
-              onClick={() => setActivePrintReportInvoice(selectedInvoice)}
-              className="w-full sm:w-auto px-4 py-2.5 rounded-xl text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white flex items-center justify-center gap-1.5 shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer"
-            >
-              <Printer size={14} />
-              عرض وطباعة التقرير الفني
-            </button>
-          </div>
+          <button 
+            type="button"
+            onClick={() => setActivePrintReportInvoice(selectedInvoice)}
+            className="mr-auto px-3 py-1.5 rounded-lg text-xs font-bold bg-purple-600 hover:bg-purple-700 text-white flex items-center gap-1.5 shadow-md transition-all cursor-pointer"
+          >
+            <Printer size={13} />
+            عرض وطباعة التقرير الفني
+          </button>
         </div>
 
-        {/* Invoice Info */}
-        <div className="bg-[#1a1a1a]/90 p-4 sm:p-6 border-b border-white/5 space-y-6 relative overflow-hidden w-full">
+        {/* Customer and Engineer Info */}
+        <div className="bg-[#1a1a1a] p-4 sm:p-5 border-b border-white/5 space-y-3 relative overflow-hidden">
           <div className="absolute top-0 left-0 w-32 h-32 bg-amber-500/10 rounded-full blur-3xl -translate-y-10 -translate-x-10"></div>
           
-          <div className="flex flex-col sm:flex-row sm:items-center gap-4 relative z-10">
-             <div className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center text-gray-400 shrink-0">
-                <Clock size={24} />
+          <div className="flex items-center gap-3 relative z-10">
+             <div className="w-10 h-10 bg-white/5 rounded-xl flex items-center justify-center text-gray-400">
+                <UserIcon size={20} />
              </div>
              <div>
-               <h3 className="text-lg sm:text-xl font-bold text-white">{selectedInvoice.customerName}</h3>
-               <p className="text-xs text-gray-400 mt-1">رقم الهاتف: {getCustomerNumber(selectedInvoice.customerId)}</p>
+               <h3 className="text-lg font-bold text-white">{selectedInvoice.customerName}</h3>
+               <p className="text-xs text-gray-500 font-mono">{getCustomerPhone(selectedInvoice.customerId)}</p>
              </div>
           </div>
 
-          <div className="space-y-4 pt-4 border-t border-white/5 relative z-10 w-full">
-            <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full">
-              <label className="text-xs text-gray-400 font-bold whitespace-nowrap sm:w-20 shrink-0">المهندس المختص</label>
+          <div className="pt-3 border-t border-white/5 relative z-10">
+            <div className="flex flex-row items-center gap-3 w-full">
+              <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">اسم المهندس</label>
               <input 
                 type="text" 
                 value={engineerName}
                 list="engineers-list"
                 onChange={e => setEngineerName(e.target.value)}
-                placeholder="أدخل اسم مسؤول الإجراء فنيًا أو إداريًا"
-                className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:border-amber-500 outline-none transition-all text-right text-white text-sm"
+                onFocus={(e) => {
+                  e.target.select();
+                  e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                }}
+                onClick={(e) => (e.target as HTMLInputElement).select()}
+                className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 focus:border-amber-500 outline-none transition-all text-xs text-right text-white box-border"
+                placeholder="أدخل اسم المهندس المسؤول..."
               />
               <datalist id="engineers-list">
                 {engineersList.map((eng, idx) => (
@@ -1687,349 +1691,276 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
           </div>
         </div>
 
-        {/* Invoice Devices Modern Overview */}
-        <div className="p-0 sm:p-4 mt-4 w-full">
-          <div className="bg-[#1a1a1a] p-4 sm:p-6 rounded-none sm:rounded-2xl border-y sm:border border-white/5 space-y-4 shadow-lg w-full">
-            <h3 className="text-sm font-black text-amber-500 flex items-center gap-2 px-4 sm:px-0">
-              <span className="w-2.5 h-2.5 rounded-full bg-amber-500 animate-pulse shrink-0"></span>
-              <span>قائمة أجهزة الفاتورة وقيد الإجراءات ({invoiceItems.length})</span>
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 px-4 sm:px-0">
-              {invoiceItems.map(it => {
-                const available = getAvailableQuantity(it.id!, -1);
-                return (
-                  <div key={it.id} className="bg-black/30 p-4 rounded-xl border border-white/5 flex flex-col justify-between gap-3 hover:border-white/10 transition-colors w-full box-border">
-                    <div>
-                      <div className="font-bold text-white text-sm">
-                        {it.deviceType} {it.deviceName ? `- ${it.deviceName}` : ''}
-                      </div>
-                      <div className="text-xs space-y-1.5 mt-2 text-gray-400">
-                        <div className="flex items-start gap-1"><span className="text-amber-500/80 font-bold shrink-0">المشكلة:</span> <span className="text-gray-300">{it.faultType || 'غير مححدد'}</span></div>
-                        <div className="flex items-start gap-1"><span className="text-amber-500/80 font-bold shrink-0">الفحص الفني:</span> <span className="text-gray-300">{it.engineerReport || 'لا يوجد تقرير'}</span></div>
-                      </div>
-                    </div>
-                    <div className="flex items-center justify-between border-t border-white/5 pt-2 mt-2">
-                      <span className="text-xs text-gray-500">العدد الكلي للفاتورة: <span className="font-mono text-gray-300 font-bold">{it.quantity}</span></span>
-                      <span className="text-xs font-black text-amber-400">المتبقى للإجراء: <span className="font-mono text-amber-400 font-bold">{available}</span></span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </div>
-
-        {/* Form Entry Block */}
-        <div className="space-y-4 p-0 sm:p-4 mt-4 w-full">
-           <div className="bg-[#1a1a1a] p-4 sm:p-6 rounded-none sm:rounded-2xl border-y sm:border border-white/5 space-y-5 shadow-lg w-full">
-             <div className="flex justify-between items-center pb-3 border-b border-white/5 px-4 sm:px-0">
-                <h3 className="font-bold text-amber-500 text-sm">البند التفصيلي والموافقة</h3>
-             </div>
-
-             <div className="space-y-4 w-full px-4 sm:px-0">
+        {/* Form input section & Temporary Table */}
+        <div className="space-y-4 px-0 sm:px-4 py-3">
+          {/* Form input section */}
+          <div className="bg-[#1a1a1a] p-4 sm:p-5 border-y sm:border border-white/5 rounded-none sm:rounded-2xl relative shadow-md">
+             <div className="flex flex-col gap-2.5">
                {/* الجهاز */}
-               <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full">
-                 <label className="text-xs text-gray-400 font-bold whitespace-nowrap sm:w-20 shrink-0">الجهاز</label>
+               <div className="flex flex-row items-center gap-2.5 w-full">
+                 <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">الجهاز</label>
                  <select 
                    value={currentFormRow.id}
                    onChange={e => handleUpdateCurrentForm('id', e.target.value)}
-                   className="w-full bg-black/40 border border-white/10 px-4 py-3 focus:border-amber-500 outline-none transition-all rounded-xl text-sm text-right text-white truncate box-border cursor-pointer"
+                   className="flex-1 bg-black/40 border border-white/10 px-3 py-2 focus:border-amber-500 outline-none transition-all rounded-lg text-xs text-right text-white box-border cursor-pointer"
                  >
                    <option value="" disabled>اختر الجهاز</option>
                    {invoiceItems.map(it => {
-                     const available = getAvailableQuantity(it.id!, -1);
+                     const available = getAvailableQuantity(it.id!, editingIndex !== null ? editingIndex : -1);
                      if (available <= 0 && currentFormRow.id !== it.id) return null;
-                     return <option key={it.id} value={it.id}>{it.deviceType} - {it.deviceName} - المتبقى: {available}</option>;
+                     return <option key={it.id} value={it.id}>{it.deviceType} - {it.deviceName} - متوفر: {available}</option>;
                    })}
                  </select>
                </div>
 
-               {/* تقرير الفحص */}
-               {(() => {
-                 const selectedItem = invoiceItems.find(i => i.id === currentFormRow.id);
-                 if (!selectedItem) return null;
-                 return (
-                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full">
-                      <span className="text-xs text-amber-500 font-bold whitespace-nowrap sm:w-20 shrink-0">تقرير الفحص</span>
-                      <div className="w-full bg-black/20 px-4 py-3 border border-white/5 rounded-xl text-sm font-medium text-amber-500 truncate box-border" title={selectedItem.engineerReport}>
-                        {selectedItem.engineerReport || 'لا يوجد'}
-                      </div>
-                    </div>
-                 );
-               })()}
-
-               {/* تفاصيل الرد */}
-               <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-4 w-full">
-                 <label className="text-xs text-gray-400 font-bold whitespace-nowrap sm:w-20 shrink-0">تفاصيل الرد</label>
-                 <input 
-                   type="text"
-                   value={currentFormRow.reason}
-                   onFocus={(e) => {
-                     e.target.select();
-                     e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                   }}
-                   onClick={(e) => {
-                     e.currentTarget.select();
-                   }}
-                   onChange={e => handleUpdateCurrentForm('reason', e.target.value)}
-                   placeholder="الرجاء كتابة تفاصيل الرد"
-                   className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-3 focus:border-amber-500 outline-none transition-all text-sm text-right text-white box-border"
-                 />
-               </div>
-             </div>
-
-             {/* Count + Decisive Action Outcomes */}
-             <div className="pt-4 border-t border-white/5 space-y-4 px-4 sm:px-0">
-                {/* Count Selector */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-black/30 p-4 rounded-xl border border-white/5 w-full box-border">
-                  <div className="flex items-center gap-3">
-                    <span className="text-xs text-gray-300 font-bold whitespace-nowrap shrink-0">العدد المحدد للإجراء:</span>
-                    <div className="flex items-center gap-1.5">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const current = Number(currentFormRow.count) || 1;
-                          if (current > 1) handleUpdateCurrentForm('count', current - 1);
-                        }}
-                        className="w-9 h-9 bg-white/5 hover:bg-white/10 text-white rounded-lg flex items-center justify-center font-bold text-lg border border-white/10 transition-colors cursor-pointer select-none"
-                      >
-                        -
-                      </button>
-                      <input 
-                        type="text"
-                        inputMode="numeric"
-                        pattern="[0-9]*"
-                        value={currentFormRow.count}
-                        onFocus={e => e.target.select()}
-                        onKeyDown={e => {
-                          if (['-', '+', '.', 'e', 'E', ',', '`'].includes(e.key)) {
-                            e.preventDefault();
-                          }
-                        }}
-                        onChange={e => {
-                          let cleanValStr = e.target.value.replace(/[^0-9]/g, '');
-                          if (cleanValStr === '') {
-                            handleUpdateCurrentForm('count', '');
-                            return;
-                          }
-                          let val = parseInt(cleanValStr, 10);
-                          if (isNaN(val)) {
-                            handleUpdateCurrentForm('count', '');
-                            return;
-                          }
-                          const max = currentFormRow.id ? getAvailableQuantity(currentFormRow.id, editingIndex !== null ? editingIndex : -1) : 1;
+               {/* الكمية */}
+               <div className="flex flex-row items-center gap-2.5 w-full">
+                 <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">الكمية</label>
+                 <div className="flex-1 flex items-center gap-2">
+                   <input 
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      dir="ltr"
+                      lang="en"
+                      value={currentFormRow.count}
+                      onFocus={e => {
+                        e.target.select();
+                      }}
+                      onClick={e => {
+                        (e.target as HTMLInputElement).select();
+                      }}
+                      onKeyDown={e => {
+                        if (['-', '+', '.', 'e', 'E', ',', '`', ' ', '/', '*'].includes(e.key)) {
+                          e.preventDefault();
+                        }
+                      }}
+                      onChange={e => {
+                        let cleanValStr = e.target.value.replace(/[^0-9]/g, '');
+                        if (cleanValStr === '') {
+                          handleUpdateCurrentForm('count', '');
+                          return;
+                        }
+                        let val = parseInt(cleanValStr, 10);
+                        if (isNaN(val)) {
+                          handleUpdateCurrentForm('count', '');
+                          return;
+                        }
+                        const max = currentFormRow.id ? getAvailableQuantity(currentFormRow.id, editingIndex !== null ? editingIndex : -1) : 1;
+                        if (val > max) {
+                          val = max;
+                        }
+                        if (val < 1) {
+                          val = 1;
+                        }
+                        handleUpdateCurrentForm('count', val);
+                      }}
+                      onBlur={() => {
+                        let val = currentFormRow.count;
+                        const max = currentFormRow.id ? getAvailableQuantity(currentFormRow.id, editingIndex !== null ? editingIndex : -1) : 1;
+                        if (val === '' || isNaN(Number(val)) || Number(val) < 1) {
+                          val = Math.max(1, Math.min(1, max));
+                        } else {
+                          val = Math.floor(Number(val));
                           if (val > max) {
                             val = max;
                           }
                           if (val < 1) {
                             val = 1;
                           }
-                          handleUpdateCurrentForm('count', val);
-                        }}
-                        onBlur={() => {
-                          let val = currentFormRow.count;
-                          const max = currentFormRow.id ? getAvailableQuantity(currentFormRow.id, editingIndex !== null ? editingIndex : -1) : 1;
-                          if (val === '' || isNaN(Number(val)) || Number(val) < 1) {
-                            val = Math.max(1, max);
-                          } else {
-                            val = Math.floor(Number(val));
-                            if (val > max) {
-                              val = max;
+                        }
+                        handleUpdateCurrentForm('count', val);
+                      }}
+                      className="w-24 bg-black/40 border border-white/10 px-3 py-2 focus:border-amber-500 outline-none transition-all rounded-lg text-xs text-center text-white box-border font-mono font-bold"
+                    />
+                    {currentFormRow.id && (
+                      <span className="text-xs text-gray-400">
+                        من إجمالي متاح: <span className="font-mono text-amber-400 font-bold">{getAvailableQuantity(currentFormRow.id, editingIndex !== null ? editingIndex : -1)}</span>
+                      </span>
+                    )}
+                 </div>
+               </div>
+
+               {/* حالة الإجراء */}
+               <div className="flex flex-row items-center gap-2.5 w-full">
+                 <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">حالة الإجراء</label>
+                 <div className="flex-1 flex bg-black/40 border border-white/5 p-1 rounded-xl gap-1 box-border">
+                   <button 
+                     type="button"
+                     onClick={() => handleUpdateCurrentForm('outcome', 'approved')}
+                     className={`flex-1 py-1.5 text-xs font-bold transition-all rounded-lg cursor-pointer ${currentFormRow.outcome === 'approved' ? 'bg-emerald-600 text-white shadow-md' : 'text-gray-400 hover:bg-white/5'}`}
+                   >
+                     {subTab === 'parts' ? 'وصول قطع الغيار' : 'تمت موافقة العميل'}
+                   </button>
+                   <button 
+                     type="button"
+                     onClick={() => handleUpdateCurrentForm('outcome', 'refused')}
+                     className={`flex-1 py-1.5 text-xs font-bold transition-all rounded-lg cursor-pointer ${currentFormRow.outcome === 'refused' ? 'bg-rose-600 text-white shadow-md' : 'text-gray-400 hover:bg-white/5'}`}
+                   >
+                     {subTab === 'parts' ? 'عدم توفر قطع' : 'لم يوافق العميل'}
+                   </button>
+                   <button 
+                     type="button"
+                     onClick={() => handleUpdateCurrentForm('outcome', 'waiting_parts')}
+                     className={`flex-1 py-1.5 text-xs font-bold transition-all rounded-lg cursor-pointer ${currentFormRow.outcome === 'waiting_parts' ? 'bg-amber-600 text-white shadow-md' : 'text-gray-400 hover:bg-white/5'}`}
+                   >
+                     {subTab === 'parts' ? 'ما زال ينتظر قطع الغيار' : 'انتظار قطع الغيار'}
+                   </button>
+                 </div>
+               </div>
+
+               {/* تفاصيل الرد */}
+               <div className="flex flex-row items-center gap-2.5 w-full">
+                 <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">تفاصيل الرد</label>
+                 <input 
+                   type="text"
+                   value={currentFormRow.reason}
+                   onChange={e => handleUpdateCurrentForm('reason', e.target.value)}
+                   onFocus={(e) => {
+                     e.target.select();
+                     e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                   }}
+                   onClick={(e) => {
+                     (e.target as HTMLInputElement).select();
+                   }}
+                   className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 focus:border-amber-500 outline-none transition-all text-xs text-right text-white box-border"
+                   placeholder="أدخل تفاصيل الرد أو الملاحظات..."
+                 />
+               </div>
+
+               {/* تقرير الفحص والشكوى للجهاز المختار */}
+               {(() => {
+                 const selectedItem = invoiceItems.find(i => i.id === currentFormRow.id);
+                 if (!selectedItem) return null;
+                 return (
+                    <div className="flex flex-col gap-2 w-full pt-1">
+                      {/* شكوى العميل */}
+                      <div className="flex flex-row items-center gap-2.5 w-full">
+                        <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">شكوى العميل</label>
+                        <div className="flex-1 bg-black/20 border border-white/5 rounded-lg px-3 py-2 text-xs font-medium text-white break-words text-right">
+                          {selectedItem.customerProblem || selectedItem.faultType || 'لا يوجد'}
+                        </div>
+                      </div>
+                      {/* تقرير الفحص */}
+                      <div className="flex flex-row items-center gap-2.5 w-full">
+                        <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">تقرير الفحص</label>
+                        <div className="flex-1 bg-black/20 border border-white/5 rounded-lg px-3 py-2 text-xs font-medium text-amber-500 break-words text-right">
+                          {(() => {
+                            const val = selectedItem.engineerReport || '';
+                            const splitIdx = val.indexOf(' | ');
+                            if (splitIdx !== -1) {
+                              return (
+                                <div className="flex flex-col gap-1">
+                                  <div><span className="text-gray-400">التقرير الفني: </span>{val.substring(0, splitIdx).trim()}</div>
+                                  <div className="text-purple-400 font-bold"><span className="text-gray-400">نتيجة الصيانة: </span>{val.substring(splitIdx + 3).trim()}</div>
+                                </div>
+                              );
                             }
-                            if (val < 1) {
-                              val = 1;
-                            }
-                          }
-                          handleUpdateCurrentForm('count', val);
-                        }}
-                        className="w-14 h-9 bg-black/40 border border-white/10 text-center rounded-lg text-xs font-bold text-white font-mono focus:border-amber-500 outline-none"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => {
-                          const current = Number(currentFormRow.count) || 1;
-                          const max = currentFormRow.id ? getAvailableQuantity(currentFormRow.id, editingIndex !== null ? editingIndex : -1) : 1;
-                          if (current < max) handleUpdateCurrentForm('count', current + 1);
-                        }}
-                        className="w-9 h-9 bg-white/5 hover:bg-white/10 text-white rounded-lg flex items-center justify-center font-bold text-lg border border-white/10 transition-colors cursor-pointer select-none"
-                      >
-                        +
-                      </button>
+                            return val || 'لا يوجد تقرير فحص مسجل';
+                          })()}
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  {currentFormRow.id && (
-                    <span className="text-xs text-gray-400">
-                      الحد الأقصى المتاح حاليًا لهذا الجهاز: <span className="font-mono text-amber-500 font-bold">{getAvailableQuantity(currentFormRow.id, editingIndex !== null ? editingIndex : -1)}</span>
-                    </span>
-                  )}
-                </div>
-
-                {/* Action Outcome Button Grid */}
-                <div className="space-y-2">
-                   <span className="text-xs text-gray-400 font-bold block mb-1">حدد الإجراء المتخذ:</span>
-                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                     {/* Approved Option Card */}
-                     <button
-                       type="button"
-                       onClick={() => handleUpdateCurrentForm('outcome', 'approved')}
-                       className={`p-3.5 rounded-xl border text-right transition-all flex flex-col justify-between gap-1 cursor-pointer select-none ${
-                         currentFormRow.outcome === 'approved'
-                           ? 'bg-emerald-500/10 border-emerald-500 text-emerald-400'
-                           : 'bg-black/20 border-white/10 text-gray-400 hover:bg-white/5 hover:text-white'
-                       }`}
-                     >
-                       <span className="text-xs font-bold font-sans">
-                         {subTab === 'parts' ? 'وصول قطع الغيار' : 'تم موافقة العميل'}
-                       </span>
-                       <span className="text-[10px] text-gray-400 font-normal">
-                         {subTab === 'parts' ? 'وصلت قطع الغيار (إلى الصيانة)' : 'تم موافقة العميل على الإصلاح'}
-                       </span>
-                     </button>
-
-                     {/* Refused Option Card */}
-                     <button
-                       type="button"
-                       onClick={() => handleUpdateCurrentForm('outcome', 'refused')}
-                       className={`p-3.5 rounded-xl border text-right transition-all flex flex-col justify-between gap-1 cursor-pointer select-none ${
-                         currentFormRow.outcome === 'refused'
-                           ? 'bg-rose-500/10 border-rose-500 text-rose-400'
-                           : 'bg-black/20 border-white/10 text-gray-400 hover:bg-white/5 hover:text-white'
-                       }`}
-                     >
-                       <span className="text-xs font-bold font-sans">
-                         {subTab === 'parts' ? 'عدم توفر قطع' : 'لم يوافق العميل'}
-                       </span>
-                       <span className="text-[10px] text-gray-400 font-normal">
-                         {subTab === 'parts' ? 'لم تتوفر قطع الغيار (إلى الخروج)' : 'رفض العميل الإصلاح'}
-                       </span>
-                     </button>
-
-                     {/* Waiting Parts Option Card */}
-                     <button
-                       type="button"
-                       onClick={() => handleUpdateCurrentForm('outcome', 'waiting_parts')}
-                       className={`p-3.5 rounded-xl border text-right transition-all flex flex-col justify-between gap-1 cursor-pointer select-none ${
-                         currentFormRow.outcome === 'waiting_parts'
-                           ? 'bg-amber-500/10 border-amber-500 text-amber-400'
-                           : 'bg-black/20 border-white/10 text-gray-400 hover:bg-white/5 hover:text-white'
-                       }`}
-                     >
-                       <span className="text-xs font-bold font-sans">
-                         {subTab === 'parts' ? 'ما زال ينتظر قطع الغيار' : 'انتظار قطع الغيار'}
-                       </span>
-                       <span className="text-[10px] text-gray-400 font-normal">
-                         {subTab === 'parts' ? 'ما زال ينتظر قطع الغيار' : 'تحتاج قطع غيار'}
-                       </span>
-                     </button>
-                   </div>
-                </div>
+                 );
+               })()}
              </div>
-             
-             {/* Form Action Buttons (Add, Update, Cancel) */}
-             <div className="flex items-center justify-end gap-3 pt-4 border-t border-white/5 px-4 sm:px-0">
+
+             <div className="flex justify-end gap-2 pt-3 border-t border-white/5 mt-3">
                <button
+                 type="button"
                  onClick={handleCancelForm}
-                 className="px-6 py-2.5 bg-white/5 hover:bg-white/10 text-white rounded-xl text-sm font-bold transition-all cursor-pointer"
+                 className="px-4 py-1.5 bg-white/5 hover:bg-white/10 text-white rounded-lg text-xs font-bold transition-all cursor-pointer"
                >
                  إلغاء
                </button>
                {editingIndex !== null ? (
                  <button
+                   type="button"
                    onClick={handleApplyFormToTable}
                    disabled={isApplyDisabled}
-                   className="px-6 py-2.5 bg-amber-500 hover:bg-amber-600 text-black rounded-xl text-sm font-bold shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
+                   className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-black rounded-lg text-xs font-bold shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
                  >
-                   تعديل البند
+                   تعديل
                  </button>
                ) : (
                  <button
+                   type="button"
                    onClick={handleApplyFormToTable}
                    disabled={isApplyDisabled}
-                   className="px-6 py-2.5 bg-emerald-500 hover:bg-emerald-600 text-black rounded-xl text-sm font-bold shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50"
+                   className="px-4 py-1.5 bg-amber-500 hover:bg-amber-600 text-black rounded-lg text-xs font-bold shadow-md hover:scale-[1.02] active:scale-[0.98] transition-all cursor-pointer disabled:opacity-50 flex items-center gap-1.5"
                  >
+                   <Plus size={14} />
                    إضافة الجهاز
                  </button>
                )}
              </div>
+          </div>
 
-           </div>
+          {/* Table display for actionItems (الجدول المؤقت) */}
+          {actionItems.length > 0 && (
+             <div className="bg-[#1a1a1a] border-y sm:border border-white/5 rounded-none sm:rounded-xl overflow-hidden mt-4 shadow-md">
+              <div className="overflow-x-auto">
+                <table className="w-full text-right min-w-[500px]">
+                  <thead className="bg-[#111111] border-b border-white/5">
+                    <tr className="text-[10px] text-gray-400 whitespace-nowrap">
+                      <th className="py-2 px-3 font-bold">النوع</th>
+                      <th className="py-2 px-3 font-bold">الموديل / الجهاز</th>
+                      <th className="py-2 px-3 font-bold text-center">العدد</th>
+                      <th className="py-2 px-3 font-bold text-center">حالة الإجراء</th>
+                      <th className="py-2 px-3 font-bold">تفاصيل الرد</th>
+                      <th className="py-2 px-3 font-bold w-20 text-center">إجراءات</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5 text-gray-300">
+                    {actionItems.map((row, idx) => {
+                      const it = invoiceItems.find(i => i.id === row.id);
+                      return (
+                        <tr key={idx} className={`hover:bg-white/[0.02] transition-colors ${editingIndex === idx ? 'bg-amber-500/10' : ''}`}>
+                          <td className="py-2 px-3 font-bold text-[11px] whitespace-nowrap">
+                            {it?.deviceType || '-'}
+                          </td>
+                          <td className="py-2 px-3 whitespace-nowrap text-[11px]">
+                            {it?.deviceName || '-'}
+                          </td>
+                          <td className="py-2 px-3 font-mono font-bold text-[11px] whitespace-nowrap text-center">{row.count}</td>
+                          <td className="py-2 px-3 whitespace-nowrap text-[11px] text-center">
+                            {row.outcome === 'approved' ? (
+                              <span className="text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded text-[10px] font-bold">
+                                {subTab === 'parts' ? 'وصول قطع' : 'تمت الموافقة'}
+                              </span>
+                            ) : row.outcome === 'refused' ? (
+                              <span className="text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded text-[10px] font-bold">
+                                {subTab === 'parts' ? 'عدم توفر قطع' : 'لم يوافق العميل'}
+                              </span>
+                            ) : (
+                              <span className="text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded text-[10px] font-bold">
+                                {subTab === 'parts' ? 'ينتظر قطع' : 'انتظار قطع'}
+                              </span>
+                            )}
+                          </td>
+                          <td className="py-2 px-3 whitespace-nowrap text-[11px]">{row.reason || '-'}</td>
+                          <td className="py-2 px-3 flex items-center justify-center gap-1.5 whitespace-nowrap">
+                            <button onClick={() => handleEditTableRow(idx)} className="p-1.5 hover:bg-amber-500/20 text-amber-400 rounded-lg transition-colors cursor-pointer" title="تعديل">
+                              <Edit2 size={14} />
+                            </button>
+                            <button onClick={() => handleRemoveFormRow(idx)} className="p-1.5 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors cursor-pointer" title="حذف">
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
         </div>
 
-        {/* Temporary Table / Action Items */}
-        {actionItems.length > 0 && (
-          <div className="space-y-4 p-0 sm:p-4 mt-4 w-full">
-            <h3 className="text-sm font-bold text-white mb-2 px-4 sm:px-0">الأجهزة المضافة للإجراء ({actionItems.length}):</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 px-4 sm:px-0">
-              {actionItems.map((row, idx) => {
-                const it = invoiceItems.find(i => i.id === row.id);
-                return (
-                  <div key={idx} className="bg-[#1e1e1e] border-y sm:border border-white/10 p-4 sm:p-5 rounded-none sm:rounded-2xl flex flex-col justify-between gap-4 shadow-xl hover:border-amber-500/20 transition-all w-full box-border">
-                    <div className="space-y-3">
-                      <div className="flex items-start justify-between gap-2">
-                        <div className="font-bold text-white text-base leading-snug">
-                          {it ? `${it.deviceType} - ${it.deviceName}` : 'جهاز غير معروف'}
-                        </div>
-                        <div className="shrink-0">
-                          {row.outcome === 'approved' ? (
-                            <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-                              {subTab === 'parts' ? 'وصول قطع' : 'تم موافقة العميل'}
-                            </span>
-                          ) : row.outcome === 'waiting_parts' ? (
-                            <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-amber-500/10 text-amber-400 border border-amber-500/20">
-                              انتظار قطع
-                            </span>
-                          ) : (
-                            <span className="px-2.5 py-1 text-xs font-bold rounded-lg bg-rose-500/10 text-rose-400 border border-rose-500/20">
-                              {subTab === 'parts' ? 'عدم توفر قطع' : 'لم يوافق العميل'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-
-                      <div className="text-xs space-y-2 text-gray-400 bg-black/20 p-3 rounded-xl border border-white/5">
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">تقرير الفحص:</span>
-                          <span className="text-gray-200 font-medium">{it?.engineerReport || '-'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-gray-500">تفاصيل الرد:</span>
-                          <span className="text-gray-200 font-medium">{row.reason || '-'}</span>
-                        </div>
-                        <div className="flex justify-between items-center border-t border-white/5 pt-1.5 mt-1.5">
-                          <span className="text-gray-500">العدد المضاف للإجراء:</span>
-                          <span className="text-white font-mono font-black text-sm bg-white/5 px-2.5 py-0.5 rounded-md">{row.count}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center justify-end gap-2 border-t border-white/5 pt-3">
-                      <button 
-                        type="button"
-                        onClick={() => handleEditTableRow(idx)} 
-                        className="px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-400 rounded-xl transition-all cursor-pointer text-xs font-bold flex items-center gap-1.5"
-                      >
-                        <Edit2 size={14} />
-                        تعديل البند
-                      </button>
-                      <button 
-                        type="button"
-                        onClick={() => handleRemoveFormRow(idx)} 
-                        className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-xl transition-all cursor-pointer text-xs font-bold flex items-center gap-1.5"
-                      >
-                        <Trash2 size={14} />
-                        حذف
-                      </button>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
-        {/* Form CTA Buttons */}
-        <div className="p-0 sm:p-4 mt-6 mb-16 w-full">
+        {/* Bottom CTA Button */}
+        <div className="px-4 sm:px-0 py-3 mb-4" dir="rtl">
            <button 
+             type="button"
              onClick={() => {
                if (actionItems.length === 0) {
                  alert("الرجاء الضغط على زر 'إضافة الجهاز' أولاً لإدراج البند في قائمة الإجراءات قبل المعاينة.");
@@ -2041,11 +1972,11 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
                }
                setShowPreviewReport(true);
              }}
-             disabled={loadingForm}
-             className="w-full bg-amber-500 hover:bg-amber-600 text-black py-4 font-black transition-all flex items-center justify-center gap-2 rounded-none sm:rounded-2xl hover:scale-[1.01] active:scale-[0.99] disabled:opacity-50 disabled:cursor-not-allowed cursor-pointer"
+             disabled={loadingForm || actionItems.length === 0 || !engineerName.trim() || actionItems.some((r, idx) => Number(r.count) <= 0 || Number(r.count) > getAvailableQuantity(r.id, idx))}
+             className="w-full bg-amber-500 hover:bg-amber-600 text-black py-3 font-bold text-sm transition-all flex items-center justify-center gap-2 rounded-xl disabled:opacity-50 disabled:cursor-not-allowed shadow-lg cursor-pointer"
            >
-             <Search size={20} className="text-black" />
-             معاينة الحالة والإسناد
+             {loadingForm ? <Loader2 className="animate-spin" size={16} /> : <Search size={16} />}
+             معاينة للتعديل والترحيل
            </button>
         </div>
         {renderPrintReportOverlay()}
