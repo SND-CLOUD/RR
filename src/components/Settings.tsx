@@ -23,6 +23,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { registerBiometricCredentials, clearBiometricCredentials } from '../lib/biometricAuth';
 import { repairAllFundBalances } from '../lib/fundRepairService';
+import { calculateInvoiceBillableTotal, getInvoiceFinancialBreakdown } from '../lib/billableService';
 
 const STATIC_HYBRID_TABLES = [
   'company_details', 'settings', 'users', 'engineers', 'user_devices',
@@ -781,11 +782,21 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
       const statusDiscrepancies: any[] = [];
 
       const invoiceItemGroups: Record<string, any[]> = {};
+      const invoiceItemGroupsByNum: Record<string, any[]> = {};
       dbItems.forEach((item: any) => {
-        if (!invoiceItemGroups[item.invoiceId]) {
-          invoiceItemGroups[item.invoiceId] = [];
+        if (item.invoiceId) {
+          if (!invoiceItemGroups[item.invoiceId]) {
+            invoiceItemGroups[item.invoiceId] = [];
+          }
+          invoiceItemGroups[item.invoiceId].push(item);
         }
-        invoiceItemGroups[item.invoiceId].push(item);
+        if (item.invoiceNumber) {
+          const numKey = String(item.invoiceNumber).replace('#', '').trim();
+          if (!invoiceItemGroupsByNum[numKey]) {
+            invoiceItemGroupsByNum[numKey] = [];
+          }
+          invoiceItemGroupsByNum[numKey].push(item);
+        }
       });
 
       dbInvoices.forEach((inv: any) => {
@@ -795,16 +806,30 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
 
         if (isOtherService) return;
 
-        const allItems = invoiceItemGroups[inv.id] || [];
+        const invNumClean = String(inv.invoiceNumber || '').replace('#', '').trim();
+        const itemsById = (inv.id && invoiceItemGroups[inv.id]) || [];
+        const itemsByNum = (invNumClean && invoiceItemGroupsByNum[invNumClean]) || [];
+        const itemMap = new Map<string, any>();
+        [...itemsById, ...itemsByNum].forEach((it: any) => {
+          if (it.id) itemMap.set(it.id, it);
+        });
+        const allItems = Array.from(itemMap.values());
         const items = allItems.filter((it: any) => isShopMaintenanceItem(it, inv));
-        const computedTotal = allItems.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+        const breakdown = getInvoiceFinancialBreakdown(inv, allItems);
+        const computedTotal = breakdown.netTotal;
+        const currentTotal = Number(inv.totalCost || 0);
         
-        if (allItems.length > 0 && Math.abs(computedTotal - Number(inv.totalCost || 0)) > 0.01) {
+        if (allItems.length > 0 && Math.abs(computedTotal - currentTotal) > 0.01) {
           totalDiscrepancies.push({
             id: inv.id,
             invoiceNumber: inv.invoiceNumber,
-            currentTotal: inv.totalCost,
-            computedTotal
+            currentTotal,
+            computedTotal,
+            rawSum: breakdown.rawSum,
+            billableSum: breakdown.billableSum,
+            discount: breakdown.discount,
+            tax: breakdown.tax,
+            difference: Math.round((currentTotal - computedTotal) * 100) / 100
           });
         }
 
@@ -1021,14 +1046,21 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
 
         for (const inv of localInvoices) {
           if (isPurchaseInvoice(inv) || isSaleInvoice(inv)) continue;
-          const invItems = localItems.filter((it: any) => it.invoiceId === inv.id);
+          const invNumClean = String(inv.invoiceNumber || '').replace('#', '').trim();
+          const invItems = localItems.filter((it: any) => {
+            const itId = String(it.invoiceId || '').trim();
+            const itNum = String(it.invoiceNumber || '').replace('#', '').trim();
+            return (inv.id && itId === inv.id) || (invNumClean && itNum === invNumClean);
+          });
           if (invItems.length > 0) {
-            const sumCost = invItems.reduce((sum: number, it: any) => sum + (Number(it.cost) || 0), 0);
-            if (Math.abs(Number(inv.totalCost) - sumCost) > 0.01) {
-              await LocalProviderInstance.updateDoc('invoices', inv.id, { totalCost: sumCost });
-          
-    try {
-                await FirebaseProviderInstance.updateDoc('invoices', inv.id, { totalCost: sumCost });
+            const correctTotal = calculateInvoiceBillableTotal(inv, invItems);
+            if (Math.abs(Number(inv.totalCost || 0) - correctTotal) > 0.01) {
+              await LocalProviderInstance.updateDoc('invoices', inv.id, { totalCost: correctTotal });
+              try {
+                await localDb.run("UPDATE invoices SET totalCost = ? WHERE id = ?", [correctTotal, inv.id]);
+              } catch (e) {}
+              try {
+                await FirebaseProviderInstance.updateDoc('invoices', inv.id, { totalCost: correctTotal });
               } catch (e) {}
             }
           }

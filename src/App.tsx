@@ -31,11 +31,14 @@ import {
   X,
   RefreshCw,
   Eye,
-  ArrowUpDown
+  ArrowUpDown,
+  Search,
+  AlertCircle
 } from 'lucide-react';
 import { collection, query, where, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, onSnapshot, writeBatch, deleteDoc, serverTimestamp } from './firebase';
 import { db } from './firebase';
 import { User, ShopConfig, isPurchaseInvoice } from './types';
+import { getItemBillableCost, isItemRefusedOrFailed, runRetroactiveNonBillableCleanup } from './lib/billableService';
 import { openWhatsApp, sendUniversalReminder } from './lib/shareHelper';
 import { ProviderFactory } from './data/ProviderFactory';
 import { localDb } from './lib/local-db';
@@ -103,6 +106,7 @@ export default function App() {
   const [alertsSortType, setAlertsSortType] = useState<'alpha' | 'date' | 'debt'>('debt');
   const [alertsSortDir, setAlertsSortDir] = useState<'asc' | 'desc'>('desc');
   const [showAlertsSortDropdown, setShowAlertsSortDropdown] = useState(false);
+  const [alertsSearchQuery, setAlertsSearchQuery] = useState('');
   const [previewData, setPreviewData] = useState<{ type: 'invoice' | 'voucher' | 'statement' | 'table'; data: any } | null>(null);
   
   // State for navigating to Vault with preloaded customer and receipt voucher
@@ -359,6 +363,22 @@ export default function App() {
     };
   }, [user]);
 
+  // One-time retroactive cleanup of non-billable items & discount recalculations
+  useEffect(() => {
+    if (!user) return;
+    const cleanupKey = 'snd_discount_cleanup_v2';
+    if (!localStorage.getItem(cleanupKey)) {
+      runRetroactiveNonBillableCleanup().then(res => {
+        if (res.updatedItemsCount > 0 || res.updatedInvoicesCount > 0) {
+          console.log(`[Cleanup & Discount Reconcile] Zeroed ${res.updatedItemsCount} non-billable items and reconciled ${res.updatedInvoicesCount} invoices.`);
+        }
+        localStorage.setItem(cleanupKey, 'done');
+      }).catch(err => {
+        console.warn('[Cleanup & Discount Reconcile] Error running cleanup:', err);
+      });
+    }
+  }, [user]);
+
   // Helper function to calculate actual invoice cost according to items status and discounts/taxes
   const getInvoiceActualCost = (invoiceItems: any[], invoice?: any) => {
     if (invoice) {
@@ -374,21 +394,11 @@ export default function App() {
         return sum;
       }
       
-      const sub = (item.subStatus || '').toLowerCase();
-      const status = (item.status || '').toLowerCase();
-      const src = (item.source || '').toLowerCase();
-
-      const isExcluded = 
-        ['70', 'cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(status) ||
-        ['cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(sub) ||
-        ['cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(src) ||
-        (item.failureReason !== null && item.failureReason !== undefined && item.failureReason !== '');
-      
-      if (isExcluded) {
+      if (isItemRefusedOrFailed(item)) {
         return sum;
       }
       
-      return sum + (Number(item.cost) || 0);
+      return sum + getItemBillableCost(item);
     }, 0) - (invoice ? Number(invoice.discount || 0) : 0) + (invoice ? Number(invoice.tax || 0) : 0);
   };
 
@@ -513,6 +523,7 @@ export default function App() {
           hasWhatsapp: cust.hasWhatsapp !== undefined ? cust.hasWhatsapp : true,
           createdAt: cust.createdAt || (latestInv ? latestInv.createdAt : null),
           latestInvoiceNumber: latestInv?.invoiceNumber || '',
+          allInvoiceNumbers: customerInvs.map(inv => String(inv.invoiceNumber || '')).filter(Boolean),
           remainingAmount: outstandingBalance,
           totalCost: totalDebit,
           amountPaid: totalCredit,
@@ -546,6 +557,7 @@ export default function App() {
             deviceName: item.deviceName,
             deviceType: item.deviceType,
             invoiceNumber: item.invoiceNumber,
+            customerName: item.customerName || '',
             expiryDate: formattedDate,
             diffDays,
             severity: 'medium'
@@ -561,6 +573,7 @@ export default function App() {
             deviceName: item.deviceName,
             deviceType: item.deviceType,
             invoiceNumber: item.invoiceNumber,
+            customerName: item.customerName || '',
             expiryDate: formattedDate,
             diffDays: expiredDaysAgo,
             severity: 'low'
@@ -572,9 +585,32 @@ export default function App() {
     setActiveAlerts(generatedAlerts);
   }, [invoicesList, itemsList, customersList, transactionsList]);
 
-  // Sort outstanding alerts
+  // Search & sort outstanding alerts
   const getProcessedOutstandingAlerts = () => {
-    const list = [...activeAlerts.filter(a => a.type === 'outstanding')];
+    let list = [...activeAlerts.filter(a => a.type === 'outstanding')];
+
+    // Search filter: customer name, company name, customer number, phone, invoice number
+    const query = alertsSearchQuery.trim().toLowerCase();
+    if (query) {
+      const cleanNumQuery = query.replace(/^#/, '');
+      list = list.filter(a => {
+        const name = (a.customerName || '').toLowerCase();
+        const company = (a.companyName || '').toLowerCase();
+        const custNum = String(a.customerNumber || '').toLowerCase();
+        const phone = String(a.customerPhone || '').toLowerCase();
+        const latestInv = String(a.latestInvoiceNumber || '').toLowerCase();
+        const allInvs = Array.isArray(a.allInvoiceNumbers) ? a.allInvoiceNumbers.map((n: any) => String(n).toLowerCase()) : [];
+
+        return (
+          name.includes(query) ||
+          company.includes(query) ||
+          custNum.includes(cleanNumQuery) ||
+          phone.includes(query) ||
+          latestInv.includes(cleanNumQuery) ||
+          allInvs.some((invNum: string) => invNum.includes(cleanNumQuery))
+        );
+      });
+    }
 
     list.sort((a, b) => {
       if (alertsSortType === 'alpha') {
@@ -595,6 +631,28 @@ export default function App() {
       return 0;
     });
 
+    return list;
+  };
+
+  // Search warranty alerts
+  const getProcessedWarrantyAlerts = () => {
+    let list = [...activeAlerts.filter(a => a.type.startsWith('warranty'))];
+    const query = alertsSearchQuery.trim().toLowerCase();
+    if (query) {
+      const cleanNumQuery = query.replace(/^#/, '');
+      list = list.filter(a => {
+        const devName = (a.deviceName || '').toLowerCase();
+        const devType = (a.deviceType || '').toLowerCase();
+        const invNum = String(a.invoiceNumber || '').toLowerCase();
+        const custName = (a.customerName || '').toLowerCase();
+        return (
+          devName.includes(query) ||
+          devType.includes(query) ||
+          invNum.includes(cleanNumQuery) ||
+          custName.includes(query)
+        );
+      });
+    }
     return list;
   };
 
@@ -1540,16 +1598,16 @@ export default function App() {
               {alertsTab === 'outstanding' ? (
                 /* Outstanding Invoices & Debts Tab */
                 <div>
-                  {getProcessedOutstandingAlerts().length === 0 ? (
+                  {activeAlerts.filter(a => a.type === 'outstanding').length === 0 ? (
                     <div className="text-center py-12 text-gray-400">
                       <CheckCircle size={48} className="text-emerald-500 mx-auto mb-3 opacity-60" />
                       <p className="font-bold text-sm">ممتاز! لا توجد فواتير معلقة أو ديون غير مسددة حالياً.</p>
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      {/* Filter & Sort Controls Bar */}
+                      {/* Search & Sort Controls Bar */}
                       <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-2xl">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 shrink-0">
                           <div className="p-1.5 bg-amber-500/10 text-amber-500 rounded-lg">
                             <Users size={16} />
                           </div>
@@ -1558,118 +1616,168 @@ export default function App() {
                           </span>
                         </div>
 
-                        {/* Filter / Sort Dropdown */}
-                        <div className="relative">
-                          <button
-                            type="button"
-                            onClick={() => setShowAlertsSortDropdown(!showAlertsSortDropdown)}
-                            className="w-full sm:w-auto px-3.5 py-2 bg-white/5 hover:bg-amber-500/20 text-gray-300 hover:text-amber-400 rounded-xl transition-all border border-white/10 flex items-center justify-between sm:justify-start gap-2 cursor-pointer text-xs font-bold font-cairo shadow-sm"
-                          >
-                            <div className="flex items-center gap-1.5">
-                              <ArrowUpDown size={14} className="text-amber-500" />
-                              <span>ترتيب حسب:</span>
-                              <span className="text-amber-400 font-black">
-                                {alertsSortType === 'alpha' ? (alertsSortDir === 'asc' ? 'الاسم (أ - ي)' : 'الاسم (ي - أ)') :
-                                 alertsSortType === 'date' ? (alertsSortDir === 'desc' ? 'الأحدث تسجيلاً' : 'الأقدم تسجيلاً') :
-                                 (alertsSortDir === 'desc' ? 'المديونية الأعلى' : 'المديونية الأقل')}
-                              </span>
-                            </div>
-                          </button>
+                        <div className="flex items-center gap-2 flex-1 sm:justify-end">
+                          {/* Search input field: by customer name or invoice number */}
+                          <div className="relative flex-1 sm:max-w-xs">
+                            <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                            <input
+                              type="text"
+                              value={alertsSearchQuery}
+                              onChange={(e) => setAlertsSearchQuery(e.target.value)}
+                              placeholder="بحث بالاسم أو رقم الفاتورة..."
+                              className="w-full bg-[#161616] border border-white/10 focus:border-amber-500/50 rounded-xl pr-8 pl-8 py-2 text-xs text-white placeholder-gray-500 outline-none transition-all font-cairo shadow-inner"
+                            />
+                            {alertsSearchQuery && (
+                              <button
+                                type="button"
+                                onClick={() => setAlertsSearchQuery('')}
+                                className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white p-0.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer"
+                                title="تفريغ البحث"
+                              >
+                                <X size={13} />
+                              </button>
+                            )}
+                          </div>
 
-                          {showAlertsSortDropdown && (
-                            <div className="absolute z-50 left-0 mt-2 bg-[#1a1a1a] border border-white/10 rounded-2xl shadow-2xl p-1.5 w-56 space-y-1">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAlertsSortType('alpha');
-                                  setAlertsSortDir('asc');
-                                  setShowAlertsSortDropdown(false);
-                                }}
-                                className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
-                                  alertsSortType === 'alpha' && alertsSortDir === 'asc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
-                                }`}
-                              >
-                                <span>حسب الاسم (أ إلى ي)</span>
-                                <span>أ - ي</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAlertsSortType('alpha');
-                                  setAlertsSortDir('desc');
-                                  setShowAlertsSortDropdown(false);
-                                }}
-                                className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
-                                  alertsSortType === 'alpha' && alertsSortDir === 'desc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
-                                }`}
-                              >
-                                <span>حسب الاسم (ي إلى أ)</span>
-                                <span>ي - أ</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAlertsSortType('date');
-                                  setAlertsSortDir('desc');
-                                  setShowAlertsSortDropdown(false);
-                                }}
-                                className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
-                                  alertsSortType === 'date' && alertsSortDir === 'desc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
-                                }`}
-                              >
-                                <span>حسب الأحدث (تاريخ التسجيل)</span>
-                                <span>الأحدث</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAlertsSortType('date');
-                                  setAlertsSortDir('asc');
-                                  setShowAlertsSortDropdown(false);
-                                }}
-                                className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
-                                  alertsSortType === 'date' && alertsSortDir === 'asc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
-                                }`}
-                              >
-                                <span>حسب الأقدم (تاريخ التسجيل)</span>
-                                <span>الأقدم</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAlertsSortType('debt');
-                                  setAlertsSortDir('desc');
-                                  setShowAlertsSortDropdown(false);
-                                }}
-                                className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
-                                  alertsSortType === 'debt' && alertsSortDir === 'desc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
-                                }`}
-                              >
-                                <span>حسب المديونية الأعلى (الأكثر أولاً)</span>
-                                <span>الأعلى</span>
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setAlertsSortType('debt');
-                                  setAlertsSortDir('asc');
-                                  setShowAlertsSortDropdown(false);
-                                }}
-                                className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
-                                  alertsSortType === 'debt' && alertsSortDir === 'asc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
-                                }`}
-                              >
-                                <span>حسب المديونية الأقل (الأقل أولاً)</span>
-                                <span>الأقل</span>
-                              </button>
-                            </div>
-                          )}
+                          {/* Small icon sort filter ("رمز صغير") */}
+                          <div className="relative shrink-0">
+                            <button
+                              type="button"
+                              onClick={() => setShowAlertsSortDropdown(!showAlertsSortDropdown)}
+                              className={`w-9 h-9 rounded-xl border flex items-center justify-center transition-all cursor-pointer ${
+                                showAlertsSortDropdown 
+                                  ? 'bg-amber-500 text-black border-amber-500 shadow-md shadow-amber-500/20 font-bold' 
+                                  : 'bg-white/5 hover:bg-amber-500/20 text-gray-300 hover:text-amber-400 border-white/10'
+                              }`}
+                              title={`ترتيب: ${
+                                alertsSortType === 'alpha' ? (alertsSortDir === 'asc' ? 'الاسم (أ - ي)' : 'الاسم (ي - أ)') :
+                                alertsSortType === 'date' ? (alertsSortDir === 'desc' ? 'الأحدث تسجيلاً' : 'الأقدم تسجيلاً') :
+                                (alertsSortDir === 'desc' ? 'المديونية الأعلى' : 'المديونية الأقل')
+                              }`}
+                            >
+                              <ArrowUpDown size={15} />
+                            </button>
+
+                            {/* Dropdown Menu with Backdrop */}
+                            {showAlertsSortDropdown && (
+                              <>
+                                <div 
+                                  className="fixed inset-0 z-40" 
+                                  onClick={() => setShowAlertsSortDropdown(false)} 
+                                />
+                                <div className="absolute z-50 left-0 mt-2 bg-[#1a1a1a] border border-white/10 rounded-2xl shadow-2xl p-1.5 w-56 space-y-1">
+                                  <div className="px-3 py-1.5 text-[10px] text-gray-400 font-bold border-b border-white/5">
+                                    خيارات ترتيب المستحقات:
+                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAlertsSortType('alpha');
+                                      setAlertsSortDir('asc');
+                                      setShowAlertsSortDropdown(false);
+                                    }}
+                                    className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
+                                      alertsSortType === 'alpha' && alertsSortDir === 'asc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
+                                    }`}
+                                  >
+                                    <span>حسب الاسم (أ إلى ي)</span>
+                                    <span className="text-[10px] opacity-75">أ - ي</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAlertsSortType('alpha');
+                                      setAlertsSortDir('desc');
+                                      setShowAlertsSortDropdown(false);
+                                    }}
+                                    className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
+                                      alertsSortType === 'alpha' && alertsSortDir === 'desc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
+                                    }`}
+                                  >
+                                    <span>حسب الاسم (ي إلى أ)</span>
+                                    <span className="text-[10px] opacity-75">ي - أ</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAlertsSortType('date');
+                                      setAlertsSortDir('desc');
+                                      setShowAlertsSortDropdown(false);
+                                    }}
+                                    className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
+                                      alertsSortType === 'date' && alertsSortDir === 'desc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
+                                    }`}
+                                  >
+                                    <span>حسب الأحدث (تاريخ التسجيل)</span>
+                                    <span className="text-[10px] opacity-75">الأحدث</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAlertsSortType('date');
+                                      setAlertsSortDir('asc');
+                                      setShowAlertsSortDropdown(false);
+                                    }}
+                                    className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
+                                      alertsSortType === 'date' && alertsSortDir === 'asc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
+                                    }`}
+                                  >
+                                    <span>حسب الأقدم (تاريخ التسجيل)</span>
+                                    <span className="text-[10px] opacity-75">الأقدم</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAlertsSortType('debt');
+                                      setAlertsSortDir('desc');
+                                      setShowAlertsSortDropdown(false);
+                                    }}
+                                    className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
+                                      alertsSortType === 'debt' && alertsSortDir === 'desc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
+                                    }`}
+                                  >
+                                    <span>حسب المديونية الأعلى (الأكثر أولاً)</span>
+                                    <span className="text-[10px] opacity-75">الأعلى</span>
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setAlertsSortType('debt');
+                                      setAlertsSortDir('asc');
+                                      setShowAlertsSortDropdown(false);
+                                    }}
+                                    className={`w-full text-right px-3 py-2 text-xs rounded-xl font-bold font-cairo transition-colors cursor-pointer flex items-center justify-between ${
+                                      alertsSortType === 'debt' && alertsSortDir === 'asc' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-white/10'
+                                    }`}
+                                  >
+                                    <span>حسب المديونية الأقل (الأقل أولاً)</span>
+                                    <span className="text-[10px] opacity-75">الأقل</span>
+                                  </button>
+                                </div>
+                              </>
+                            )}
+                          </div>
                         </div>
                       </div>
 
-                      {/* Table of Customers with Outstanding Balances */}
-                      <div className="overflow-x-auto border border-white/5 rounded-2xl">
-                        <table className="w-full text-right border-collapse">
+                      {/* Content: Results Table or Empty Search Result */}
+                      {getProcessedOutstandingAlerts().length === 0 ? (
+                        <div className="text-center py-12 text-gray-400 bg-white/[0.01] border border-white/5 rounded-2xl">
+                          <AlertCircle size={40} className="text-amber-500 mx-auto mb-3 opacity-60" />
+                          <p className="font-bold text-sm text-gray-200">لا توجد نتائج مطابقة لبحثك "{alertsSearchQuery}"</p>
+                          <p className="text-xs text-gray-500 mt-1">تأكد من كتابة الاسم أو رقم الفاتورة بشكل صحيح أو قم بتفريغ حقل البحث.</p>
+                          <button
+                            type="button"
+                            onClick={() => setAlertsSearchQuery('')}
+                            className="mt-3 px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-amber-400 text-xs rounded-xl font-bold transition-all border border-white/10 cursor-pointer"
+                          >
+                            مسح نص البحث
+                          </button>
+                        </div>
+                      ) : (
+                        /* Table of Customers with Outstanding Balances */
+                        <div className="overflow-x-auto border border-white/5 rounded-2xl">
+                          <table className="w-full text-right border-collapse">
                           <thead>
                             <tr className="bg-white/5 border-b border-white/5 text-gray-400 text-xs font-bold">
                               <th 
@@ -1779,6 +1887,7 @@ export default function App() {
                           </tbody>
                         </table>
                       </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1792,53 +1901,101 @@ export default function App() {
                     </div>
                   ) : (
                     <div className="space-y-4">
-                      <div className="overflow-x-auto border border-white/5 rounded-2xl">
-                        <table className="w-full text-right border-collapse">
-                          <thead>
-                            <tr className="bg-white/5 border-b border-white/5 text-gray-400 text-xs font-bold">
-                              <th className="p-4">نوع وجهاز الصيانة</th>
-                              <th className="p-4">الفاتورة المرجعية</th>
-                              <th className="p-4 text-center">حالة الضمان</th>
-                              <th className="p-4 text-center">تاريخ انتهاء الضمان</th>
-                              <th className="p-4 text-center">الإجراء</th>
-                            </tr>
-                          </thead>
-                          <tbody className="divide-y divide-white/5 text-xs">
-                            {activeAlerts
-                              .filter(a => a.type.startsWith('warranty'))
-                              .map(a => (
-                                <tr key={a.id} className="hover:bg-white/[0.01] transition-colors">
-                                  <td className="p-4 text-white font-bold">
-                                    <span className="text-amber-500 text-[10px] bg-amber-500/10 px-2 py-0.5 rounded-md ml-2">{a.deviceType}</span>
-                                    {a.deviceName}
-                                  </td>
-                                  <td className="p-4 font-mono font-bold text-gray-300">#{a.invoiceNumber || '-'}</td>
-                                  <td className="p-4 text-center">
-                                    <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black ${
-                                      a.type === 'warranty_soon'
-                                        ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                                        : 'bg-red-500/10 text-red-400 border border-red-500/20'
-                                    }`}>
-                                      {a.type === 'warranty_soon' ? 'ينتهي قريباً جداً' : 'منتهي الصلاحية'}
-                                    </span>
-                                  </td>
-                                  <td className="p-4 text-center text-gray-400 font-bold">{a.expiryDate}</td>
-                                  <td className="p-4 text-center">
-                                    <button
-                                      onClick={() => {
-                                        setShowAllAlertsModal(false);
-                                        setActiveTab('search');
-                                      }}
-                                      className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer"
-                                    >
-                                      تفاصيل الفاتورة
-                                    </button>
-                                  </td>
-                                </tr>
-                              ))}
-                          </tbody>
-                        </table>
+                      {/* Search Bar for Warranty */}
+                      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 p-3 bg-white/[0.02] border border-white/5 rounded-2xl">
+                        <div className="flex items-center gap-2 shrink-0">
+                          <div className="p-1.5 bg-amber-500/10 text-amber-500 rounded-lg">
+                            <Clock size={16} />
+                          </div>
+                          <span className="text-xs sm:text-sm font-black text-white font-cairo">
+                            الأجهزة الخاضعة لمتابعة الضمان ({getProcessedWarrantyAlerts().length})
+                          </span>
+                        </div>
+
+                        <div className="relative flex-1 sm:max-w-xs">
+                          <Search size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                          <input
+                            type="text"
+                            value={alertsSearchQuery}
+                            onChange={(e) => setAlertsSearchQuery(e.target.value)}
+                            placeholder="بحث بالاسم أو رقم الفاتورة أو الجهاز..."
+                            className="w-full bg-[#161616] border border-white/10 focus:border-amber-500/50 rounded-xl pr-8 pl-8 py-2 text-xs text-white placeholder-gray-500 outline-none transition-all font-cairo shadow-inner"
+                          />
+                          {alertsSearchQuery && (
+                            <button
+                              type="button"
+                              onClick={() => setAlertsSearchQuery('')}
+                              className="absolute left-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-white p-0.5 rounded-md hover:bg-white/10 transition-colors cursor-pointer"
+                              title="تفريغ البحث"
+                            >
+                              <X size={13} />
+                            </button>
+                          )}
+                        </div>
                       </div>
+
+                      {getProcessedWarrantyAlerts().length === 0 ? (
+                        <div className="text-center py-12 text-gray-400 bg-white/[0.01] border border-white/5 rounded-2xl">
+                          <AlertCircle size={40} className="text-amber-500 mx-auto mb-3 opacity-60" />
+                          <p className="font-bold text-sm text-gray-200">لا توجد أجهزة مطابقة لبحثك "{alertsSearchQuery}"</p>
+                          <p className="text-xs text-gray-500 mt-1">تأكد من كتابة اسم العميل، الجهاز، أو رقم الفاتورة بشكل صحيح أو قم بتفريغ حقل البحث.</p>
+                          <button
+                            type="button"
+                            onClick={() => setAlertsSearchQuery('')}
+                            className="mt-3 px-3.5 py-1.5 bg-white/5 hover:bg-white/10 text-amber-400 text-xs rounded-xl font-bold transition-all border border-white/10 cursor-pointer"
+                          >
+                            مسح نص البحث
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto border border-white/5 rounded-2xl">
+                          <table className="w-full text-right border-collapse">
+                            <thead>
+                              <tr className="bg-white/5 border-b border-white/5 text-gray-400 text-xs font-bold">
+                                <th className="p-4">نوع وجهاز الصيانة</th>
+                                <th className="p-4">الفاتورة المرجعية</th>
+                                <th className="p-4 text-center">حالة الضمان</th>
+                                <th className="p-4 text-center">تاريخ انتهاء الضمان</th>
+                                <th className="p-4 text-center">الإجراء</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/5 text-xs">
+                              {getProcessedWarrantyAlerts()
+                                .map(a => (
+                                  <tr key={a.id} className="hover:bg-white/[0.01] transition-colors">
+                                    <td className="p-4 text-white font-bold">
+                                      <span className="text-amber-500 text-[10px] bg-amber-500/10 px-2 py-0.5 rounded-md ml-2">{a.deviceType}</span>
+                                      {a.deviceName}
+                                      {a.customerName && <span className="text-[10px] text-gray-400 block mt-0.5">{a.customerName}</span>}
+                                    </td>
+                                    <td className="p-4 font-mono font-bold text-gray-300">#{a.invoiceNumber || '-'}</td>
+                                    <td className="p-4 text-center">
+                                      <span className={`px-2.5 py-1 rounded-xl text-[10px] font-black ${
+                                        a.type === 'warranty_soon'
+                                          ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                          : 'bg-red-500/10 text-red-400 border border-red-500/20'
+                                      }`}>
+                                        {a.type === 'warranty_soon' ? 'ينتهي قريباً جداً' : 'منتهي الصلاحية'}
+                                      </span>
+                                    </td>
+                                    <td className="p-4 text-center text-gray-400 font-bold">{a.expiryDate}</td>
+                                    <td className="p-4 text-center">
+                                      <button
+                                        onClick={() => {
+                                          setShowAllAlertsModal(false);
+                                          setActiveTab('search');
+                                        }}
+                                        className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-lg text-[11px] font-bold transition-all cursor-pointer"
+                                      >
+                                        تفاصيل الفاتورة
+                                      </button>
+                                    </td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>

@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { parseDate, renderSafeValue } from '../lib/dateUtils';
 import { getCurrencySymbol } from '../lib/fundUtils';
-import { ArrowLeft, ArrowRight, Printer, Share2, Smartphone, MessageCircle, Phone, Loader2, FileText, Settings2, MapPin, Facebook, AlertTriangle, Mail, Landmark, ArrowUp, Save, Check, ZoomIn, ZoomOut } from 'lucide-react';
+import { getItemBillableCost, isItemRefusedOrFailed } from '../lib/billableService';
+import { ArrowLeft, ArrowRight, Printer, Share2, Smartphone, MessageCircle, Phone, Loader2, FileText, Settings2, MapPin, Facebook, AlertTriangle, Mail, Landmark, ArrowUp, Save, Check, ZoomIn, ZoomOut, FileDown } from 'lucide-react';
 import { jsPDF } from 'jspdf';
 import * as htmlToImage from 'html-to-image';
 import { db, doc, updateDoc, increment, collection, getDocs } from '../firebase';
 import { sharePdfFile, openWhatsApp } from '../lib/shareHelper';
+import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../lib/pdfHelper';
 import { tafqeet } from '../lib/tafqeet';
 
 function getCurrencyFullName(curr?: string) {
@@ -28,6 +30,13 @@ function parseEngineerReport(reportStr: string) {
     return {
       technical: s.substring(0, idx).trim(),
       outcome: s.substring(idx + 3).trim()
+    };
+  }
+  const pipeIdx = s.indexOf('|');
+  if (pipeIdx !== -1) {
+    return {
+      technical: s.substring(0, pipeIdx).trim(),
+      outcome: s.substring(pipeIdx + 1).trim()
     };
   }
   return {
@@ -60,6 +69,7 @@ export default function PrintPreviewOverlay({
   isSaving?: boolean;
 }) {
   const [isGeneratingPDF, setIsGeneratingPDF] = useState(false);
+  const [pdfNotification, setPdfNotification] = useState<string | null>(null);
   const [templateType, setTemplateType] = useState<PrintTemplateType>(data?.templateType || 'entry');
   const [scale, setScale] = useState(1);
   const [userZoom, setUserZoom] = useState(1);
@@ -1055,7 +1065,7 @@ export default function PrintPreviewOverlay({
     }
   };
 
-  const handleWhatsApp = async () => {
+  const getDocumentExportMeta = () => {
     let phone = '';
     let customerName = '';
     
@@ -1081,7 +1091,7 @@ export default function PrintPreviewOverlay({
     } else if (type === 'statement') {
       baseName = 'كشف حساب';
     } else if (type === 'table') {
-      baseName = tableData?.title || 'تقرير';
+      baseName = tableData?.title || 'كشف حساب';
     } else if (type === 'voucher') {
       baseName = voucher?.type === 'receipt' ? 'سند قبض' : 'سند صرف';
     }
@@ -1113,12 +1123,43 @@ export default function PrintPreviewOverlay({
     } else if (type === 'statement') {
       msg = `مرفق كشف حساب مالي للعميل: ${statement?.customerName}`;
     } else if (type === 'table') {
-      msg = `مرفق تقرير: ${tableData?.title}`;
+      msg = `مرفق: ${tableData?.title || 'كشف حساب'}`;
     } else {
       msg = 'مرفق سند مالي';
     }
           
-    const text = msg + '\n(يرجى إرفاق ملف PDF الذي سيتم تحميله الآن)';
+    const text = msg + '\n(يرجى مراجعة ملف PDF المرفق)';
+    return { phone, cleanPhone, customerName, fileName, msg, text };
+  };
+
+  const handleDownloadPdf = async () => {
+    setIsGeneratingPDF(true);
+    try {
+      const printArea = document.getElementById('print-preview-area');
+      if (!printArea) {
+        setIsGeneratingPDF(false);
+        return;
+      }
+
+      const { fileName } = getDocumentExportMeta();
+      const result = await generateOptimizedPdfFromElement(printArea, {
+        filename: fileName,
+        pixelRatio: 1.25,
+        quality: 0.74
+      });
+
+      downloadPdfBlob(result.blob, result.filename);
+      setPdfNotification(`تم تصدير ملف PDF بنجاح (${result.sizeKb} ك.ب)`);
+      setTimeout(() => setPdfNotification(null), 4000);
+    } catch (err) {
+      console.error("PDF export error:", err);
+    } finally {
+      setIsGeneratingPDF(false);
+    }
+  };
+
+  const handleWhatsApp = async () => {
+    const { cleanPhone, fileName, msg, text } = getDocumentExportMeta();
     
     // Direct WhatsApp opening to avoid popup blockers
     const isNative = typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.();
@@ -1144,73 +1185,27 @@ export default function PrintPreviewOverlay({
     try {
       const printArea = document.getElementById('print-preview-area');
       if (printArea) {
-        // Temporarily remove transform
-        const parentElement = printArea.parentElement;
-        let originalTransform = '';
-        if (parentElement) {
-          originalTransform = parentElement.style.transform;
-          parentElement.style.transform = 'none';
-        }
-
-        const canvas = await htmlToImage.toCanvas(printArea, { 
-          pixelRatio: 2,
-          backgroundColor: '#ffffff'
+        const result = await generateOptimizedPdfFromElement(printArea, {
+          filename: fileName,
+          pixelRatio: 1.25,
+          quality: 0.74
         });
-        
-        if (parentElement) {
-          parentElement.style.transform = originalTransform;
-        }
-
-        const imgData = canvas.toDataURL('image/jpeg', 1.0);
-        
-        const pdf = new jsPDF({
-          orientation: 'portrait',
-          unit: 'mm',
-          format: 'a4'
-        });
-      
-        const pdfWidth = pdf.internal.pageSize.getWidth();
-        const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-      
-        let heightLeft = pdfHeight;
-        let position = 0;
-      
-        pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
-        heightLeft -= pdf.internal.pageSize.getHeight();
-      
-        while (heightLeft > 0.5) {
-          position = heightLeft - pdfHeight;
-          pdf.addPage();
-          pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight);
-          heightLeft -= pdf.internal.pageSize.getHeight();
-        }
-      
-        const blob = pdf.output('blob');
-        if (!blob) {
-          setIsGeneratingPDF(false);
-          return;
-        }
 
         if (canShareNatively || isNative) {
-          const sharedNatively = await sharePdfFile(blob, fileName, msg, 'invoice');
+          const category = type === 'invoice' ? 'invoice' : type === 'voucher' ? 'voucher' : 'report';
+          const sharedNatively = await sharePdfFile(result.blob, fileName, msg, category);
           if (!sharedNatively) {
             openWhatsApp(text, cleanPhone);
           }
         } else {
-          const url = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = url;
-          a.download = fileName;
-          a.click();
-          URL.revokeObjectURL(url);
+          downloadPdfBlob(result.blob, fileName);
         }
-        
-        setIsGeneratingPDF(false);
-      } else {
-        setIsGeneratingPDF(false);
+        setPdfNotification(`تم تصدير ومشاركة PDF (${result.sizeKb} ك.ب)`);
+        setTimeout(() => setPdfNotification(null), 4000);
       }
     } catch (err) {
-      console.error(err);
+      console.error("WhatsApp share PDF error:", err);
+    } finally {
       setIsGeneratingPDF(false);
     }
   };
@@ -1297,6 +1292,16 @@ export default function PrintPreviewOverlay({
       {/* Top Navbar */}
       <div className="flex justify-between items-center bg-black/50 p-4 border-b border-white/10 shrink-0 flex-wrap gap-4">
         <div className="flex items-center gap-2">
+          {/* Mobile Back Button */}
+          <button 
+            type="button"
+            onClick={onClose}
+            className="sm:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 transition-all shadow-md active:scale-95 cursor-pointer shrink-0 font-cairo"
+            title="الرجوع للخلف"
+          >
+            <ArrowRight size={18} />
+          </button>
+
           <h2 className="text-white font-bold hidden sm:block border-l border-white/20 pl-4 font-cairo">
             {type === 'invoice' ? `${getTemplateName(templateType)} - #${invoice?.invoiceNumber || ''}` : (type === 'statement' ? `كشف حساب - ${statement?.customerName}` : (type === 'table' ? tableData?.title : `${voucher?.type === 'receipt' ? 'معاينة سند قبض' : 'معاينة سند صرف'} - #${voucher?.voucherNumber || voucher?.reference || ''}`))}
           </h2>
@@ -1385,22 +1390,29 @@ export default function PrintPreviewOverlay({
 
           {extraHeaderActions}
 
-          {/* Back/Close Button */}
+          {/* Back/Close Button (زر الرجوع للخلف) */}
           <button 
+            type="button"
             onClick={onClose}
             className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0 font-cairo"
-            title="رجوع / إغلاق المعاينة"
+            title="الرجوع للخلف"
           >
             <ArrowRight size={18} />
-            <span className="text-xs md:text-sm font-bold">رجوع</span>
+            <span className="text-xs md:text-sm font-bold">الرجوع للخلف</span>
           </button>
         </div>
       </div>
 
       <div 
         ref={containerRef} 
-        className="flex-1 overflow-auto bg-[#1a1a1a] p-4 md:p-8 text-right w-full flex flex-col items-center scroll-smooth"
+        className="flex-1 overflow-auto bg-[#1a1a1a] p-4 md:p-8 text-right w-full flex flex-col items-center scroll-smooth relative"
       >
+        {pdfNotification && (
+          <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-emerald-700/95 text-white px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2 font-cairo text-sm font-bold animate-in fade-in slide-in-from-top-2 border border-emerald-500/40 backdrop-blur-md">
+            <Check size={18} className="text-emerald-200" />
+            <span>{pdfNotification}</span>
+          </div>
+        )}
         <div 
           className="relative shrink-0 my-4 transition-all duration-150 flex justify-center"
           style={{ 
@@ -1955,8 +1967,9 @@ export default function PrintPreviewOverlay({
                       <tbody className="divide-y divide-black">
                         {sortedItems.map((it: any, idx: number) => {
                           const qty = Number(it.quantity || 1);
-                          const totalCost = Number(it.cost || 0);
-                          const unitCost = qty > 0 ? totalCost / qty : totalCost;
+                          const isNonBillable = getItemStatus(it) === 'لا يصلح' || isItemRefusedOrFailed(it);
+                          const totalCost = isNonBillable ? 0 : Number(it.cost || 0);
+                          const unitCost = isNonBillable ? 0 : (qty > 0 ? totalCost / qty : totalCost);
                           const statusLabel = getItemStatus(it);
                           const reportVal = it.technicalNotes || it.engineerReport || it.failureReason || '';
                           const parsed = parseEngineerReport(reportVal);
@@ -2011,7 +2024,7 @@ export default function PrintPreviewOverlay({
                           </td>
                           {!isPhase1 && (
                             <td className="py-1.5 px-2 text-center font-mono font-black" dir="ltr">
-                              {sortedItems.reduce((sum: number, it: any) => sum + Number(it.cost || 0), 0).toLocaleString('en-US')}
+                              {sortedItems.reduce((sum: number, it: any) => sum + (getItemStatus(it) === 'لا يصلح' || isItemRefusedOrFailed(it) ? 0 : Number(it.cost || 0)), 0).toLocaleString('en-US')}
                             </td>
                           )}
                         </tr>
@@ -2055,12 +2068,46 @@ export default function PrintPreviewOverlay({
 
             {type === 'invoice' && templateType === 'quotation' && (() => {
               const getItemStatus = (it: any) => {
-                const statusVal = String(it.status || '').trim();
-                if (['55', '45', '70'].includes(statusVal) || it.subStatus === 'unrepairable' || (it.engineerReport || '').includes('لا يصلح') || (it.technicalNotes || '').includes('لا يصلح')) {
+                const statusVal = String(it.status || '').trim().toLowerCase();
+                const subStatus = String(it.subStatus || '').trim().toLowerCase();
+                const decision = String(it.decision || it.technicalDecision || '').trim().toLowerCase();
+                const report = String(it.engineerReport || '').toLowerCase();
+                const notes = String(it.technicalNotes || '').toLowerCase();
+                const failure = String(it.failureReason || '').toLowerCase();
+
+                // 1. لا يصلح
+                if (
+                  ['55', '45', '70', 'unrepairable', 'failed'].includes(statusVal) ||
+                  subStatus === 'unrepairable' ||
+                  decision === 'unrepairable' ||
+                  decision === 'failed' ||
+                  report.includes('لا يصلح') ||
+                  report.includes('لايصلح') ||
+                  report.includes('unrepairable') ||
+                  notes.includes('لا يصلح') ||
+                  notes.includes('لايصلح') ||
+                  notes.includes('unrepairable') ||
+                  failure.includes('لا يصلح') ||
+                  failure.includes('لايصلح') ||
+                  isItemRefusedOrFailed(it)
+                ) {
                   return 'لا يصلح';
-                } else if (['50', '60'].includes(statusVal)) {
+                }
+
+                // 2. سليم
+                if (
+                  statusVal === 'intact' ||
+                  subStatus === 'intact' ||
+                  decision === 'intact' ||
+                  report.includes('سليم') ||
+                  report.includes('intact') ||
+                  notes.includes('سليم') ||
+                  notes.includes('intact')
+                ) {
                   return 'سليم';
                 }
+
+                // 3. صيانة
                 return 'صيانة';
               };
 
@@ -2077,7 +2124,7 @@ export default function PrintPreviewOverlay({
                 const nameComp = nameA.localeCompare(nameB, 'ar');
                 if (nameComp !== 0) return nameComp;
 
-                // 3. Sort by الحالة (صيانه, سليم, لا يصلح)
+                // 3. Sort by الحالة (صيانة أولاً، ثم سليم، ثم لا يصلح)
                 const getWeight = (it: any) => {
                   const label = getItemStatus(it);
                   if (label === 'لا يصلح') return 3;
@@ -2104,18 +2151,40 @@ export default function PrintPreviewOverlay({
                       <tbody className="divide-y divide-black">
                         {sortedItems.map((it: any, idx: number) => {
                           const qty = Number(it.quantity || 1);
-                          const totalCost = Number(it.cost || 0);
-                          const unitCost = qty > 0 ? totalCost / qty : totalCost;
+                          const isNonBillable = getItemStatus(it) === 'لا يصلح' || getItemStatus(it) === 'سليم' || isItemRefusedOrFailed(it);
+                          const totalCost = isNonBillable ? 0 : Number(it.cost || 0);
+                          const unitCost = isNonBillable ? 0 : (qty > 0 ? totalCost / qty : totalCost);
                           const statusLabel = getItemStatus(it);
                           const reportVal = it.technicalNotes || it.engineerReport || it.failureReason || '';
                           const parsed = parseEngineerReport(reportVal);
 
+                          // للأجهزة التي قرارها الفني صيانة: تظهر بيانات نتيجة الصيانة فقط
+                          // أما السليم يظهر سليم، ولا يصلح يظهر لا يصلح
                           const displayStatusReport = (() => {
-                            if (statusLabel === 'صيانة') {
-                              return parsed.outcome || '-';
-                            } else {
-                              return parsed.technical || statusLabel;
+                            if (statusLabel === 'لا يصلح') {
+                              return 'لا يصلح';
                             }
+                            if (statusLabel === 'سليم') {
+                              return 'سليم';
+                            }
+                            // صيانة: إظهار بيانات نتيجة الصيانة فقط
+                            if (parsed.outcome && parsed.outcome.trim() !== '') {
+                              return parsed.outcome.trim();
+                            }
+                            const cleanTechnical = parsed.technical 
+                              ? parsed.technical
+                                  .replace(/الجهاز بحاجة إلى صيانة/gi, '')
+                                  .replace(/تقرير الفحص[:\s-]*/gi, '')
+                                  .replace(/\|\s*$/, '')
+                                  .trim() 
+                              : '';
+                            if (cleanTechnical && cleanTechnical !== 'صيانة' && cleanTechnical !== '-') {
+                              return cleanTechnical;
+                            }
+                            if (it.outcome && typeof it.outcome === 'string' && !['approved', 'waiting_parts', 'refused'].includes(it.outcome) && it.outcome.trim() !== '') {
+                              return it.outcome.trim();
+                            }
+                            return 'تشغيل كامل للجهاز';
                           })();
 
                           return (
@@ -2153,7 +2222,7 @@ export default function PrintPreviewOverlay({
                             {sortedItems.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 1), 0)}
                           </td>
                           <td className="py-1.5 px-2 text-center font-mono font-black" dir="ltr">
-                            {sortedItems.reduce((sum: number, it: any) => sum + Number(it.cost || 0), 0).toLocaleString('en-US')}
+                            {sortedItems.reduce((sum: number, it: any) => sum + (getItemStatus(it) === 'لا يصلح' || getItemStatus(it) === 'سليم' || isItemRefusedOrFailed(it) ? 0 : Number(it.cost || 0)), 0).toLocaleString('en-US')}
                           </td>
                         </tr>
                       </tfoot>

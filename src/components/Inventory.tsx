@@ -35,30 +35,43 @@ const STATUS_CONFIG = {
   '10': { label: 'New Entry', color: 'bg-blue-500/10 text-blue-500', icon: <Clock size={14} /> },
   '20': { label: 'Under Inspection', color: 'bg-amber-500/10 text-amber-500', icon: <Search size={14} /> },
   '30': { label: 'Awaiting Customer/Parts', color: 'bg-cyan-500/10 text-cyan-500', icon: <Clock size={14} /> },
+  '35': { label: 'Awaiting Parts', color: 'bg-orange-500/10 text-orange-400', icon: <Clock size={14} /> },
   '40': { label: 'Under Repair', color: 'bg-indigo-500/10 text-indigo-500', icon: <Wrench size={14} /> },
   '50': { label: 'Ready', color: 'bg-emerald-500/10 text-emerald-500', icon: <CheckCircle2 size={14} /> },
   '60': { label: 'Delivered', color: 'bg-gray-500/10 text-gray-400', icon: <Package size={14} /> },
   '70': { label: 'Cancelled', color: 'bg-rose-500/10 text-rose-500', icon: <AlertTriangle size={14} /> },
-  // Legacy status mapping (for backwards compatibility)
+  // Additional / granular status mappings
   new: { label: 'New', color: 'bg-blue-500/10 text-blue-500', icon: <Clock size={14} /> },
   inspected: { label: 'Inspected', color: 'bg-amber-500/10 text-amber-500', icon: <Search size={14} /> },
   testing: { label: 'In Testing', color: 'bg-amber-500/10 text-amber-500', icon: <Search size={14} /> },
+  awaiting_approval: { label: 'Awaiting Customer Approval', color: 'bg-cyan-500/10 text-cyan-400', icon: <Clock size={14} /> },
+  approved: { label: 'Customer Approved', color: 'bg-teal-500/10 text-teal-400', icon: <CheckCircle2 size={14} /> },
+  awaiting_parts: { label: 'Awaiting Parts', color: 'bg-orange-500/10 text-orange-400', icon: <Clock size={14} /> },
+  parts_available: { label: 'Parts Available', color: 'bg-indigo-500/10 text-indigo-400', icon: <Wrench size={14} /> },
+  parts_not_available: { label: 'Parts Unavailable', color: 'bg-rose-500/10 text-rose-400', icon: <AlertTriangle size={14} /> },
   repairing: { label: 'Repairing', color: 'bg-indigo-500/10 text-indigo-500', icon: <Wrench size={14} /> },
   ready: { label: 'Ready', color: 'bg-emerald-500/10 text-emerald-500', icon: <CheckCircle2 size={14} /> },
   intact: { label: 'Intact', color: 'bg-emerald-500/10 text-emerald-500', icon: <CheckCircle2 size={14} /> },
   unrepairable: { label: 'Unrepairable', color: 'bg-red-500/10 text-red-500', icon: <AlertTriangle size={14} /> },
   refused: { label: 'Refused', color: 'bg-red-400/10 text-red-400', icon: <AlertTriangle size={14} /> },
+  '55': { label: 'Unrepairable / Refused', color: 'bg-red-500/10 text-red-500', icon: <AlertTriangle size={14} /> },
   delivered: { label: 'Delivered', color: 'bg-gray-500/10 text-gray-400', icon: <Package size={14} /> },
+  cancelled: { label: 'Cancelled', color: 'bg-rose-500/10 text-rose-500', icon: <AlertTriangle size={14} /> },
 };
 
 const STATUS_HIERARCHY: Record<string, number> = {
   '10': 10, 'new': 10,
   '20': 20, 'inspected': 20, 'testing': 20,
-  '30': 30,
+  '30': 30, 'awaiting_approval': 30,
+  'approved': 35,
+  '35': 36, 'awaiting_parts': 36,
+  'parts_available': 38,
   '40': 40, 'repairing': 40,
-  '50': 50, 'ready': 50, 'intact': 50,
+  'parts_not_available': 45,
+  '50': 50, 'ready': 50, 'intact': 51,
+  'unrepairable': 52, '55': 52, 'refused': 53,
   '60': 60, 'delivered': 60,
-  '70': 70, 'cancelled': 70, 'unrepairable': 70, 'refused': 70
+  '70': 70, 'cancelled': 70
 };
 
 export default function Inventory({ user, onBack }: { user: User, onBack?: () => void }) {
@@ -589,7 +602,7 @@ export default function Inventory({ user, onBack }: { user: User, onBack?: () =>
                     </td>
                     <td className="px-2 py-2 text-center">
                       <div className="flex justify-center">
-                        <StatusBadge status={item.status} />
+                        <StatusBadge status={item.status} subStatus={item.subStatus} />
                       </div>
                     </td>
                   </motion.tr>
@@ -647,15 +660,28 @@ export default function Inventory({ user, onBack }: { user: User, onBack?: () =>
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
-  const config = STATUS_CONFIG[status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.new;
+function StatusBadge({ status, subStatus }: { status: string; subStatus?: string }) {
   const { t } = useTranslation();
   
+  const sub = String(subStatus || '').toLowerCase().trim();
+  const st = String(status || '').toLowerCase().trim();
+  
+  // Prefer specific operational subStatus outcome if available
+  let keyToUse = st;
+  if (sub && ['intact', 'unrepairable', 'refused', 'awaiting_parts', 'awaiting_approval', 'delivered', 'cancelled'].includes(sub)) {
+    keyToUse = sub;
+  }
+  
+  const config = STATUS_CONFIG[keyToUse as keyof typeof STATUS_CONFIG] ||
+                 STATUS_CONFIG[st as keyof typeof STATUS_CONFIG] ||
+                 STATUS_CONFIG['10'];
+
   const textColor = config.color.split(' ').find(c => c.startsWith('text-')) || 'text-gray-400';
+  const label = t(`inventory.status_${keyToUse}`, t(`inventory.status_${st}`, config.label));
 
   return (
     <span className={`text-[10px] sm:text-xs font-bold ${textColor}`}>
-      {t(`inventory.status_${status}`, config.label)}
+      {label}
     </span>
   );
 }

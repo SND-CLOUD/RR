@@ -1,4 +1,6 @@
 import { sharePdfFile, openWhatsApp, sendUniversalReminder } from '../lib/shareHelper';
+import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../lib/pdfHelper';
+import { getItemBillableCost, isItemRefusedOrFailed } from '../lib/billableService';
 import PrintPreviewOverlay from './PrintPreviewOverlay';
 import { tafqeet } from '../lib/tafqeet';
 import { parseFundBalance, formatMoney, getCurrencySymbol } from '../lib/fundUtils';
@@ -414,21 +416,18 @@ export default function Vault({
       }
     }
 
-    return invoiceItems.reduce((sum, item) => {
+    const billableSum = invoiceItems.reduce((sum, item) => {
       if (['10', '20', '25', '30', '35', '40', 'new', 'in_progress', 'awaiting_parts', 'awaiting_approval', 'repairing'].includes(item.status)) {
         return sum;
       }
-      const sub = (item.subStatus || '').toLowerCase();
-      const status = (item.status || '').toLowerCase();
-      const src = (item.source || '').toLowerCase();
-      const isExcluded = 
-        ['70', 'cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(status) ||
-        ['cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(sub) ||
-        ['cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(src) ||
-        (item.failureReason !== null && item.failureReason !== undefined && item.failureReason !== '');
-      if (isExcluded) return sum;
-      return sum + (Number(item.cost) || 0);
-    }, 0) - (invoice ? Number(invoice.discount || 0) : 0) + (invoice ? Number(invoice.tax || 0) : 0);
+      if (isItemRefusedOrFailed(item)) {
+        return sum;
+      }
+      return sum + getItemBillableCost(item);
+    }, 0);
+    const discount = invoice ? Number(invoice.discount !== undefined ? invoice.discount : (invoice.discountAmount || 0)) : 0;
+    const tax = invoice ? Number(invoice.tax !== undefined ? invoice.tax : (invoice.taxAmount || 0)) : 0;
+    return Math.max(0, billableSum - discount + tax);
   };
 
   const ledgerCustomerInvoices = invoices.filter(inv => inv.customerId === ledgerCustomerId && (inv.currency || 'USD') === ledgerCurrency);
@@ -2131,38 +2130,6 @@ export default function Vault({
       restore = await sanitizeDocumentStyles();
       sanitizeElementInlineStyles(element);
 
-      let clonedAreaHeight = 800; // fallback
-
-      const canvas = await htmlToImage.toCanvas(element, {
-        pixelRatio: 2,
-        backgroundColor: '#ffffff',
-      });
-
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-
-      const pdf = new jsPDF({
-        orientation: 'p',
-        unit: 'mm',
-        format: 'a4',
-        compress: true
-      });
-      const imgWidth = 210;
-      const pageHeight = 297;
-      
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-      heightLeft -= pageHeight;
-
-      while (heightLeft > 5) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-        heightLeft -= pageHeight;
-      }
-
       const today = new Date();
       const year = today.getFullYear();
       const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -2170,12 +2137,23 @@ export default function Vault({
       const printDate = `${year}-${month}-${day}`;
       const filename = `كشف حساب_${cust.name}_${printDate}.pdf`;
 
+      const pdfResult = await generateOptimizedPdfFromElement(element, {
+        filename,
+        pixelRatio: 1.25,
+        quality: 0.74,
+        backgroundColor: '#ffffff'
+      });
+
+      const pdf = pdfResult.pdf;
+
       // 2. Prepare PDF Base64 details & save to database folder and sqlite saved_pdfs
-      let pdfBase64 = '';
-      try {
-        pdfBase64 = pdf.output('datauristring').split(',')[1];
-      } catch (err) {
-        console.error('Failed to get PDF Base64 string:', err);
+      let pdfBase64 = pdfResult.base64;
+      if (!pdfBase64) {
+        try {
+          pdfBase64 = pdf.output('datauristring').split(',')[1];
+        } catch (err) {
+          console.error('Failed to get PDF Base64 string:', err);
+        }
       }
 
       // Save to Capacitor filesystem folder
@@ -4554,10 +4532,10 @@ export default function Vault({
                     type="button"
                     onClick={() => handlePrintFundStatement(fund, filteredEntries)}
                     className="py-2 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-xl text-xs font-bold font-cairo transition-all flex items-center gap-1.5 cursor-pointer shadow-md shadow-blue-600/20"
-                    title="طباعة كشف الحساب A4"
+                    title="معاينة وطباعة كشف الحساب وتصدير ملف PDF خفيف (بحدود 200 ك.ب أو أقل)"
                   >
                     <Printer size={15} />
-                    <span className="hidden sm:inline">طباعة A4</span>
+                    <span className="hidden sm:inline">طباعة / تصدير PDF</span>
                   </button>
                   <button
                     type="button"

@@ -616,7 +616,19 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
       }
     });
 
-    return Array.from(map.values());
+    const result = Array.from(map.values());
+    result.forEach(group => {
+      const invData = itemInvoiceMap.get(group.invoiceNumber);
+      if (invData) {
+        const discount = Number(invData.discount !== undefined ? invData.discount : (invData.discountAmount || 0));
+        const tax = Number(invData.tax !== undefined ? invData.tax : (invData.taxAmount || 0));
+        group.totalCost = Math.max(0, group.totalCost - discount + tax);
+        (group as any).discount = discount;
+        (group as any).tax = tax;
+      }
+    });
+
+    return result;
   };
 
   const groupedInvoices = getGroupedInvoices(tableItems);

@@ -10,6 +10,7 @@ import { User, isPurchaseInvoice, isSaleInvoice, isShopMaintenanceItem, isInShop
 import { motion, AnimatePresence } from 'motion/react';
 import { auditOrphanedPartsStock, cleanOrphanedPartsStock } from '../lib/invoiceCascadeService';
 import { repairAllFundBalances } from '../lib/fundRepairService';
+import { runRetroactiveNonBillableCleanup, calculateInvoiceBillableTotal, getInvoiceFinancialBreakdown } from '../lib/billableService';
 
 interface DataAuditModalProps {
   isOpen: boolean;
@@ -286,11 +287,21 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
       const statusDiscrepancies: any[] = [];
 
       const invoiceItemGroups: Record<string, any[]> = {};
+      const invoiceItemGroupsByNum: Record<string, any[]> = {};
       dbItems.forEach((item: any) => {
-        if (!invoiceItemGroups[item.invoiceId]) {
-          invoiceItemGroups[item.invoiceId] = [];
+        if (item.invoiceId) {
+          if (!invoiceItemGroups[item.invoiceId]) {
+            invoiceItemGroups[item.invoiceId] = [];
+          }
+          invoiceItemGroups[item.invoiceId].push(item);
         }
-        invoiceItemGroups[item.invoiceId].push(item);
+        if (item.invoiceNumber) {
+          const numKey = String(item.invoiceNumber).replace('#', '').trim();
+          if (!invoiceItemGroupsByNum[numKey]) {
+            invoiceItemGroupsByNum[numKey] = [];
+          }
+          invoiceItemGroupsByNum[numKey].push(item);
+        }
       });
 
       dbInvoices.forEach((inv: any) => {
@@ -300,17 +311,31 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
 
         if (isOtherService) return;
 
-        const allItems = invoiceItemGroups[inv.id] || [];
+        const invNumClean = String(inv.invoiceNumber || '').replace('#', '').trim();
+        const itemsById = (inv.id && invoiceItemGroups[inv.id]) || [];
+        const itemsByNum = (invNumClean && invoiceItemGroupsByNum[invNumClean]) || [];
+        const itemMap = new Map<string, any>();
+        [...itemsById, ...itemsByNum].forEach((it: any) => {
+          if (it.id) itemMap.set(it.id, it);
+        });
+        const allItems = Array.from(itemMap.values());
         const items = allItems.filter((it: any) => isShopMaintenanceItem(it, inv));
-        const computedTotal = allItems.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+        const breakdown = getInvoiceFinancialBreakdown(inv, allItems);
+        const computedTotal = breakdown.netTotal;
+        const currentTotal = Number(inv.totalCost || 0);
         
         // Do NOT flag or recompute total cost for purchase or other service invoices based on items
-        if (allItems.length > 0 && Math.abs(computedTotal - Number(inv.totalCost || 0)) > 0.01) {
+        if (allItems.length > 0 && Math.abs(computedTotal - currentTotal) > 0.01) {
           totalDiscrepancies.push({
             id: inv.id,
             invoiceNumber: inv.invoiceNumber,
-            currentTotal: inv.totalCost,
-            computedTotal
+            currentTotal,
+            computedTotal,
+            rawSum: breakdown.rawSum,
+            billableSum: breakdown.billableSum,
+            discount: breakdown.discount,
+            tax: breakdown.tax,
+            difference: Math.round((currentTotal - computedTotal) * 100) / 100
           });
         }
 
@@ -712,9 +737,9 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
         const isOtherService = explicitType.startsWith('sale_') || isPurchase;
         if (isOtherService) continue;
 
-        const invItems = localItems.filter((it: any) => it.invoiceId === inv.id);
+        const invItems = localItems.filter((it: any) => it.invoiceId === inv.id || (inv.invoiceNumber && it.invoiceNumber === inv.invoiceNumber));
         if (invItems.length > 0) {
-          const sumCost = invItems.reduce((sum: number, it: any) => sum + (Number(it.cost) || 0), 0);
+          const sumCost = calculateInvoiceBillableTotal(inv, invItems);
 
           if (Math.abs(Number(inv.totalCost) - sumCost) > 0.01) {
             await LocalProviderInstance.updateDoc('invoices', inv.id, { totalCost: sumCost });
@@ -734,6 +759,21 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
       window.dispatchEvent(new CustomEvent('snd_data_synced'));
     } catch (err: any) {
       setRepairProgress({ status: 'error', message: `فشل تصحيح مجاميع الفواتير: ${err?.message || err}` });
+    }
+  };
+
+  const repairNonBillableDevices = async () => {
+    setRepairProgress({ status: 'running', message: 'جاري تصفير تكاليف الأجهزة غير المعتمدة (لم يوافق / لا يصلح / عدم توفر قطع) وتحديث الفواتير...' });
+    try {
+      const res = await runRetroactiveNonBillableCleanup();
+      setRepairProgress({
+        status: 'completed',
+        message: `تم بنجاح تصفير تكاليف ${res.updatedItemsCount} جهاز غير معتمد، وتحديث إجمالي ${res.updatedInvoicesCount} فاتورة بمبلغ إجمالي مصفر قدره ${res.totalCostZeroed.toLocaleString('en-US')}.`
+      });
+      await runDatabaseAudit();
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+    } catch (err: any) {
+      setRepairProgress({ status: 'error', message: `فشل تصفير تكاليف الأجهزة: ${err?.message || err}` });
     }
   };
 
@@ -1002,7 +1042,7 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
       const dbItems = itemsRes.values || [];
 
       let step = 1;
-      const totalSteps = 10;
+      const totalSteps = 11;
 
       // Step 1: Fix missing cloud document IDs
       if (auditResults.missingCloudIds && auditResults.missingCloudIds.length > 0) {
@@ -1160,14 +1200,21 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
           const isOtherService = explicitType.startsWith('sale_') || isPurchase;
           if (isOtherService) continue; // CRITICAL: NEVER overwrite totalCost on purchase or other service invoices!
 
-          const invItems = localItems.filter((it: any) => it.invoiceId === inv.id);
+          const invNumClean = String(inv.invoiceNumber || '').replace('#', '').trim();
+          const invItems = localItems.filter((it: any) => {
+            const itId = String(it.invoiceId || '').trim();
+            const itNum = String(it.invoiceNumber || '').replace('#', '').trim();
+            return (inv.id && itId === inv.id) || (invNumClean && itNum === invNumClean);
+          });
           if (invItems.length > 0) {
-            const sumCost = invItems.reduce((sum: number, it: any) => sum + (Number(it.cost) || 0), 0);
-            if (Math.abs(Number(inv.totalCost) - sumCost) > 0.01) {
-              await LocalProviderInstance.updateDoc('invoices', inv.id, { totalCost: sumCost });
-          
+            const correctTotal = calculateInvoiceBillableTotal(inv, invItems);
+            if (Math.abs(Number(inv.totalCost || 0) - correctTotal) > 0.01) {
+              await LocalProviderInstance.updateDoc('invoices', inv.id, { totalCost: correctTotal });
               try {
-                await FirebaseProviderInstance.updateDoc('invoices', inv.id, { totalCost: sumCost });
+                await localDb.run("UPDATE invoices SET totalCost = ? WHERE id = ?", [correctTotal, inv.id]);
+              } catch (e) {}
+              try {
+                await FirebaseProviderInstance.updateDoc('invoices', inv.id, { totalCost: correctTotal });
               } catch (e) {}
             }
           }
@@ -1315,6 +1362,15 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
         await repairAllFundBalances();
       } catch (e) {
         console.error('Failed to recalculate funds:', e);
+      }
+      step++;
+
+      // Retroactive cleanup of non-billable items
+      setRepairProgress({ status: 'running', message: `[${step}/${totalSteps}] تصفير تكاليف الأجهزة المرفوضة والتالفة وتحديث الفواتير السابقة...` });
+      try {
+        await runRetroactiveNonBillableCleanup();
+      } catch (e) {
+        console.error('Failed to run retroactive non-billable cleanup:', e);
       }
       step++;
 
@@ -1598,17 +1654,41 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         )}
                       </div>
                     </div>
-                    <p className="text-xs text-gray-400">التحقق من مطابقة إجمالي الفاتورة لمجموع تكلفة الأجهزة الملحقة بها.</p>
+                    <p className="text-xs text-gray-400">التحقق من مطابقة إجمالي الفاتورة لصافي تكلفة الأجهزة بعد احتساب مبالغ الخصم والضرائب.</p>
                     {auditResults.totalDiscrepancies.length > 0 && (
-                      <div className="max-h-36 overflow-y-auto space-y-1.5 p-2 bg-black/40 rounded-xl font-mono text-[10px] text-red-300">
+                      <div className="max-h-48 overflow-y-auto space-y-2 p-2 bg-black/40 rounded-xl text-red-300">
                         {auditResults.totalDiscrepancies.map((d: any, idx: number) => (
-                          <div key={idx} className="flex items-center justify-between gap-2 p-1 rounded bg-white/5">
-                            <span>فاتورة #{d.invoiceNumber}: الفاتورة ({d.currentTotal}) ↔ المجموع الحقيقي ({d.computedTotal})</span>
+                          <div key={idx} className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-lg bg-white/5 border border-white/5">
+                            <div className="space-y-0.5">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                <span className="font-mono font-bold text-white text-xs">فاتورة #{d.invoiceNumber}</span>
+                                {d.discount > 0 && (
+                                  <span className="px-1.5 py-0.5 bg-rose-500/20 text-rose-300 rounded text-[10px] font-bold">
+                                    خصم: {d.discount}
+                                  </span>
+                                )}
+                                {d.tax > 0 && (
+                                  <span className="px-1.5 py-0.5 bg-blue-500/20 text-blue-300 rounded text-[10px] font-bold">
+                                    ضريبة: {d.tax}
+                                  </span>
+                                )}
+                              </div>
+                              <div className="text-[11px] text-gray-300 font-mono">
+                                <span>المسجل: <strong className="text-amber-400">{d.currentTotal}</strong></span>
+                                <span className="mx-1.5 text-gray-500">↔</span>
+                                <span>الصافي المطلوب: <strong className="text-emerald-400">{d.computedTotal}</strong></span>
+                                {d.discount > 0 && (
+                                  <span className="text-gray-400 text-[10px] mr-2 block sm:inline font-sans">
+                                    (الأجهزة: {d.billableSum} - الخصم: {d.discount} = {d.computedTotal})
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                             <button
                               type="button"
                               onClick={() => repairInvoiceTotals(d.id)}
                               disabled={repairProgress.status === 'running'}
-                              className="px-2 py-0.5 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-[9px] font-sans font-bold cursor-pointer disabled:opacity-50"
+                              className="self-start sm:self-center px-2.5 py-1 bg-emerald-700 hover:bg-emerald-600 text-white rounded text-[10px] font-sans font-bold cursor-pointer disabled:opacity-50 transition-all shrink-0"
                             >
                               إصلاح الفاتورة
                             </button>
@@ -1684,6 +1764,27 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         ))}
                       </div>
                     )}
+                  </div>
+
+                  {/* 5c. Non-Billable Devices Cleanup */}
+                  <div className="p-4 bg-white/5 rounded-2xl border border-white/5 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2">
+                        <DollarSign size={16} className="text-rose-400" />
+                        <span className="font-bold text-sm text-white">تصفير تكاليف الأجهزة غير المعتمدة والملغاة</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={repairNonBillableDevices}
+                        disabled={repairProgress.status === 'running'}
+                        className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
+                      >
+                        تصفير وتحديث الفواتير
+                      </button>
+                    </div>
+                    <p className="text-xs text-gray-400">
+                      تصفير تكلفة الأجهزة ذات القرار الفني (لم يوافق العميل / لا تصلح / عدم توفر قطع الغيار) في قاعدة البيانات فورياً وتحديث إجمالي فواتيرها، لمنع احتسابها في أي تقرير أو صفحة.
+                    </p>
                   </div>
 
                   {/* 6. Status Discrepancies */}

@@ -17,6 +17,7 @@ import { usePermissions } from '../hooks/usePermissions';
 import { localDb } from '../lib/local-db';
 import { ProviderFactory } from '../data/ProviderFactory';
 import { deleteInvoiceWithCascade, deleteSingleInvoiceItemWithCascade, checkIsPurchase, checkIsSale } from '../lib/invoiceCascadeService';
+import { calculateInvoiceBillableTotal } from '../lib/billableService';
 
 import DeviceExit from './entry-exit/DeviceExit';
 import Inspection from './movement/Inspection';
@@ -509,6 +510,85 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
     }
   };
 
+  const normalizeDeviceStatus = (rawStatus: string): { status: string; subStatus: string; additional?: Record<string, any> } => {
+    const s = String(rawStatus || '').toLowerCase().trim();
+    if (['10', 'new'].includes(s)) {
+      return { status: '10', subStatus: '' };
+    }
+    if (['20', 'inspected', 'testing'].includes(s)) {
+      return { status: '20', subStatus: 'testing' };
+    }
+    if (['30', 'awaiting_approval'].includes(s)) {
+      return { status: '30', subStatus: 'awaiting_approval' };
+    }
+    if (s === 'approved') {
+      return { status: '40', subStatus: 'repairing', additional: { source: 'admin_approved' } };
+    }
+    if (['35', 'awaiting_parts'].includes(s)) {
+      return { status: '35', subStatus: 'awaiting_parts' };
+    }
+    if (s === 'parts_available') {
+      return { status: '40', subStatus: 'repairing', additional: { source: 'parts_available' } };
+    }
+    if (s === 'parts_not_available') {
+      return { status: '50', subStatus: 'refused', additional: { failureReason: 'لم تتوفر قطع الغيار', source: 'parts_not_available' } };
+    }
+    if (['40', 'repairing'].includes(s)) {
+      return { status: '40', subStatus: 'repairing' };
+    }
+    if (['50', 'ready'].includes(s)) {
+      return { status: '50', subStatus: 'ready' };
+    }
+    if (s === 'intact') {
+      return { status: '50', subStatus: 'intact' };
+    }
+    if (s === 'unrepairable' || s === '55') {
+      return { status: '50', subStatus: 'unrepairable' };
+    }
+    if (s === 'refused') {
+      return { status: '50', subStatus: 'refused' };
+    }
+    if (['60', 'delivered'].includes(s)) {
+      return { status: '60', subStatus: 'delivered' };
+    }
+    if (['70', 'cancelled'].includes(s)) {
+      return { status: '70', subStatus: 'cancelled' };
+    }
+    return { status: rawStatus, subStatus: '' };
+  };
+
+  const computeInvoiceStatusFromItems = (itemsList: any[]): string => {
+    if (!itemsList || itemsList.length === 0) return '10';
+
+    const normalizedStatuses = itemsList.map(it => {
+      const s = String(it.status || '').toLowerCase().trim();
+      if (['60', 'delivered'].includes(s)) return '60';
+      if (['70', 'cancelled'].includes(s)) return '70';
+      if (['50', 'ready', 'intact', 'unrepairable', 'refused', '55'].includes(s)) return '50';
+      if (['40', 'repairing', 'approved', 'parts_available'].includes(s)) return '40';
+      if (['35', 'awaiting_parts'].includes(s)) return '35';
+      if (['30', 'awaiting_approval'].includes(s)) return '30';
+      if (['20', 'inspected', 'testing'].includes(s)) return '20';
+      return '10';
+    });
+
+    if (normalizedStatuses.every(st => st === '60')) return '60';
+    if (normalizedStatuses.every(st => st === '70')) return '70';
+
+    // If there are non-cancelled items, evaluate them
+    const activeStatuses = normalizedStatuses.filter(st => st !== '70');
+    const statusesToEval = activeStatuses.length > 0 ? activeStatuses : normalizedStatuses;
+
+    if (statusesToEval.every(st => st === '50' || st === '60')) return '50';
+
+    if (statusesToEval.some(st => st === '40')) return '40';
+    if (statusesToEval.some(st => st === '35')) return '35';
+    if (statusesToEval.some(st => st === '30')) return '30';
+    if (statusesToEval.some(st => st === '20')) return '20';
+
+    return '10';
+  };
+
   const parseFirestoreDate = (val: any): Date | null => {
     return parseDate(val);
   };
@@ -640,7 +720,7 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
             ...additionalFields
           });
         });
-        totalCostOfInvoice = currentInvoiceItems.reduce((sum, it) => sum + (Number(it.cost) || 0), 0);
+        totalCostOfInvoice = calculateInvoiceBillableTotal(selectedInvoiceForAdmin, currentInvoiceItems);
         allItemStatuses = currentInvoiceItems.map(() => finalStatus);
       }
       
@@ -650,17 +730,8 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
         updatedAt: serverTimestamp()
       };
 
-      // Determine invoice status (if all items 60 -> 60, if all items 50+ -> 50, else 10)
-      const isAllDelivered = allItemStatuses.every(st => st === '60');
-      const isAllReadyOrBeyond = allItemStatuses.every(st => Number(st) >= 50);
-
-      if (isAllDelivered) {
-        updateData.status = '60';
-      } else if (isAllReadyOrBeyond) {
-        updateData.status = '50';
-      } else {
-        updateData.status = '10'; // Keep active
-      }
+      // Determine invoice status from all items
+      updateData.status = computeInvoiceStatusFromItems(allItemStatuses.map(st => ({ status: st })));
 
       batch.update(invoiceRef, updateData);
 
@@ -756,43 +827,59 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
         await processFinancialReversals(inv, targetStatus, txsToReverse);
       }
 
-      let finalSubStatus = '';
-      if (['10', 'new'].includes(targetStatus)) {
-        finalSubStatus = '';
-      } else if (['20', 'inspected', 'testing'].includes(targetStatus)) {
-        finalSubStatus = 'testing';
-      } else if (['30', 'awaiting_approval'].includes(targetStatus)) {
-        finalSubStatus = 'awaiting_approval';
-      } else if (['35', 'awaiting_parts'].includes(targetStatus)) {
-        finalSubStatus = 'awaiting_parts';
-      } else if (['40', 'repairing'].includes(targetStatus)) {
-        finalSubStatus = 'repairing';
-      } else if (['50', 'ready', 'intact', 'unrepairable', 'refused'].includes(targetStatus)) {
-        finalSubStatus = targetStatus === '50' ? 'ready' : targetStatus;
-      } else if (['60', 'delivered'].includes(targetStatus)) {
-        finalSubStatus = 'delivered';
-      }
+      const { status: normalizedStatus, subStatus: normalizedSubStatus, additional = {} } = normalizeDeviceStatus(targetStatus);
 
-      // Use ProviderFactory for offline capability
-      const { ProviderFactory } = await import('../data/ProviderFactory');
-      const provider = ProviderFactory.getProvider();
-      
-      // Update invoice
-      await provider.updateDoc('invoices', inv.id!, {
-        status: targetStatus,
-        updatedAt: new Date().toISOString()
+      // Clean invoice number matching
+      const cleanInvNo = String(inv.invoiceNumber || '').replace('#', '');
+      const invItems = items.filter(it => {
+        const itClean = String(it.invoiceNumber || '').replace('#', '');
+        return itClean === cleanInvNo || it.invoiceId === inv.id;
       });
 
-      // Update all items of this invoice
-      const invItems = items.filter(it => it.invoiceNumber === inv.invoiceNumber);
+      // Update in Firestore
+      const batch = writeBatch(db);
+      const invRef = doc(db, 'invoices', inv.id!);
+      batch.update(invRef, {
+        status: normalizedStatus,
+        updatedAt: serverTimestamp()
+      });
+
       for (const it of invItems) {
-        await provider.updateDoc('invoice_items', it.id!, {
-          status: targetStatus,
-          subStatus: finalSubStatus,
-          updatedAt: new Date().toISOString(),
-          updatedBy: user?.name || user?.username || 'مدير النظام'
+        const itemRef = doc(db, 'invoice_items', it.id!);
+        batch.update(itemRef, {
+          status: normalizedStatus,
+          subStatus: normalizedSubStatus,
+          updatedAt: serverTimestamp(),
+          updatedBy: user?.name || user?.username || 'مدير النظام',
+          ...additional
         });
       }
+
+      await batch.commit();
+
+      // Use ProviderFactory for offline/local persistence
+      try {
+        const { ProviderFactory } = await import('../data/ProviderFactory');
+        const provider = ProviderFactory.getProvider();
+        
+        await provider.updateDoc('invoices', inv.id!, {
+          status: normalizedStatus,
+          updatedAt: new Date().toISOString()
+        });
+
+        for (const it of invItems) {
+          await provider.updateDoc('invoice_items', it.id!, {
+            status: normalizedStatus,
+            subStatus: normalizedSubStatus,
+            updatedAt: new Date().toISOString(),
+            updatedBy: user?.name || user?.username || 'مدير النظام',
+            ...additional
+          });
+        }
+      } catch (e) {
+        console.warn('Provider update warning:', e);
+      }
+
       showToast('تم تحديث حالة الفاتورة وجميع الأجهزة المشمولة بها وعكس القيود المالية بنجاح');
       
       // Clear specific invoice status override after commit
@@ -835,7 +922,7 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
         // Load price accurately: using safe helper
         const unitPrice = getItemUnitCost(existing);
         setDetailedPrice(unitPrice);
-        setDetailedStatus(existing.status || '10');
+        setDetailedStatus(existing.subStatus && ['intact', 'unrepairable', 'refused'].includes(existing.subStatus) ? existing.subStatus : (existing.status || '10'));
       }
     }
   };
@@ -918,26 +1005,9 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
         const itCleanInvNo = String(it.invoiceNumber || '').replace('#', '');
         return (itCleanInvNo === cleanInvNo || it.invoiceId === selectedInvoiceForAdmin.id) && it.id !== itemId;
       });
-      const newTotalCost = remainingItems.reduce((sum, it) => sum + getItemCost(it), 0);
+      const newTotalCost = calculateInvoiceBillableTotal(selectedInvoiceForAdmin, remainingItems);
 
-      let computedStatus = '10';
-      if (remainingItems.length === 0) {
-        computedStatus = '10';
-      } else {
-        const isAllDelivered = remainingItems.every(st => st.status === '60');
-        const isAllReadyOrBeyond = remainingItems.every(st => {
-          const val = Number(st.status);
-          return !isNaN(val) ? val >= 50 : ['ready', 'intact', 'unrepairable', 'refused', '60', 'delivered', '70'].includes(st.status);
-        });
-
-        if (isAllDelivered) {
-          computedStatus = '60';
-        } else if (isAllReadyOrBeyond) {
-          computedStatus = '50';
-        } else {
-          computedStatus = '10';
-        }
-      }
+      const computedStatus = computeInvoiceStatusFromItems(remainingItems);
 
       // 3. Update parent invoice in Provider & Firestore
       if (selectedInvoiceForAdmin.id) {
@@ -1056,23 +1126,8 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
       const batch = writeBatch(db);
 
       for (const item of finalItemsToSave) {
-        const isEntryStatus = ['10', 'new'].includes(item.status);
-        let finalSubStatus = '';
-        if (isEntryStatus) {
-          finalSubStatus = '';
-        } else if (['20', 'inspected', 'testing'].includes(item.status)) {
-          finalSubStatus = 'testing';
-        } else if (['30', 'awaiting_approval'].includes(item.status)) {
-          finalSubStatus = 'awaiting_approval';
-        } else if (['35', 'awaiting_parts'].includes(item.status)) {
-          finalSubStatus = 'awaiting_parts';
-        } else if (['40', 'repairing'].includes(item.status)) {
-          finalSubStatus = 'repairing';
-        } else if (['50', 'ready', 'intact', 'unrepairable', 'refused'].includes(item.status)) {
-          finalSubStatus = item.status === '50' ? 'ready' : item.status;
-        } else if (['60', 'delivered'].includes(item.status)) {
-          finalSubStatus = 'delivered';
-        }
+        const { status: itemNormStatus, subStatus: itemNormSubStatus, additional: itemAdditional = {} } = normalizeDeviceStatus(item.status);
+        const isEntryStatus = ['10', 'new'].includes(itemNormStatus);
 
         const catId = item.deviceType ? item.deviceType.trim().replace(/\//g, '_') : '';
         const itemCost = item.cost;
@@ -1095,14 +1150,15 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
             quantity: item.quantity,
             unitCost: item.unitCost,
             cost: itemCost,
-            status: item.status,
-            subStatus: finalSubStatus,
+            status: itemNormStatus,
+            subStatus: itemNormSubStatus,
             engineerReport: isEntryStatus ? '' : (item.engineerReport || ''),
             technicalNotes: isEntryStatus ? '' : (item.technicalNotes || ''),
             entryDate: itemEntryDate,
             createdAt: serverTimestamp(),
             updatedAt: serverTimestamp(),
-            updatedBy: user?.name || user?.username || 'مدير النظام'
+            updatedBy: user?.name || user?.username || 'مدير النظام',
+            ...itemAdditional
           };
           batch.set(newItemRef, newItemData);
 
@@ -1139,10 +1195,11 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
             quantity: item.quantity,
             unitCost: item.unitCost,
             cost: itemCost,
-            status: item.status,
-            subStatus: finalSubStatus,
+            status: itemNormStatus,
+            subStatus: itemNormSubStatus,
             updatedAt: serverTimestamp(),
-            updatedBy: user?.name || user?.username || 'مدير النظام'
+            updatedBy: user?.name || user?.username || 'مدير النظام',
+            ...itemAdditional
           };
 
           if (isEntryStatus) {
@@ -1251,9 +1308,9 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
           unitCost: staged.unitCost,
           cost: itemCost,
           status: staged.status,
-          subStatus: ['10', 'new'].includes(staged.status) ? '' : orig.subStatus,
+          subStatus: ['10', 'new'].includes(staged.status) ? '' : (normalizeDeviceStatus(staged.status).subStatus || orig.subStatus),
           technician: orig.technician,
-          source: ['10', 'new'].includes(staged.status) ? '' : orig.source
+          source: ['10', 'new'].includes(staged.status) ? '' : (normalizeDeviceStatus(staged.status).additional?.source || orig.source)
         });
       } else {
         // UNTOUCHED ITEM: PRESERVE EXACT ORIGINAL DATA AND COSTS
@@ -1303,23 +1360,10 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
       }
     });
 
-    const totalCost = finalItemsToSave.reduce((sum, it) => sum + it.cost, 0);
+    const totalCost = calculateInvoiceBillableTotal(selectedInvoiceForAdmin, finalItemsToSave);
 
-    // Calculate computed status of the parent invoice
-    let computedStatus = '10';
-    const isAllDelivered = finalItemsToSave.every(st => st.status === '60');
-    const isAllReadyOrBeyond = finalItemsToSave.every(st => {
-      const val = Number(st.status);
-      return !isNaN(val) ? val >= 50 : ['ready', 'intact', 'unrepairable', 'refused', '60', 'delivered', '70'].includes(st.status);
-    });
-
-    if (isAllDelivered) {
-      computedStatus = '60';
-    } else if (isAllReadyOrBeyond) {
-      computedStatus = '50';
-    } else {
-      computedStatus = '10';
-    }
+    // Calculate computed status of the parent invoice properly from all items
+    const computedStatus = computeInvoiceStatusFromItems(finalItemsToSave);
 
     // Check if reversal is needed
     const txs = await checkReversalNeeded(selectedInvoiceForAdmin!.invoiceNumber, selectedInvoiceForAdmin!.status, computedStatus);

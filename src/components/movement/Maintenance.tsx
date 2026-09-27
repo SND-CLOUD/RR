@@ -1,5 +1,6 @@
 import { CustomerAutocomplete } from '../CustomerAutocomplete';
 import { parseDate, resolveEntryDateString } from '../../lib/dateUtils';
+import { calculateInvoiceBillableTotal, getItemBillableCost, isItemRefusedOrFailed } from '../../lib/billableService';
 import { useState, useEffect } from 'react';
 import { sharePdfFile, openWhatsApp } from '../../lib/shareHelper';
 import { collection, onSnapshot, doc, writeBatch, serverTimestamp, getDoc } from '../../firebase';
@@ -311,9 +312,9 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
         let rem = itemRemaining.get(originalItem.id!) || 0;
         
         let unitCost = originalItem.quantity > 0 ? (Number(originalItem.cost || 0) / originalItem.quantity) : 0;
-        let splitItemCost = unitCost * rowCount;
-        // Keep the cost field intact so accounts can calculate full list, whilst Customer filters on failure statuses.
-        let deductedCostVal = 0; // do not deduct from base invoice
+        const rawItemCost = unitCost * rowCount;
+        let splitItemCost = isFailedOrRefused ? 0 : rawItemCost;
+        let splitEstimatedCost = rawItemCost;
 
         const resolvedEntryDate = resolveEntryDateString(originalItem, selectedInvoice);
 
@@ -329,6 +330,8 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
             subStatus,
             source: 'maintenance',
             cost: splitItemCost,
+            unitCost: isFailedOrRefused ? 0 : unitCost,
+            estimatedCost: splitEstimatedCost,
             failureReason: isFailedOrRefused ? row.reason : null,
             engineerReport: originalItem.engineerReport,
             technician: engineerName,
@@ -353,6 +356,8 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
             source: 'maintenance',
             quantity: rem,
             cost: splitItemCost,
+            unitCost: isFailedOrRefused ? 0 : unitCost,
+            estimatedCost: splitEstimatedCost,
             failureReason: isFailedOrRefused ? row.reason : null,
             engineerReport: originalItem.engineerReport,
             technician: engineerName,
@@ -393,9 +398,49 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
         finalInvoiceStatus = '40';
       }
 
+      // Recompute billable items snapshot for accurate invoice totalCost calculation
+      const finalItemsSnapshot: any[] = [];
+      const handledOrigIds = new Set<string>();
+
+      for (const row of actionItems) {
+        if (!row.id || Number(row.count) <= 0) continue;
+        const origItem = invoiceItems.find(i => i.id === row.id);
+        if (!origItem) continue;
+
+        const isFailOrRef = row.outcome === 'failed' || row.outcome === 'refused';
+        const rCount = Number(row.count) || 1;
+        const uCost = origItem.quantity > 0 ? (Number(origItem.cost || 0) / origItem.quantity) : 0;
+        const rRemaining = itemRemaining.get(origItem.id!) || 0;
+
+        finalItemsSnapshot.push({
+          ...origItem,
+          cost: isFailOrRef ? 0 : (uCost * rCount),
+          subStatus: row.outcome === 'failed' ? 'unrepairable' : row.outcome === 'refused' ? 'refused' : 'ready',
+          status: '50',
+          failureReason: isFailOrRef ? row.reason : null
+        });
+
+        if (!handledOrigIds.has(origItem.id!)) {
+          handledOrigIds.add(origItem.id!);
+          if (rRemaining > 0) {
+            finalItemsSnapshot.push({
+              ...origItem,
+              quantity: rRemaining,
+              cost: uCost * rRemaining
+            });
+          }
+        }
+      }
+
+      unmodifiedItems.forEach(it => {
+        finalItemsSnapshot.push(it);
+      });
+
+      const newInvoiceTotalCost = calculateInvoiceBillableTotal(selectedInvoice, finalItemsSnapshot);
+
       batch.update(doc(db, 'invoices', selectedInvoice.id!), {
         status: finalInvoiceStatus,
-        totalCost: Math.max(0, (selectedInvoice.totalCost || 0) - deductedCost),
+        totalCost: newInvoiceTotalCost,
         updatedAt: serverTimestamp()
       });
 

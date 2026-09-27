@@ -12,6 +12,7 @@ import { useBackHandler } from '../hooks/useBackHandler';
 import { formatTxDate, parseTxDate, parseDate, formatDate, formatTime } from '../lib/dateUtils';
 import { isInShopMaintenanceDevice, isShopMaintenanceItem, isPurchaseInvoice } from '../types';
 import { deleteInvoiceWithCascade, checkIsPurchase, checkIsSale } from '../lib/invoiceCascadeService';
+import { getItemBillableCost, isItemRefusedOrFailed } from '../lib/billableService';
 
 export default function SearchInvoice({ onBack, user }: { onBack?: () => void, user: any }) {
   const { t } = useTranslation();
@@ -136,28 +137,21 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
       }
     }
 
-    return itemsList.reduce((sum, item) => {
+    const billableSum = itemsList.reduce((sum, item) => {
       // Exclude items in pending statuses 
       if (['10', '20', '21', '22', '25', '30', '35', '40', 'new', 'in_progress', 'awaiting_parts', 'awaiting_approval', 'repairing'].includes(item.status)) {
         return sum;
       }
       
-      const sub = (item.subStatus || '').toLowerCase();
-      const status = (item.status || '').toLowerCase();
-      const src = (item.source || '').toLowerCase();
-
-      const isExcluded = 
-        ['70', 'cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(status) ||
-        ['cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(sub) ||
-        ['cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(src) ||
-        (item.failureReason !== null && item.failureReason !== undefined && item.failureReason !== '');
-      
-      if (isExcluded) {
+      if (isItemRefusedOrFailed(item)) {
         return sum;
       }
       
-      return sum + (Number(item.cost) || 0);
-    }, 0) - (invoice ? Number(invoice.discount || 0) : 0) + (invoice ? Number(invoice.tax || 0) : 0);
+      return sum + getItemBillableCost(item);
+    }, 0);
+    const discount = invoice ? Number(invoice.discount !== undefined ? invoice.discount : (invoice.discountAmount || 0)) : 0;
+    const tax = invoice ? Number(invoice.tax !== undefined ? invoice.tax : (invoice.taxAmount || 0)) : 0;
+    return Math.max(0, billableSum - discount + tax);
   };
 
   const getCustomerCurrencyLabel = (customerId: string) => {
@@ -1274,6 +1268,14 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                         <span className="text-[9px] text-gray-500 font-bold block">إجمالي الفاتورة</span>
                         <span className="font-mono font-bold text-base text-amber-500">{selectedInvoice.totalCost} {selectedInvoice.currency}</span>
                       </div>
+                      {Number(selectedInvoice.discount || selectedInvoice.discountAmount || 0) > 0 && (
+                        <div className="text-center px-4 py-2 bg-rose-500/[0.05] border border-rose-500/20 rounded-xl min-w-[100px]">
+                          <span className="text-[9px] text-rose-400 font-bold block">مبلغ الخصم</span>
+                          <span className="font-mono font-bold text-base text-rose-400">
+                            {Number(selectedInvoice.discount || selectedInvoice.discountAmount || 0)} {selectedInvoice.currency}
+                          </span>
+                        </div>
+                      )}
                       <div className="text-center px-4 py-2 bg-white/[0.02] border border-white/5 rounded-xl min-w-[100px]">
                         <span className="text-[9px] text-gray-500 font-bold block">المدفوع</span>
                         <span className="font-mono font-bold text-base text-emerald-400">{selectedInvoice.amountPaid} {selectedInvoice.currency}</span>
@@ -1281,7 +1283,7 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                       <div className="text-center px-4 py-2 bg-white/[0.02] border border-white/5 rounded-xl min-w-[100px]">
                         <span className="text-[9px] text-gray-500 font-bold block">المتبقي</span>
                         <span className="font-mono font-black text-base text-rose-500">
-                          {(Number(selectedInvoice.totalCost) - Number(selectedInvoice.amountPaid)).toFixed(2)} {selectedInvoice.currency}
+                          {Math.max(0, Number(selectedInvoice.totalCost) - Number(selectedInvoice.amountPaid || 0)).toFixed(2)} {selectedInvoice.currency}
                         </span>
                       </div>
                       <button 

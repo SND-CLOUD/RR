@@ -1,5 +1,7 @@
 import { sharePdfFile, openWhatsApp } from '../../lib/shareHelper';
 import { parseDate, resolveEntryDateString } from '../../lib/dateUtils';
+import { calculateInvoiceBillableTotal, getItemBillableCost, isItemRefusedOrFailed } from '../../lib/billableService';
+import { localDb } from '../../lib/local-db';
 import React, { useState, useEffect } from 'react';
 import { collection, onSnapshot, doc, writeBatch, serverTimestamp, getDoc, updateDoc } from '../../firebase';
 import { db } from '../../firebase';
@@ -26,6 +28,13 @@ function parseEngineerReport(reportStr: string) {
       outcome: s.substring(idx + 3).trim()
     };
   }
+  const pipeIdx = s.indexOf('|');
+  if (pipeIdx !== -1) {
+    return {
+      technical: s.substring(0, pipeIdx).trim(),
+      outcome: s.substring(pipeIdx + 1).trim()
+    };
+  }
   return {
     technical: s.trim(),
     outcome: ''
@@ -33,24 +42,31 @@ function parseEngineerReport(reportStr: string) {
 }
 
 function getItemStatus(it: any) {
-  const statusVal = String(it.status || '').trim();
-  const report = (it.engineerReport || '').toLowerCase();
-  const notes = (it.technicalNotes || '').toLowerCase();
-  const subStatus = (it.subStatus || '').toLowerCase();
+  const statusVal = String(it.status || '').trim().toLowerCase();
+  const subStatus = String(it.subStatus || '').trim().toLowerCase();
+  const decision = String(it.decision || it.technicalDecision || '').trim().toLowerCase();
+  const report = String(it.engineerReport || '').toLowerCase();
+  const notes = String(it.technicalNotes || '').toLowerCase();
+  const failure = String(it.failureReason || '').toLowerCase();
 
   if (
-    ['55', '45', '70'].includes(statusVal) || 
+    ['55', '45', '70', 'unrepairable', 'failed'].includes(statusVal) || 
     subStatus === 'unrepairable' || 
+    decision === 'unrepairable' ||
+    decision === 'failed' ||
     report.includes('لا يصلح') || 
     report.includes('لايصلح') || 
     report.includes('unrepairable') ||
     notes.includes('لا يصلح') ||
-    notes.includes('لايصلح')
+    notes.includes('لايصلح') ||
+    failure.includes('لا يصلح') ||
+    failure.includes('لايصلح')
   ) {
     return 'لا يصلح';
   } else if (
-    ['50', '60'].includes(statusVal) || 
+    statusVal === 'intact' || 
     subStatus === 'intact' || 
+    decision === 'intact' ||
     report.includes('سليم') || 
     report.includes('intact') ||
     notes.includes('سليم')
@@ -463,12 +479,19 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
               updatedAt: serverTimestamp()
             });
           } else if (listDecision === 'refused') {
-            // Move device directly to exit status '50'
+            // Move device directly to exit status '50' with zeroed cost and preserved estimatedCost
+            const currentItemCost = Number(item.cost || 0);
+            const preservedCost = (item.estimatedCost && Number(item.estimatedCost) > 0)
+              ? Number(item.estimatedCost)
+              : currentItemCost;
             batch.update(itemRef, {
               status: '50',
               subStatus: 'refused',
               failureReason: 'لم يوافق العميل',
               source: 'approval_refused_bulk',
+              cost: 0,
+              unitCost: 0,
+              estimatedCost: preservedCost,
               entryDate: resolvedEntryDate,
               updatedAt: serverTimestamp()
             });
@@ -492,8 +515,39 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
         else if (finalStatuses.some(s => s === '30' || s === '35' || s === 'awaiting_approval' || s === 'awaiting_parts')) finalBulkInvoiceStatus = '30';
         else if (finalStatuses.some(s => s === '40' || s === 'repairing')) finalBulkInvoiceStatus = '40';
 
+        // Prepare updated item snapshot for calculating new totalCost
+        const invoiceAllItems = items.filter(it => it.invoiceNumber === invoice.invoiceNumber).map(it => {
+          if (APPROVAL_STATUSES.includes(it.status)) {
+            if (listDecision === 'refused') {
+              const currentItemCost = Number(it.cost || 0);
+              const preservedCost = (it.estimatedCost && Number(it.estimatedCost) > 0)
+                ? Number(it.estimatedCost)
+                : currentItemCost;
+              return {
+                ...it,
+                status: '50',
+                subStatus: 'refused',
+                failureReason: 'لم يوافق العميل',
+                cost: 0,
+                unitCost: 0,
+                estimatedCost: preservedCost
+              };
+            } else if (listDecision === 'approved') {
+              return {
+                ...it,
+                status: '40',
+                subStatus: 'repairing'
+              };
+            }
+          }
+          return it;
+        });
+
+        const newInvoiceTotalCost = calculateInvoiceBillableTotal(invoice, invoiceAllItems);
+
         batch.update(doc(db, 'invoices', invoice.id!), {
           status: finalBulkInvoiceStatus,
+          totalCost: newInvoiceTotalCost,
           updatedAt: serverTimestamp()
         });
 
@@ -511,6 +565,36 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
         });
 
         await batch.commit();
+
+        // Also update localDb if present
+        try {
+          if (localDb) {
+            if (listDecision === 'refused') {
+              for (const it of invoiceItemsToUpdate) {
+                const currentItemCost = Number(it.cost || 0);
+                const preservedCost = (it.estimatedCost && Number(it.estimatedCost) > 0) ? Number(it.estimatedCost) : currentItemCost;
+                try {
+                  await (localDb as any).invoice_items?.update(it.id, {
+                    status: '50',
+                    subStatus: 'refused',
+                    cost: 0,
+                    unitCost: 0,
+                    estimatedCost: preservedCost
+                  });
+                } catch (e) {}
+              }
+            }
+            try {
+              await (localDb as any).invoices?.update(invoice.id, {
+                status: finalBulkInvoiceStatus,
+                totalCost: newInvoiceTotalCost
+              });
+            } catch (e) {}
+            try {
+              await localDb.run?.("UPDATE invoices SET status = ?, totalCost = ? WHERE id = ?", [finalBulkInvoiceStatus, newInvoiceTotalCost, invoice.id]);
+            } catch (e) {}
+          }
+        } catch (e) {}
 
         setDecisions(prev => {
           const copy = { ...prev };
@@ -581,12 +665,19 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
             updatedAt: serverTimestamp()
           });
         } else if (listDecision === 'refused') {
-          // Parts did not arrive -> Move to exit status '50' with failureReason
+          // Parts did not arrive -> Move to exit status '50' with failureReason and zeroed cost
+          const currentItemCost = Number(item.cost || 0);
+          const preservedCost = (item.estimatedCost && Number(item.estimatedCost) > 0)
+            ? Number(item.estimatedCost)
+            : currentItemCost;
           batch.update(itemRef, {
             status: '50',
             subStatus: 'no_parts',
             failureReason: 'لم تتوفر قطع الغيار',
             source: 'parts_not_available',
+            cost: 0,
+            unitCost: 0,
+            estimatedCost: preservedCost,
             entryDate: resolvedEntryDate,
             updatedAt: serverTimestamp()
           });
@@ -610,8 +701,39 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
       else if (finalStatuses.some(s => s === '30' || s === '35' || s === 'awaiting_approval' || s === 'awaiting_parts')) finalBulkInvoiceStatus = '30';
       else if (finalStatuses.some(s => s === '40' || s === 'repairing')) finalBulkInvoiceStatus = '40';
 
+      // Prepare updated item snapshot for calculating new totalCost
+      const invoiceAllItems = items.filter(it => it.invoiceNumber === invoice.invoiceNumber).map(it => {
+        if (PARTS_STATUSES.includes(it.status)) {
+          if (listDecision === 'refused') {
+            const currentItemCost = Number(it.cost || 0);
+            const preservedCost = (it.estimatedCost && Number(it.estimatedCost) > 0)
+              ? Number(it.estimatedCost)
+              : currentItemCost;
+            return {
+              ...it,
+              status: '50',
+              subStatus: 'no_parts',
+              failureReason: 'لم تتوفر قطع الغيار',
+              cost: 0,
+              unitCost: 0,
+              estimatedCost: preservedCost
+            };
+          } else if (listDecision === 'approved') {
+            return {
+              ...it,
+              status: '40',
+              subStatus: 'repairing'
+            };
+          }
+        }
+        return it;
+      });
+
+      const newInvoiceTotalCost = calculateInvoiceBillableTotal(invoice, invoiceAllItems);
+
       batch.update(doc(db, 'invoices', invoice.id!), {
         status: finalBulkInvoiceStatus,
+        totalCost: newInvoiceTotalCost,
         updatedAt: serverTimestamp()
       });
 
@@ -629,6 +751,36 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
       });
 
       await batch.commit();
+
+      // Also update localDb if present
+      try {
+        if (localDb) {
+          if (listDecision === 'refused') {
+            for (const it of invoiceItemsToUpdate) {
+              const currentItemCost = Number(it.cost || 0);
+              const preservedCost = (it.estimatedCost && Number(it.estimatedCost) > 0) ? Number(it.estimatedCost) : currentItemCost;
+              try {
+                await (localDb as any).invoice_items?.update(it.id, {
+                  status: '50',
+                  subStatus: 'no_parts',
+                  cost: 0,
+                  unitCost: 0,
+                  estimatedCost: preservedCost
+                });
+              } catch (e) {}
+            }
+          }
+          try {
+            await (localDb as any).invoices?.update(invoice.id, {
+              status: finalBulkInvoiceStatus,
+              totalCost: newInvoiceTotalCost
+            });
+          } catch (e) {}
+          try {
+            await localDb.run?.("UPDATE invoices SET status = ?, totalCost = ? WHERE id = ?", [finalBulkInvoiceStatus, newInvoiceTotalCost, invoice.id]);
+          } catch (e) {}
+        }
+      } catch (e) {}
 
       setDecisions(prev => {
         const copy = { ...prev };
@@ -788,9 +940,10 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
           finalEngineerReport = null;
         }
 
-        let splitItemCost = unitCost * rowCount;
-        // Keep the cost field intact so accounts can calculate full list, whilst Customer filters on refused status.
-        let deductedCostVal = 0; // do not deduct from base invoice
+        const isRefused = row.outcome === 'refused';
+        const rawItemCost = unitCost * rowCount;
+        let splitItemCost = isRefused ? 0 : rawItemCost;
+        let splitEstimatedCost = rawItemCost;
 
         const resolvedEntryDate = resolveEntryDateString(originalItem, selectedInvoice);
 
@@ -806,6 +959,8 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
             subStatus,
             source: 'approval_details_split',
             cost: splitItemCost,
+            unitCost: isRefused ? 0 : unitCost,
+            estimatedCost: splitEstimatedCost,
             failureReason,
             engineerReport: finalEngineerReport,
             technician: engineerName,
@@ -830,6 +985,8 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
             source: 'approval_details_update',
             quantity: rem,
             cost: splitItemCost,
+            unitCost: isRefused ? 0 : unitCost,
+            estimatedCost: splitEstimatedCost,
             failureReason,
             engineerReport: finalEngineerReport,
             technician: engineerName,
@@ -878,9 +1035,49 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
         finalInvoiceStatus = '40';
       }
 
+      // Recompute billable items snapshot for accurate invoice totalCost calculation
+      const finalItemsSnapshot: any[] = [];
+      const handledOrigIds = new Set<string>();
+
+      for (const row of actionItems) {
+        if (!row.id || Number(row.count) <= 0) continue;
+        const origItem = invoiceItems.find(i => i.id === row.id);
+        if (!origItem) continue;
+
+        const isRef = row.outcome === 'refused';
+        const rCount = Number(row.count) || 1;
+        const uCost = origItem.quantity > 0 ? (Number(origItem.cost || 0) / origItem.quantity) : 0;
+        const rRemaining = itemRemaining.get(origItem.id!) || 0;
+
+        finalItemsSnapshot.push({
+          ...origItem,
+          cost: isRef ? 0 : (uCost * rCount),
+          subStatus: isRef ? (subTab === 'parts' ? 'no_parts' : 'refused') : (row.outcome === 'waiting_parts' ? 'awaiting_parts' : 'repairing'),
+          status: isRef ? '50' : (row.outcome === 'waiting_parts' ? '35' : '40'),
+          failureReason: isRef ? (row.reason || (subTab === 'parts' ? 'لم تتوفر قطع الغيار' : 'لم يوافق العميل')) : null
+        });
+
+        if (!handledOrigIds.has(origItem.id!)) {
+          handledOrigIds.add(origItem.id!);
+          if (rRemaining > 0) {
+            finalItemsSnapshot.push({
+              ...origItem,
+              quantity: rRemaining,
+              cost: uCost * rRemaining
+            });
+          }
+        }
+      }
+
+      unmodifiedItems.forEach(it => {
+        finalItemsSnapshot.push(it);
+      });
+
+      const newInvoiceTotalCost = calculateInvoiceBillableTotal(selectedInvoice, finalItemsSnapshot);
+
       batch.update(doc(db, 'invoices', selectedInvoice.id!), {
         status: finalInvoiceStatus,
-        totalCost: Math.max(0, (selectedInvoice.totalCost || 0) - deductedCost),
+        totalCost: newInvoiceTotalCost,
         updatedAt: serverTimestamp()
       });
 
@@ -1184,11 +1381,30 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
                           const reportVal = item.engineerReport || item.technicalNotes || item.faultType || '';
                           const parsed = parseEngineerReport(reportVal);
                           const displayStatusReport = (() => {
-                            if (statusLabel === 'صيانة') {
-                              return parsed.outcome || '-';
-                            } else {
-                              return parsed.technical || statusLabel;
+                            if (statusLabel === 'لا يصلح') {
+                              return 'لا يصلح';
                             }
+                            if (statusLabel === 'سليم') {
+                              return 'سليم';
+                            }
+                            // صيانة: إظهار بيانات نتيجة الصيانة فقط
+                            if (parsed.outcome && parsed.outcome.trim() !== '') {
+                              return parsed.outcome.trim();
+                            }
+                            const cleanTechnical = parsed.technical 
+                              ? parsed.technical
+                                  .replace(/الجهاز بحاجة إلى صيانة/gi, '')
+                                  .replace(/تقرير الفحص[:\s-]*/gi, '')
+                                  .replace(/\|\s*$/, '')
+                                  .trim() 
+                              : '';
+                            if (cleanTechnical && cleanTechnical !== 'صيانة' && cleanTechnical !== '-') {
+                              return cleanTechnical;
+                            }
+                            if (item.outcome && typeof item.outcome === 'string' && !['approved', 'waiting_parts', 'refused'].includes(item.outcome) && item.outcome.trim() !== '') {
+                              return item.outcome.trim();
+                            }
+                            return 'تشغيل كامل للجهاز';
                           })();
                           
                           return (

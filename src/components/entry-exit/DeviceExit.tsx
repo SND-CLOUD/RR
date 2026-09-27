@@ -1,6 +1,7 @@
 import { CustomerAutocomplete } from '../CustomerAutocomplete';
 import { resolveEntryDateString } from '../../lib/dateUtils';
 import { sharePdfFile, openWhatsApp } from '../../lib/shareHelper';
+import { calculateInvoiceBillableTotal, getItemBillableCost, isItemRefusedOrFailed } from '../../lib/billableService';
 import { useState, useEffect, useRef, ChangeEvent, KeyboardEvent } from 'react';
 import { collection, onSnapshot, doc, writeBatch, getDoc, setDoc, updateDoc, serverTimestamp } from '../../firebase';
 import { db } from '../../firebase';
@@ -774,14 +775,12 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
 
   const totalDevicesEntered = allInvoiceMaintenanceItems.reduce((sum, i) => sum + (Number(i.quantity) || 1), 0);
 
-  // Total invoice amount
-  const totalInvoiceAmount = Number(selectedInvoice?.totalCost) > 0
-    ? Number(selectedInvoice?.totalCost)
-    : allInvoiceMaintenanceItems.reduce((sum, it) => sum + (getItemSubStatus(it) === 'ready' ? Number(it.cost || 0) : 0), 0);
+  // Total invoice amount (accurately derived from billable items only)
+  const totalInvoiceAmount = calculateInvoiceBillableTotal(selectedInvoice, allInvoiceMaintenanceItems);
 
   // 2. Currently selected items cost for exit (excluding status 60 items)
   const currentSelectedCost = selectedInvoice
-    ? invoiceItems.filter(i => selectedItemIds.has(i.id!) && !isDeliveredStatus(i.status) && getItemSubStatus(i) === 'ready').reduce((sum, item) => sum + (Number(item.cost) || 0), 0)
+    ? invoiceItems.filter(i => selectedItemIds.has(i.id!) && !isDeliveredStatus(i.status) && getItemSubStatus(i) === 'ready').reduce((sum, item) => sum + getItemBillableCost(item), 0)
     : 0;
 
   const selectedCost = currentSelectedCost;
@@ -789,7 +788,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
 
   // 3. Previously delivered items cost in this invoice
   const previousDeliveredCost = selectedInvoice
-    ? invoiceItems.filter(i => isDeliveredStatus(i.status) && getItemSubStatus(i) === 'ready').reduce((sum, item) => sum + (Number(item.cost) || 0), 0)
+    ? invoiceItems.filter(i => isDeliveredStatus(i.status) && getItemSubStatus(i) === 'ready').reduce((sum, item) => sum + getItemBillableCost(item), 0)
     : 0;
 
   // 4. Amount paid so far on the invoice
@@ -1136,9 +1135,11 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
       const allInvoiceItems = currentItems.filter(i => i.invoiceNumber === selectedInvoice.invoiceNumber);
       const allDelivered = allInvoiceItems.every(i => i.status === '60' || selectedItemIds.has(i.id!));
       
-      // Calculate new totalCost of the invoice by summing only 'ready' (repaired) items
-      const readyInvoiceItems = allInvoiceItems.filter(i => getItemSubStatus(i) === 'ready');
-      const newTotalCost = readyInvoiceItems.reduce((sum, item) => sum + (Number(item.cost) || 0), 0);
+      // Calculate new totalCost of the invoice accurately using billable items only and the updated discount/tax
+      const newTotalCost = calculateInvoiceBillableTotal(
+        { ...selectedInvoice, discount: newDiscount, tax: newTax },
+        allInvoiceItems
+      );
       
       const invoiceUpdates: any = {
         totalCost: newTotalCost,

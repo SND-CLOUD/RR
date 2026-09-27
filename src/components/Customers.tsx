@@ -1,6 +1,8 @@
 import { CustomerAutocomplete } from './CustomerAutocomplete';
 import AddCustomerModal from './AddCustomerModal';
 import { sharePdfFile, openWhatsApp, sendUniversalReminder } from '../lib/shareHelper';
+import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../lib/pdfHelper';
+import { getItemBillableCost, isItemRefusedOrFailed } from '../lib/billableService';
 import PrintPreviewOverlay from './PrintPreviewOverlay';
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
@@ -405,7 +407,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
       }
     }
 
-    return invoiceItems.reduce((sum, item) => {
+    const billableSum = invoiceItems.reduce((sum, item) => {
       // Exclude items in pending statuses (new, testing, awaiting approval, awaiting parts, repairing)
       // Because maintenance has not completed yet, so the amount is not yet due/confirmed on the customer.
       if (['10', '20', '25', '30', '35', '40', 'new', 'in_progress', 'awaiting_parts', 'awaiting_approval', 'repairing'].includes(item.status)) {
@@ -417,19 +419,15 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
       const status = (item.status || '').toLowerCase();
       const src = (item.source || '').toLowerCase();
 
-      // Check if cancelled, refused, unrepairable (failed), or parts unavailable
-      const isExcluded = 
-        ['70', 'cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(status) ||
-        ['cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(sub) ||
-        ['cancelled', 'refused', 'unrepairable', 'parts_not_available', 'failed'].includes(src) ||
-        (item.failureReason !== null && item.failureReason !== undefined && item.failureReason !== '');
-      
-      if (isExcluded) {
+      if (isItemRefusedOrFailed(item)) {
         return sum;
       }
       
-      return sum + (Number(item.cost) || 0);
-    }, 0) - (invoice ? Number(invoice.discount || 0) : 0) + (invoice ? Number(invoice.tax || 0) : 0);
+      return sum + getItemBillableCost(item);
+    }, 0);
+    const discount = invoice ? Number(invoice.discount !== undefined ? invoice.discount : (invoice.discountAmount || 0)) : 0;
+    const tax = invoice ? Number(invoice.tax !== undefined ? invoice.tax : (invoice.taxAmount || 0)) : 0;
+    return Math.max(0, billableSum - discount + tax);
   };
 
   const getCustomerCurrencyLabel = (customerId: string) => {
@@ -743,36 +741,6 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
         return;
       }
 
-      const canvas = await htmlToImage.toCanvas(element, {
-        pixelRatio: 2,
-        backgroundColor: '#ffffff',
-      });
-
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-
-      const pdf = new jsPDF({
-        orientation: 'p',
-        unit: 'mm',
-        format: 'a4',
-        compress: true
-      });
-      const imgWidth = 210;
-      const pageHeight = 297;
-      
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-      heightLeft -= pageHeight;
-
-      while (heightLeft > 5) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-        heightLeft -= pageHeight;
-      }
-
       const today = new Date();
       const year = today.getFullYear();
       const month = String(today.getMonth() + 1).padStart(2, '0');
@@ -780,12 +748,23 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
       const printDate = `${year}-${month}-${day}`;
       const filename = `كشف حساب_${cust.name}_${printDate}.pdf`;
 
+      const pdfResult = await generateOptimizedPdfFromElement(element, {
+        filename,
+        pixelRatio: 1.25,
+        quality: 0.74,
+        backgroundColor: '#ffffff'
+      });
+
+      const pdf = pdfResult.pdf;
+
       // 2. Prepare the PDF Base64 & save in database folder and sqlite saved_pdfs
-      let pdfBase64 = '';
-      try {
-        pdfBase64 = pdf.output('datauristring').split(',')[1];
-      } catch (err) {
-        console.error('Failed to get PDF Base64 string:', err);
+      let pdfBase64 = pdfResult.base64;
+      if (!pdfBase64) {
+        try {
+          pdfBase64 = pdf.output('datauristring').split(',')[1];
+        } catch (err) {
+          console.error('Failed to get PDF Base64 string:', err);
+        }
       }
 
       // Save to Capacitor filesystem folder

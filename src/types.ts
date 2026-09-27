@@ -91,6 +91,7 @@ export interface InvoiceItem {
   engineerReport?: string;
   failureReason?: string;
   unitCost?: number;
+  estimatedCost?: number;
   partInventoryId?: string;
   batchId?: string;
   batchName?: string;
