@@ -6,6 +6,41 @@ import './i18n';
 import { localDb } from './lib/local-db';
 import { defineCustomElements as defineJeepSqlite } from 'jeep-sqlite/loader';
 
+// Safe WebAssembly streaming compilation polyfill for iframe and sandbox environments
+if (typeof window !== 'undefined' && typeof WebAssembly !== 'undefined') {
+  const origStreaming = WebAssembly.instantiateStreaming;
+  WebAssembly.instantiateStreaming = async function (source: Response | Promise<Response>, importObject?: WebAssembly.Imports) {
+    try {
+      const res = await Promise.resolve(source);
+      const bytes = await (res.clone ? res.clone() : res).arrayBuffer();
+      return await WebAssembly.instantiate(bytes, importObject);
+    } catch (e) {
+      if (typeof origStreaming === 'function') {
+        return origStreaming.call(WebAssembly, source, importObject);
+      }
+      throw e;
+    }
+  };
+
+  const filterWasmMsg = (args: any[]) => {
+    if (!args || !args[0]) return false;
+    const str = String(args[0]);
+    return str.includes('wasm streaming compile failed') || str.includes('falling back to ArrayBuffer instantiation');
+  };
+
+  const origWarn = console.warn;
+  console.warn = function (...args: any[]) {
+    if (filterWasmMsg(args)) return;
+    origWarn.apply(console, args);
+  };
+
+  const origError = console.error;
+  console.error = function (...args: any[]) {
+    if (filterWasmMsg(args)) return;
+    origError.apply(console, args);
+  };
+}
+
 const init = async () => {
   if (typeof window !== 'undefined') {
     await defineJeepSqlite(window);

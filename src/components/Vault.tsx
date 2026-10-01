@@ -1,6 +1,6 @@
 import { sharePdfFile, openWhatsApp, sendUniversalReminder } from '../lib/shareHelper';
 import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../lib/pdfHelper';
-import { getItemBillableCost, isItemRefusedOrFailed } from '../lib/billableService';
+import { getItemBillableCost, isItemRefusedOrFailed, calculateInvoiceBillableTotal } from '../lib/billableService';
 import PrintPreviewOverlay from './PrintPreviewOverlay';
 import { tafqeet } from '../lib/tafqeet';
 import { parseFundBalance, formatMoney, getCurrencySymbol } from '../lib/fundUtils';
@@ -70,7 +70,7 @@ import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
 import { sanitizeDocumentStyles, sanitizeElementInlineStyles, cleanOklchInStyleText } from '../lib/html2canvasHelper';
 import { Filesystem, Directory } from '@capacitor/filesystem';
-import { doc, getDoc, db, setDoc, collection, addDoc, deleteDoc } from '../firebase';
+import { doc, getDoc, db, setDoc, collection, addDoc, deleteDoc, updateDoc, serverTimestamp } from '../firebase';
 
 interface VaultTransaction {
   linkedTxId?: string;
@@ -277,7 +277,7 @@ export default function Vault({
   user: User; 
   shopConfig: ShopConfig | null; 
   onBack: () => void;
-  initialSegment?: 'dashboard' | 'receipt' | 'payment' | 'transfer' | 'funds' | 'customer-ledger' | 'reports';
+  initialSegment?: 'dashboard' | 'receipt' | 'payment' | 'discounts' | 'transfer' | 'funds' | 'customer-ledger' | 'reports';
   initialCustomerName?: string;
   initialCustomerId?: string;
   initialLiabilityCurrency?: string;
@@ -305,7 +305,7 @@ export default function Vault({
     );
   }
   // Navigation
-  const [activeSegment, setActiveSegment] = useState<'dashboard' | 'receipt' | 'payment' | 'transfer' | 'funds' | 'customer-ledger' | 'reports'>(initialSegment || 'dashboard');
+  const [activeSegment, setActiveSegment] = useState<'dashboard' | 'receipt' | 'payment' | 'discounts' | 'transfer' | 'funds' | 'customer-ledger' | 'reports'>(initialSegment || 'dashboard');
   const [reportSubSegment, setReportSubSegment] = useState<'revenues' | 'expenses' | 'profits' | 'fund-balances' | 'outstanding-debts'>('revenues');
   const [showAddModal, setShowAddModal] = useState(initialShowAddModal || false);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
@@ -322,6 +322,15 @@ export default function Vault({
   const [voucherSortConfig, setVoucherSortConfig] = useState<{ key: string, direction: 'asc' | 'desc' }>({ key: 'voucherNumber', direction: 'desc' });
   const [showVoucherSort, setShowVoucherSort] = useState(false);
   const [showFundTxSort, setShowFundTxSort] = useState(false);
+
+  // DISCOUNTS STATES
+  const [discountSearchTerm, setDiscountSearchTerm] = useState<string>('');
+  const [discountSortConfig, setDiscountSortConfig] = useState<{ key: 'date' | 'amount' | 'invoiceNumber' | 'customer', direction: 'asc' | 'desc' }>({ key: 'date', direction: 'desc' });
+  const [showDiscountSort, setShowDiscountSort] = useState(false);
+  const [discountStatusFilter, setDiscountStatusFilter] = useState<'all' | 'delivered' | 'pending'>('all');
+  const [discountToDelete, setDiscountToDelete] = useState<any | null>(null);
+  const [isDeletingDiscount, setIsDeletingDiscount] = useState<boolean>(false);
+  const [deleteLinkedReceipts, setDeleteLinkedReceipts] = useState<boolean>(true);
 
   // CUSTOMER LEDGER TAB STATES
   const [ledgerCustomerId, setLedgerCustomerId] = useState<string>('');
@@ -396,11 +405,12 @@ export default function Vault({
 
   useBackHandler(reversalTxToConfirm !== null, () => setReversalTxToConfirm(null));
   useBackHandler(txToDelete !== null, () => setTxToDelete(null));
+  useBackHandler(discountToDelete !== null, () => setDiscountToDelete(null));
   useBackHandler(showPrintPreview, () => setShowPrintPreview(false));
   useBackHandler(showAddModal, () => setShowAddModal(false));
   useBackHandler(isLedgerModalOpen, () => setIsLedgerModalOpen(false));
   useBackHandler(selectedFundForReport !== null, () => setSelectedFundForReport(null));
-  useBackHandler(activeSegment !== 'dashboard' && !showAddModal && !showPrintPreview && !reversalTxToConfirm && !isLedgerModalOpen && !selectedFundForReport, () => setActiveSegment('dashboard'));
+  useBackHandler(activeSegment !== 'dashboard' && !showAddModal && !showPrintPreview && !reversalTxToConfirm && !isLedgerModalOpen && !selectedFundForReport && !discountToDelete, () => setActiveSegment('dashboard'));
 
   // LEDGER CUSTOMER MATH & HELPERS
   const getInvoiceItemsForInvoice = (invoiceNumber: string) => {
@@ -989,7 +999,7 @@ export default function Vault({
       setCustomers((custRes.values || []) as DB_Customer[]);
 
       // 5. Invoices
-      const invRes = await localDb.query("SELECT id, invoiceNumber, customerId, customerName, currency, totalCost, amountPaid, status, createdAt FROM invoices");
+      const invRes = await localDb.query("SELECT * FROM invoices");
       setInvoices((invRes.values || []) as DB_Invoice[]);
 
       // 5.5. Invoice Items
@@ -1746,6 +1756,175 @@ export default function Vault({
     }
   };
 
+  // DISCOUNTS LOGIC & COMPUTATIONS
+  const discountedInvoices = useMemo(() => {
+    return invoices.filter(inv => {
+      const disc = Number(inv.discount !== undefined ? inv.discount : (inv as any).discountAmount || 0);
+      return disc > 0;
+    });
+  }, [invoices]);
+
+  const filteredDiscounts = useMemo(() => {
+    let list = [...discountedInvoices];
+
+    // Status filter
+    if (discountStatusFilter === 'delivered') {
+      list = list.filter(inv => inv.status === '60');
+    } else if (discountStatusFilter === 'pending') {
+      list = list.filter(inv => inv.status !== '60');
+    }
+
+    // Search filter
+    if (discountSearchTerm.trim()) {
+      const term = discountSearchTerm.toLowerCase().trim();
+      list = list.filter(inv => {
+        const invNum = String(inv.invoiceNumber || '').toLowerCase();
+        const custName = String(inv.customerName || '').toLowerCase();
+        const discVal = String(inv.discount || (inv as any).discountAmount || '');
+        const phone = customers.find(c => c.id === inv.customerId)?.phone1 || '';
+        return invNum.includes(term) || custName.includes(term) || discVal.includes(term) || phone.includes(term);
+      });
+    }
+
+    // Sort
+    list.sort((a, b) => {
+      let valA: any = '';
+      let valB: any = '';
+      const discA = Number(a.discount !== undefined ? a.discount : (a as any).discountAmount || 0);
+      const discB = Number(b.discount !== undefined ? b.discount : (b as any).discountAmount || 0);
+
+      switch (discountSortConfig.key) {
+        case 'amount':
+          valA = discA;
+          valB = discB;
+          break;
+        case 'invoiceNumber':
+          valA = Number(String(a.invoiceNumber || '0').replace(/\D/g, '')) || 0;
+          valB = Number(String(b.invoiceNumber || '0').replace(/\D/g, '')) || 0;
+          break;
+        case 'customer':
+          valA = a.customerName || '';
+          valB = b.customerName || '';
+          break;
+        case 'date':
+        default:
+          valA = (a.createdAt || (a as any).date) ? new Date(a.createdAt || (a as any).date).getTime() : 0;
+          valB = (b.createdAt || (b as any).date) ? new Date(b.createdAt || (b as any).date).getTime() : 0;
+          break;
+      }
+
+      if (valA < valB) return discountSortConfig.direction === 'asc' ? -1 : 1;
+      if (valA > valB) return discountSortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+
+    return list;
+  }, [discountedInvoices, discountStatusFilter, discountSearchTerm, discountSortConfig, customers]);
+
+  const handleConfirmDeleteDiscount = async (inv: any, alsoDeleteReceipts: boolean) => {
+    if (!inv) return;
+    setIsDeletingDiscount(true);
+    try {
+      const invId = inv.id;
+      const invNo = inv.invoiceNumber ? String(inv.invoiceNumber).replace('#', '').trim() : '';
+
+      // 1. Recalculate billable total safely
+      const matchingItems = items.filter(it => {
+        const itNo = String(it.invoiceNumber || '').replace('#', '').trim();
+        return (invNo && itNo === invNo) || (it.invoiceId && it.invoiceId === invId);
+      });
+
+      const currentDiscount = Number(inv.discount !== undefined ? inv.discount : (inv as any).discountAmount || 0);
+      let newTotalCost = 0;
+      if (matchingItems.length > 0) {
+        try {
+          newTotalCost = calculateInvoiceBillableTotal({ ...inv, discount: 0 }, matchingItems);
+        } catch (calcErr) {
+          console.warn("calculateInvoiceBillableTotal error, fallback:", calcErr);
+          newTotalCost = Math.max(0, Number(inv.totalCost || 0) + currentDiscount);
+        }
+      } else {
+        newTotalCost = Math.max(0, Number(inv.totalCost || 0) + currentDiscount);
+      }
+
+      // 2. Delete linked receipts if requested
+      if (alsoDeleteReceipts && invNo) {
+        const linkedReceipts = transactions.filter(t => {
+          const tInvNo = String(t.invoiceNumber || '').replace('#', '').trim();
+          return tInvNo === invNo && (t.type === 'receipt' || t.type === 'deposit');
+        });
+
+        for (const rc of linkedReceipts) {
+          try {
+            await handleDeleteTransaction(rc);
+          } catch (rcErr) {
+            console.warn("Failed to delete linked receipt:", rcErr);
+          }
+        }
+      }
+
+      // 3. Update invoice discount = 0 in database
+      if (invId) {
+        // Provider update
+        try {
+          await ProviderFactory.getProvider().updateDoc('invoices', invId, {
+            discount: 0,
+            discountAmount: 0,
+            totalCost: newTotalCost,
+            updatedAt: new Date().toISOString()
+          });
+        } catch (provErr) {
+          console.warn("Provider updateDoc error:", provErr);
+        }
+
+        // Direct Firestore update
+        try {
+          const invDocRef = doc(db, 'invoices', invId);
+          const snap = await getDoc(invDocRef);
+          if (snap.exists()) {
+            await updateDoc(invDocRef, {
+              discount: 0,
+              discountAmount: 0,
+              totalCost: newTotalCost,
+              updatedAt: serverTimestamp()
+            });
+          }
+        } catch (fsErr) {
+          console.warn("Firestore updateDoc error:", fsErr);
+        }
+
+        // SQLite update
+        try {
+          await localDb.run(
+            "UPDATE invoices SET discount = 0, totalCost = ? WHERE id = ? OR invoiceNumber = ?",
+            [newTotalCost, invId, invNo || invId]
+          );
+        } catch (sqlErr) {
+          console.warn("SQLite update error:", sqlErr);
+        }
+      }
+
+      // 4. Update React state immediately
+      setInvoices(prev => prev.map(item => {
+        const itemNo = String(item.invoiceNumber || '').replace('#', '').trim();
+        if (item.id === invId || (invNo && itemNo === invNo)) {
+          return { ...item, discount: 0, totalCost: newTotalCost };
+        }
+        return item;
+      }));
+
+      setSuccessMsg(`تم حذف الخصم بنجاح للفاتورة #${invNo || invId} وإعادة ضبط الحسابات.`);
+      setTimeout(() => setSuccessMsg(null), 3500);
+    } catch (err: any) {
+      console.error("Failed to delete discount:", err);
+      setErrorMsg(err?.message || "حدث خطأ أثناء محاولة حذف الخصم");
+    } finally {
+      setIsDeletingDiscount(false);
+      setDiscountToDelete(null);
+      await loadDatabaseData(true);
+    }
+  };
+
   // Suggest filtered customer autocomplete search
   const filteredCustomers = customers.filter(c => 
     (c.name || '').toLowerCase().includes((customerSearch || '').toLowerCase()) ||
@@ -2351,6 +2530,20 @@ export default function Vault({
                      <span className="px-2.5 py-1 rounded-lg bg-white/5 text-[9px] font-bold text-gray-500 font-cairo">{t('vault.outgoing', 'صادر')}</span>
                    </button>
 
+                   {/* Discounts Row */}
+                   <button 
+                     onClick={() => { setActiveSegment('discounts'); setGlobalSearch(''); }}
+                     className="w-full flex items-center justify-between p-3.5 px-5 bg-[#181818] hover:bg-[#202020] border border-white/5 rounded-2xl transition-all active:scale-[0.98] group cursor-pointer"
+                   >
+                     <div className="flex items-center gap-3">
+                        <Percent size={18} className="text-purple-400" />
+                        <span className="text-xs font-bold text-gray-300 font-cairo leading-none">عرض الخصومات في النظام</span>
+                     </div>
+                     <span className="px-2.5 py-1 rounded-lg bg-purple-500/10 text-[9px] font-bold text-purple-400 font-cairo border border-purple-500/20 font-mono">
+                       {discountedInvoices.length} خصم
+                     </span>
+                   </button>
+
                    {/* Transfer Row */}
                    <button 
                      onClick={() => { setActiveSegment('transfer'); setGlobalSearch(''); }}
@@ -2597,6 +2790,207 @@ export default function Vault({
                   </div>
 
                   {/* Guaranteed extra bottom clearance space */}
+                  <div className="h-16 w-full pointer-events-none" />
+                </div>
+              </div>
+            );
+          })()}
+
+          {/* 1.5. DISCOUNTS LIST VIEW */}
+          {activeSegment === 'discounts' && (() => {
+            return (
+              <div className="space-y-5 p-4 sm:p-6 pb-48 font-cairo">
+                <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-purple-500/10 border border-purple-500/20 text-purple-400 rounded-xl">
+                      <Percent size={20} />
+                    </div>
+                    <div>
+                      <h3 className="text-base font-bold text-white">سجل الخصومات في النظام</h3>
+                      <p className="text-[11px] text-gray-400">عرض وإدارة وحذف كافة الخصومات المعتمدة على الفواتير</p>
+                    </div>
+                  </div>
+                  <button 
+                    onClick={() => setActiveSegment('dashboard')}
+                    className="p-1.5 px-3 bg-white/5 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all flex items-center gap-1.5 text-xs cursor-pointer"
+                  >
+                    <span>الرئيسية</span>
+                    <ArrowRight size={16} />
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-3">
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <div className="flex-1 relative group">
+                      <Search className="absolute right-4 top-3 text-gray-600 group-focus-within:text-purple-400 transition-colors" size={16} />
+                      <input 
+                        type="text" 
+                        placeholder="البحث برقم الفاتورة، اسم العميل، قيمة الخصم، أو الهاتف..."
+                        value={discountSearchTerm}
+                        onChange={(e) => setDiscountSearchTerm(e.target.value)}
+                        className="w-full bg-[#161616] border border-white/5 rounded-xl pr-11 pl-4 py-3 text-[11px] text-white outline-none focus:border-purple-500/50 transition-all font-bold placeholder:text-gray-700"
+                      />
+                    </div>
+
+                    <div className="relative">
+                      <button 
+                        onClick={() => setShowDiscountSort(!showDiscountSort)}
+                        className="h-full px-4 py-2.5 bg-white/5 border border-white/5 rounded-xl text-gray-300 hover:text-white transition-all flex items-center gap-2 text-xs cursor-pointer whitespace-nowrap"
+                      >
+                        <Filter size={15} className="text-purple-400" />
+                        <span>ترتيب وفرز</span>
+                        <ChevronDown size={14} className="text-gray-500" />
+                      </button>
+                      {showDiscountSort && (
+                        <div className="absolute z-50 left-0 mt-2 bg-[#1f1f1f] border border-white/10 rounded-xl shadow-2xl p-1.5 w-52 text-right">
+                          <button onClick={() => { setDiscountSortConfig({ key: 'date', direction: 'desc' }); setShowDiscountSort(false); }} className="w-full text-right px-3 py-1.5 text-[11px] hover:bg-purple-600 hover:text-white text-slate-300 rounded font-bold transition-colors">الأحدث تاريخاً</button>
+                          <button onClick={() => { setDiscountSortConfig({ key: 'date', direction: 'asc' }); setShowDiscountSort(false); }} className="w-full text-right px-3 py-1.5 text-[11px] hover:bg-purple-600 hover:text-white text-slate-300 rounded font-bold transition-colors">الأقدم تاريخاً</button>
+                          <button onClick={() => { setDiscountSortConfig({ key: 'amount', direction: 'desc' }); setShowDiscountSort(false); }} className="w-full text-right px-3 py-1.5 text-[11px] hover:bg-purple-600 hover:text-white text-slate-300 rounded font-bold transition-colors">قيمة الخصم (الأعلى)</button>
+                          <button onClick={() => { setDiscountSortConfig({ key: 'amount', direction: 'asc' }); setShowDiscountSort(false); }} className="w-full text-right px-3 py-1.5 text-[11px] hover:bg-purple-600 hover:text-white text-slate-300 rounded font-bold transition-colors">قيمة الخصم (الأقل)</button>
+                          <button onClick={() => { setDiscountSortConfig({ key: 'invoiceNumber', direction: 'desc' }); setShowDiscountSort(false); }} className="w-full text-right px-3 py-1.5 text-[11px] hover:bg-purple-600 hover:text-white text-slate-300 rounded font-bold transition-colors">رقم الفاتورة (تنازلي)</button>
+                          <button onClick={() => { setDiscountSortConfig({ key: 'customer', direction: 'asc' }); setShowDiscountSort(false); }} className="w-full text-right px-3 py-1.5 text-[11px] hover:bg-purple-600 hover:text-white text-slate-300 rounded font-bold transition-colors">اسم العميل (أ - ي)</button>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-2">
+                    <button
+                      onClick={() => setDiscountStatusFilter('all')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        discountStatusFilter === 'all'
+                          ? 'bg-purple-600 text-white shadow-md shadow-purple-900/30'
+                          : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      الكل ({discountedInvoices.length})
+                    </button>
+                    <button
+                      onClick={() => setDiscountStatusFilter('delivered')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        discountStatusFilter === 'delivered'
+                          ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/30'
+                          : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      فواتير مسلمة ({discountedInvoices.filter(i => i.status === '60').length})
+                    </button>
+                    <button
+                      onClick={() => setDiscountStatusFilter('pending')}
+                      className={`px-3 py-1 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        discountStatusFilter === 'pending'
+                          ? 'bg-amber-600 text-white shadow-md shadow-amber-900/30'
+                          : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+                      }`}
+                    >
+                      فواتير قيد الصيانة / جاهزة ({discountedInvoices.filter(i => i.status !== '60').length})
+                    </button>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between pb-1" dir="rtl">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-bold text-gray-300">قائمة الفواتير التي تحتوي على خصم:</span>
+                      <span className="text-[10px] font-bold text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2.5 py-0.5 rounded-full font-mono">
+                        {filteredDiscounts.length} فاتورة
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="border border-white/5 rounded-2xl overflow-x-auto bg-black/10 scrollbar-thin">
+                    <table className="w-full text-right text-[11px] whitespace-nowrap">
+                      <thead>
+                        <tr className="bg-white/5 text-gray-400 font-bold border-b border-white/5 uppercase">
+                          <th className="px-4 py-3">رقم الفاتورة</th>
+                          <th className="px-4 py-3">اسم العميل / الجهة</th>
+                          <th className="px-4 py-3 text-center">مبلغ الخصم</th>
+                          <th className="px-4 py-3 text-center">إجمالي الفاتورة</th>
+                          <th className="px-4 py-3 text-center">حالة الفاتورة</th>
+                          <th className="px-4 py-3 text-left">التاريخ</th>
+                          <th className="px-4 py-3 text-center">حذف الخصم</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-white/5">
+                        {filteredDiscounts.length === 0 ? (
+                          <tr>
+                            <td colSpan={7} className="text-center py-12 text-gray-500 font-bold">
+                              <div className="flex flex-col items-center justify-center gap-2">
+                                <Percent size={32} className="text-gray-600 opacity-40" />
+                                <span>لا توجد خصومات مسجلة تطابق البحث</span>
+                              </div>
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredDiscounts.map((inv) => {
+                            const discVal = Number(inv.discount !== undefined ? inv.discount : (inv as any).discountAmount || 0);
+                            const curr = inv.currency || 'USD';
+                            const cust = customers.find(c => c.id === inv.customerId);
+                            const isDelivered = inv.status === '60';
+
+                            return (
+                              <tr key={inv.id || inv.invoiceNumber} className="hover:bg-white/5 transition-colors">
+                                <td className="px-4 py-3 font-mono font-bold text-amber-500">
+                                  #{inv.invoiceNumber}
+                                </td>
+                                <td className="px-4 py-3">
+                                  <div className="flex flex-col">
+                                    <span className="font-bold text-white">{inv.customerName || cust?.name || 'عميل نقدي'}</span>
+                                    {cust?.phone1 && (
+                                      <span className="text-[10px] text-gray-500 font-mono" dir="ltr">{cust.phone1}</span>
+                                    )}
+                                  </div>
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  <span className="font-mono font-black text-purple-400 bg-purple-500/10 border border-purple-500/20 px-2.5 py-1 rounded-lg text-xs">
+                                    {discVal.toLocaleString('en-US')} {curr}
+                                  </span>
+                                </td>
+                                <td className="px-4 py-3 text-center font-mono font-bold text-gray-200">
+                                  {Number(inv.totalCost || 0).toLocaleString('en-US')} {curr}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  {isDelivered ? (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
+                                      مسلّمة
+                                    </span>
+                                  ) : (
+                                    <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                                      قيد العمل / جاهزة
+                                    </span>
+                                  )}
+                                </td>
+                                <td className="px-4 py-3 text-left font-mono text-gray-500 text-[10px]" dir="ltr">
+                                  {inv.createdAt ? new Date(inv.createdAt).toLocaleDateString('ar-YE') : '-'}
+                                </td>
+                                <td className="px-4 py-3 text-center">
+                                  {(user.role === 'admin' || user.role === 'manager' || canDelete || hasPermission('delete')) && (
+                                    <button
+                                      onClick={() => setDiscountToDelete(inv)}
+                                      className="p-1.5 px-2.5 rounded-lg text-rose-400 hover:text-white hover:bg-rose-600 transition-all cursor-pointer bg-rose-500/10 border border-rose-500/20 flex items-center gap-1 mx-auto"
+                                      title="حذف الخصم نهائياً من قاعدة البيانات"
+                                    >
+                                      <Trash2 size={13} />
+                                      <span className="text-[10px] font-bold">حذف الخصم</span>
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            );
+                          })
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between text-[11px] text-gray-400 bg-[#141414] border border-white/5 rounded-xl px-4 py-3">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-purple-500 inline-block"></span>
+                      <span>إجمالي الفواتير ذات الخصم: <strong className="text-white font-mono">{filteredDiscounts.length}</strong> فاتورة</span>
+                    </div>
+                    <span className="text-gray-500 text-[10px]">نهاية جدول الخصومات ✓</span>
+                  </div>
+
                   <div className="h-16 w-full pointer-events-none" />
                 </div>
               </div>
@@ -4463,6 +4857,95 @@ export default function Vault({
           </div>
         </div>
       )}
+
+      {/* Delete Discount Confirmation Modal */}
+      {discountToDelete && (() => {
+        const inv = discountToDelete;
+        const discVal = Number(inv.discount !== undefined ? inv.discount : (inv as any).discountAmount || 0);
+        const curr = inv.currency || 'USD';
+        const invNum = String(inv.invoiceNumber || '').replace('#', '').trim();
+
+        // Linked receipts
+        const linkedReceipts = transactions.filter(t => {
+          const tInvNo = String(t.invoiceNumber || '').replace('#', '').trim();
+          return invNum && tInvNo === invNum && (t.type === 'receipt' || t.type === 'deposit');
+        });
+
+        return (
+          <div className="fixed inset-0 z-[160] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" dir="rtl">
+            <div className="bg-[#121212] border border-white/10 rounded-2xl w-full max-w-md p-6 space-y-5 shadow-2xl font-cairo">
+              <div className="flex items-center gap-3 border-b border-white/5 pb-4">
+                <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-xl">
+                  <Trash2 size={22} />
+                </div>
+                <div className="text-right">
+                  <h3 className="text-sm font-black text-white">تأكيد حذف الخصم نهائياً</h3>
+                  <p className="text-[10px] text-gray-400 mt-0.5">سيتم تصفير الخصم وإعادة احتساب قيمة الفاتورة الأصلية</p>
+                </div>
+              </div>
+
+              <div className="space-y-2.5 bg-white/5 p-4 rounded-xl text-right text-xs">
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">رقم الفاتورة:</span>
+                  <span className="font-mono font-bold text-amber-500">#{inv.invoiceNumber}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">اسم العميل:</span>
+                  <span className="font-bold text-white">{inv.customerName || 'عميل نقدي'}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">مبلغ الخصم المحذوف:</span>
+                  <span className="font-mono font-black text-rose-400">{discVal.toLocaleString('en-US')} {curr}</span>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400">إجمالي الفاتورة الحالي:</span>
+                  <span className="font-mono font-bold text-gray-300">{Number(inv.totalCost || 0).toLocaleString('en-US')} {curr}</span>
+                </div>
+                
+                {linkedReceipts.length > 0 && (
+                  <div className="border-t border-white/10 pt-2.5 mt-2.5 space-y-2">
+                    <div className="flex items-center justify-between text-amber-400 text-[11px] font-bold">
+                      <span>سندات القبض المرتبطة ({linkedReceipts.length}):</span>
+                      <span className="font-mono text-xs">
+                        {linkedReceipts.map(r => `#${r.voucherNumber}`).join(', ')}
+                      </span>
+                    </div>
+                    <label className="flex items-center gap-2 cursor-pointer text-[11px] text-rose-300 bg-rose-500/10 p-2 rounded-lg border border-rose-500/20 select-none">
+                      <input 
+                        type="checkbox"
+                        checked={deleteLinkedReceipts}
+                        onChange={(e) => setDeleteLinkedReceipts(e.target.checked)}
+                        className="rounded border-white/20 bg-black/40 text-rose-600 focus:ring-rose-500 w-3.5 h-3.5 accent-rose-600 cursor-pointer"
+                      />
+                      <span>حذف سند القبض المالي المرتبط بهذه الفاتورة وتعديل رصيد الخزينة</span>
+                    </label>
+                  </div>
+                )}
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={isDeletingDiscount}
+                  onClick={() => handleConfirmDeleteDiscount(inv, deleteLinkedReceipts)}
+                  className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all cursor-pointer shadow-lg shadow-rose-600/20 active:scale-95 flex items-center justify-center gap-2"
+                >
+                  {isDeletingDiscount ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                  <span>تأكيد حذف الخصم</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingDiscount}
+                  onClick={() => setDiscountToDelete(null)}
+                  className="flex-1 py-3 bg-[#1e1e1e] hover:bg-[#252525] border border-white/5 disabled:opacity-50 text-gray-300 rounded-xl text-xs font-bold transition-all cursor-pointer text-center"
+                >
+                  إلغاء
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* Fund Statement & Movement Report Modal */}
       {selectedFundForReport && (() => {

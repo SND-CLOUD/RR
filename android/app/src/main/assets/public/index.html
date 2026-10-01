@@ -1,12 +1,52 @@
 <!doctype html>
-<html lang="en">
+<html lang="ar" dir="rtl">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" type="image/png" href="/favicon.png" />
-    <title>SND Maintenance System - عالم الصيانة والتجارة</title>
-    <script type="module" crossorigin src="/assets/index-CR0ukFZS.js"></script>
-    <link rel="stylesheet" crossorigin href="/assets/index-BSJ-1BoI.css">
+    <title>نظام سندات الصيانة - SND</title>
+    <meta name="description" content="نظام متكامل لإدارة مراكز صيانة الأجهزة والشبكات والراوترات. تتبع الأجهزة، فواتير صيانة، تقارير أداء، وإدارة عملاء." />
+    <meta property="og:title" content="نظام سندات الصيانة - SND" />
+    <meta property="og:description" content="نظام متكامل لإدارة مراكز صيانة الأجهزة والشبكات والراوترات. تتبع الأجهزة، فواتير صيانة، تقارير أداء، وإدارة عملاء." />
+    <script>
+      // Safe WebAssembly streaming compilation polyfill for iframe and sandbox environments
+      if (typeof window !== 'undefined' && typeof WebAssembly !== 'undefined') {
+        const origStreaming = WebAssembly.instantiateStreaming;
+        WebAssembly.instantiateStreaming = async function (source, importObject) {
+          try {
+            const res = await Promise.resolve(source);
+            const bytes = await (res.clone ? res.clone() : res).arrayBuffer();
+            return await WebAssembly.instantiate(bytes, importObject);
+          } catch (e) {
+            if (typeof origStreaming === 'function') {
+              return origStreaming.call(WebAssembly, source, importObject);
+            }
+            throw e;
+          }
+        };
+
+        // Suppress benign fallback warnings from Emscripten/sql.js in iframe
+        const filterWasmMsg = (args) => {
+          if (!args || !args[0]) return false;
+          const str = String(args[0]);
+          return str.includes('wasm streaming compile failed') || str.includes('falling back to ArrayBuffer instantiation');
+        };
+
+        const origWarn = console.warn;
+        console.warn = function (...args) {
+          if (filterWasmMsg(args)) return;
+          origWarn.apply(console, args);
+        };
+
+        const origError = console.error;
+        console.error = function (...args) {
+          if (filterWasmMsg(args)) return;
+          origError.apply(console, args);
+        };
+      }
+    </script>
+    <script type="module" crossorigin src="/assets/index-CyAnCb5B.js"></script>
+    <link rel="stylesheet" crossorigin href="/assets/index-D-_XiuyP.css">
   </head>
   <body>
     <jeep-sqlite data-html2canvas-ignore="true" style="display:none" wasmPath="/assets" wasm-path="/assets"></jeep-sqlite>

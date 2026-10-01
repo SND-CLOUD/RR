@@ -155,53 +155,7 @@ export async function repairAllFundBalances(): Promise<{ repairedCount: number, 
         }
       });
 
-      // Check against Cloud Fund Balance
-      const matchingCloudFund = cloudFunds.find((cf: any) => cf.id === fund.id);
-      const cloudBalance = matchingCloudFund ? parseFundBalance(matchingCloudFund.balance) : null;
-
-      // If there is an unallocated difference between cloud fund balance and vouchers sum, create an opening balance voucher to bridge it
-      if (cloudBalance !== null && Math.abs(cloudBalance - calculatedBalance) > 0.01) {
-        const delta = roundCurrencyAmount(cloudBalance - calculatedBalance, fund.currency);
-        if (delta !== 0) {
-          console.log(`[FundRepair] Bridging balance discrepancy for fund ${fund.name} (${fund.id}): Cloud=${cloudBalance}, Vouchers=${calculatedBalance}, Delta=${delta}`);
-          const txId = `tx_ob_${fund.id}_${Date.now()}`;
-          const isPositive = delta > 0;
-          const obTx: any = {
-            id: txId,
-            voucherNumber: 1000 + Math.floor(Math.random() * 8000),
-            fundId: fund.id,
-            fundName: fund.name || 'الصندوق الرئيسي',
-            currency: fund.currency || 'YER',
-            amount: Math.abs(delta),
-            liabilityCurrency: fund.currency || 'YER',
-            liabilityAmount: Math.abs(delta),
-            receiptCurrency: fund.currency || 'YER',
-            receiptAmount: Math.abs(delta),
-            customerName: isPositive ? 'رصيد افتتاحي / رأس مال' : 'تسوية رصيد الصندوق',
-            customerId: null,
-            type: isPositive ? 'receipt' : 'payment',
-            transactionCategory: isPositive ? 'رصيد افتتاحي' : 'تسوية صادر',
-            notes: isPositive ? `سند رصيد افتتاحي لمطابقة وموازنة رصيد الصندوق السحابي (${cloudBalance} ${fund.currency})` : `سند تسوية رصيد لمطابقة رصيد الصندوق مع السحابة (${cloudBalance} ${fund.currency})`,
-            statementNote: isPositive ? `رصيد افتتاحي مطابق للسحابة` : `تسوية رصيد مع السحابة`,
-            date: new Date().toISOString(),
-            status: 'posted'
-          };
-
-          try {
-            await addDoc(collection(db, 'vault_transactions'), {
-              ...obTx,
-              timestamp: serverTimestamp()
-            });
-            await LocalProviderInstance.setDoc('vault_transactions', txId, obTx, undefined, 'BYPASS_OUTBOX');
-          } catch (e) {
-            console.warn(`Could not post opening balance voucher for fund ${fund.id}:`, e);
-          }
-
-          calculatedBalance = cloudBalance;
-        }
-      }
-
-      // Apply standard rounding and precision based on fund currency
+      // Calculate final balance purely based on valid accounting transactions
       const finalBalance = roundCurrencyAmount(calculatedBalance, fund.currency);
 
       const oldLocalBal = fund.balance;
