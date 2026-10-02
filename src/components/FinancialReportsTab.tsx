@@ -850,7 +850,7 @@ export default function FinancialReportsTab({
         </div>
 
         <div className="space-y-2">
-          {funds.map(fund => {
+          {funds.map((fund, fIdx) => {
             const isSelected = selectedFundId === fund.id;
             const isExpanded = !!expandedFundIds[fund.id];
             const fundTxs = transactions.filter(t => (t.fundId === fund.id || (!t.fundId && t.fundName === fund.name)) && isAccountingTransactionValid(t));
@@ -862,7 +862,7 @@ export default function FinancialReportsTab({
               // Example: الدولار الرئيسي   نقدي   82$    زر فتح
               return (
                 <div 
-                  key={fund.id}
+                  key={fund.id ? `fund-col-${fund.id}-${fIdx}` : `fund-col-idx-${fIdx}`}
                   className={`px-4 py-2.5 rounded-xl border transition-all flex items-center justify-between gap-3 ${
                     isSelected 
                       ? 'bg-blue-600/10 border-blue-500/50 ring-1 ring-blue-500/30 shadow-md' 
@@ -932,7 +932,7 @@ export default function FinancialReportsTab({
             // Expanded Mode: Full Detailed Card
             return (
               <div 
-                key={fund.id}
+                key={fund.id ? `fund-exp-${fund.id}-${fIdx}` : `fund-exp-idx-${fIdx}`}
                 className={`p-4 rounded-2xl border transition-all flex flex-col justify-between gap-3 bg-[#161616] ${
                   isSelected ? 'border-blue-500 ring-2 ring-blue-500/20 shadow-xl' : 'border-white/10 shadow-md'
                 }`}
@@ -1057,8 +1057,8 @@ export default function FinancialReportsTab({
               className="bg-black/40 border border-white/10 text-white text-xs px-3 py-2 rounded-xl outline-none focus:border-amber-500 font-bold"
             >
               <option value="all">جميع الصناديق</option>
-              {funds.map(f => (
-                <option key={f.id} value={f.id}>{f.name} ({f.currency})</option>
+              {funds.map((f, fIdx) => (
+                <option key={f.id ? `opt-fund-${f.id}-${fIdx}` : `opt-fund-idx-${fIdx}`} value={f.id}>{f.name} ({f.currency})</option>
               ))}
             </select>
 
@@ -1149,7 +1149,7 @@ export default function FinancialReportsTab({
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 text-gray-300 font-cairo text-[11px]">
-              {paginatedTransactions.map(tx => {
+              {paginatedTransactions.map((tx, txIdx) => {
                 const isReceipt = tx.type === 'receipt' || tx.type === 'deposit' || tx.type === 'invoice_payment';
                 const link = getInvoiceLinkageStatus(tx);
                 const rawAmt = tx.receiptAmount !== undefined && tx.receiptAmount !== null && tx.receiptAmount !== ''
@@ -1160,7 +1160,7 @@ export default function FinancialReportsTab({
                 const currSymbol = getCurrencySymbol(tx.currency);
 
                 return (
-                  <tr key={tx.id} className="hover:bg-white/5 transition-colors">
+                  <tr key={tx.id ? `fin-tx-${tx.id}-${txIdx}` : `fin-tx-idx-${txIdx}`} className="hover:bg-white/5 transition-colors">
                     <td className="py-2.5 px-2.5 text-center font-bold text-amber-500 font-mono whitespace-nowrap">
                       #{tx.voucherNumber}
                     </td>

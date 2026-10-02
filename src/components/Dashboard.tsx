@@ -325,9 +325,9 @@ export default function Dashboard({
         }}
         dir="rtl"
       >
-        {counterSlides.map((slide) => (
+        {counterSlides.map((slide, sIdx) => (
           <div 
-            key={slide.id}
+            key={`dash-slide-${slide.id}-${sIdx}`}
             className="w-full min-w-full flex-shrink-0 snap-center"
           >
             <button 

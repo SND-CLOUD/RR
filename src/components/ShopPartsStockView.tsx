@@ -595,13 +595,13 @@ export default function ShopPartsStockView() {
           {/* Batches Cards Grid */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
             {filteredBatches.length > 0 ? (
-              filteredBatches.map((batch) => {
+              filteredBatches.map((batch, idx) => {
                 const fin = getBatchFinancials(batch);
                 const isExpanded = !!expandedBatches[batch.id!];
 
                 return (
                   <div 
-                    key={batch.id} 
+                    key={batch.id ? `batch-${batch.id}-${idx}` : `batch-idx-${idx}`} 
                     className="bg-[#121212] border border-white/5 rounded-3xl p-5 space-y-4 shadow-xl hover:border-purple-500/20 transition-all"
                   >
                     {/* Header */}

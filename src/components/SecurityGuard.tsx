@@ -322,9 +322,9 @@ export default function SecurityGuard({ children }: SecurityGuardProps) {
             </div>
 
             <div className="grid grid-cols-3 gap-2.5">
-              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map(num => (
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((num, nIdx) => (
                 <button 
-                  key={num}
+                  key={`pin-num-${num}-${nIdx}`}
                   type="button"
                   onClick={() => pinInput.length < 4 && setPinInput(p => p + num)}
                   className="h-14 bg-white/5 rounded-2xl hover:bg-white/10 border border-white/5 text-xl font-bold transition-all active:scale-95 cursor-pointer"

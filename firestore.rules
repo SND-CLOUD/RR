@@ -124,6 +124,12 @@ service cloud.firestore {
     match /disassembly_batches/{id} {
       allow read, write: if true;
     }
+    match /system_locks/{id} {
+      allow read, write: if true;
+    }
+    match /system_restore_points/{id} {
+      allow read, write: if true;
+    }
     match /test/{docId} {
       allow get: if true;
     }

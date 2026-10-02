@@ -1408,7 +1408,7 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
                           })();
                           
                           return (
-                            <tr key={item.id} className="even:bg-gray-50/50 text-[11px] leading-none">
+                            <tr key={item.id ? `appr-it-${item.id}-${idx}` : `appr-it-idx-${idx}`} className="even:bg-gray-50/50 text-[11px] leading-none">
                               <td className="px-2 py-1 text-center font-mono font-bold border-l border-gray-400 bg-gray-50 w-[5%]">{idx + 1}</td>
                               <td className="px-2 py-1 font-bold text-gray-900 border-l border-gray-400 w-[25%] max-w-[190px] whitespace-nowrap overflow-hidden text-ellipsis" title={`${item.deviceType} ${item.deviceName ? `- ${item.deviceName}` : ''}`}>
                                 {item.deviceType} {item.deviceName ? `- ${item.deviceName}` : ''}
@@ -1921,10 +1921,10 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
                    className="flex-1 bg-black/40 border border-white/10 px-3 py-2 focus:border-amber-500 outline-none transition-all rounded-lg text-xs text-right text-white box-border cursor-pointer"
                  >
                    <option value="" disabled>اختر الجهاز</option>
-                   {invoiceItems.map(it => {
+                   {invoiceItems.map((it, itIdx) => {
                      const available = getAvailableQuantity(it.id!, editingIndex !== null ? editingIndex : -1);
                      if (available <= 0 && currentFormRow.id !== it.id) return null;
-                     return <option key={it.id} value={it.id}>{it.deviceType} - {it.deviceName} - متوفر: {available}</option>;
+                     return <option key={it.id ? `appr-opt-${it.id}-${itIdx}` : `appr-opt-idx-${itIdx}`} value={it.id}>{it.deviceType} - {it.deviceName} - متوفر: {available}</option>;
                    })}
                  </select>
                </div>
@@ -2313,12 +2313,12 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 text-[9px] sm:text-xs">
-              {currentInvoices.map(invoice => {
+              {currentInvoices.map((invoice, idx) => {
                 const currentDecision = decisions[invoice.id || ''];
                 const isLoading = rowLoading[invoice.id || ''];
                 
                 return (
-                  <tr key={invoice.id} className="hover:bg-white/5 transition-colors duration-150">
+                  <tr key={invoice.id ? `appr-inv-${invoice.id}-${idx}` : `appr-inv-idx-${idx}`} className="hover:bg-white/5 transition-colors duration-150">
                     <td className="px-2 py-2 font-mono text-white font-bold text-center whitespace-nowrap">{invoice.invoiceNumber}</td>
                     <td className="px-3 py-2 font-bold text-white text-right whitespace-nowrap truncate" title={invoice.customerName}>
                       {invoice.customerName}

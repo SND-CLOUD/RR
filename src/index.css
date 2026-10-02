@@ -440,3 +440,189 @@ html.light-app .mobile-center-btn {
   padding: 0 !important;
 }
 
+/* Voucher Maintenance Modal Light Mode Comprehensive High-Contrast Overrides */
+html.light-app .voucher-modal-root {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.3) !important;
+}
+
+html.light-app .voucher-modal-root .bg-\[\#181818\],
+html.light-app .voucher-modal-root .bg-\[\#161616\],
+html.light-app .voucher-modal-root .bg-\[\#141414\] {
+  background-color: #f8fafc !important;
+  border-color: #cbd5e1 !important;
+}
+
+html.light-app .voucher-modal-root .bg-\[\#111111\],
+html.light-app .voucher-modal-root .bg-\[\#0f0f0f\] {
+  background-color: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+}
+
+/* Modal text contrast */
+html.light-app .voucher-modal-root .text-white,
+html.light-app .voucher-modal-root h2,
+html.light-app .voucher-modal-root h3 {
+  color: #0f172a !important;
+}
+
+html.light-app .voucher-modal-root .text-gray-100,
+html.light-app .voucher-modal-root .text-gray-200,
+html.light-app .voucher-modal-root .text-gray-300 {
+  color: #1e293b !important;
+}
+
+html.light-app .voucher-modal-root .text-gray-400,
+html.light-app .voucher-modal-root .text-gray-500 {
+  color: #475569 !important;
+}
+
+/* Guidance & Information alert boxes */
+html.light-app .voucher-modal-root .bg-amber-500\/10,
+html.light-app .voucher-modal-root .bg-amber-500\/15,
+html.light-app .voucher-modal-root .bg-amber-500\/5 {
+  background-color: #fffbeb !important;
+  border-color: #fcd34d !important;
+}
+html.light-app .voucher-modal-root .text-amber-200,
+html.light-app .voucher-modal-root .text-amber-300,
+html.light-app .voucher-modal-root .text-amber-400 {
+  color: #92400e !important;
+}
+
+html.light-app .voucher-modal-root .bg-blue-500\/10,
+html.light-app .voucher-modal-root .bg-blue-500\/15 {
+  background-color: #eff6ff !important;
+  border-color: #93c5fd !important;
+}
+html.light-app .voucher-modal-root .text-blue-200,
+html.light-app .voucher-modal-root .text-blue-300,
+html.light-app .voucher-modal-root .text-blue-400 {
+  color: #1e40af !important;
+}
+
+html.light-app .voucher-modal-root .bg-emerald-500\/10,
+html.light-app .voucher-modal-root .bg-emerald-500\/15 {
+  background-color: #ecfdf5 !important;
+  border-color: #6ee7b7 !important;
+}
+html.light-app .voucher-modal-root .text-emerald-200,
+html.light-app .voucher-modal-root .text-emerald-300,
+html.light-app .voucher-modal-root .text-emerald-400 {
+  color: #065f46 !important;
+}
+
+html.light-app .voucher-modal-root .bg-rose-500\/10,
+html.light-app .voucher-modal-root .bg-rose-500\/15 {
+  background-color: #fef2f2 !important;
+  border-color: #fca5a5 !important;
+}
+html.light-app .voucher-modal-root .text-rose-300,
+html.light-app .voucher-modal-root .text-rose-400 {
+  color: #991b1b !important;
+}
+
+/* Tables & Dividers */
+html.light-app .voucher-modal-root table {
+  background-color: #ffffff !important;
+}
+
+html.light-app .voucher-modal-root table thead {
+  background-color: #f1f5f9 !important;
+  border-bottom: 2px solid #cbd5e1 !important;
+}
+
+html.light-app .voucher-modal-root table th {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  font-weight: 800 !important;
+  border-color: #cbd5e1 !important;
+}
+
+html.light-app .voucher-modal-root table tbody tr {
+  background-color: #ffffff !important;
+  border-bottom: 1px solid #e2e8f0 !important;
+}
+
+html.light-app .voucher-modal-root table tbody tr:hover {
+  background-color: #f8fafc !important;
+}
+
+html.light-app .voucher-modal-root table td {
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+
+html.light-app .voucher-modal-root .divide-white\/5,
+html.light-app .voucher-modal-root .border-white\/5,
+html.light-app .voucher-modal-root .border-white\/10 {
+  border-color: #cbd5e1 !important;
+}
+
+/* Inputs & Form Controls */
+html.light-app .voucher-modal-root input[type="text"],
+html.light-app .voucher-modal-root input[type="number"],
+html.light-app .voucher-modal-root select {
+  background-color: #ffffff !important;
+  color: #0f172a !important;
+  border: 1.5px solid #94a3b8 !important;
+  font-weight: 700 !important;
+}
+
+html.light-app .voucher-modal-root input::placeholder {
+  color: #64748b !important;
+}
+
+html.light-app .voucher-modal-root label {
+  color: #0f172a !important;
+  font-weight: 700 !important;
+}
+
+/* Inactive Tabs */
+html.light-app .voucher-modal-root button.text-gray-400 {
+  color: #475569 !important;
+}
+
+html.light-app .voucher-modal-root button.text-gray-400:hover {
+  color: #0f172a !important;
+}
+
+/* High Contrast Colored Accents in Light Mode */
+html.light-app .voucher-modal-root .text-blue-400,
+html.light-app .voucher-modal-root .text-blue-500 {
+  color: #1d4ed8 !important;
+}
+
+html.light-app .voucher-modal-root .text-amber-400,
+html.light-app .voucher-modal-root .text-amber-500 {
+  color: #b45309 !important;
+}
+
+html.light-app .voucher-modal-root .text-emerald-400,
+html.light-app .voucher-modal-root .text-emerald-500 {
+  color: #047857 !important;
+}
+
+html.light-app .voucher-modal-root .text-rose-400,
+html.light-app .voucher-modal-root .text-rose-500,
+html.light-app .voucher-modal-root .text-red-400,
+html.light-app .voucher-modal-root .text-red-500 {
+  color: #b91c1c !important;
+}
+
+html.light-app .voucher-modal-root .bg-white\/5,
+html.light-app .voucher-modal-root .bg-white\/10 {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+}
+
+html.light-app .voucher-modal-root ::-webkit-scrollbar-thumb {
+  background-color: #cbd5e1 !important;
+}
+
+html.light-app .voucher-modal-root ::-webkit-scrollbar-thumb:hover {
+  background-color: #94a3b8 !important;
+}
+

@@ -199,8 +199,8 @@ export default function CategoriesTable() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-white/5 text-white">
-                {filteredCategories.map((cat) => (
-                  <tr key={cat.id} className="hover:bg-white/[0.02] transition-colors">
+                {filteredCategories.map((cat, catIdx) => (
+                  <tr key={cat.id ? `cat-row-${cat.id}-${catIdx}` : `cat-row-idx-${catIdx}`} className="hover:bg-white/[0.02] transition-colors">
                     <td className="px-6 py-4">
                       <div className="flex items-center gap-3">
                         <div className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg">
@@ -271,9 +271,9 @@ export default function CategoriesTable() {
                 className="bg-[#242424] border border-white/10 rounded-xl px-4 py-2 text-xs font-bold text-white cursor-pointer outline-none focus:border-orange-500 text-right"
               >
                 <option value="" disabled> -- فلترة وتحديد النوع -- </option>
-                {categories.map(c => (
-                  <option key={c.id} value={c.id}>{c.name}</option>
-                ))}
+                {categories.map((c, cIdx) => (
+                    <option key={c.id ? `cat-opt-${c.id}-${cIdx}` : `cat-opt-idx-${cIdx}`} value={c.id}>{c.name}</option>
+                  ))}
               </select>
               <button
                 onClick={() => {
@@ -312,8 +312,8 @@ export default function CategoriesTable() {
                     </td>
                   </tr>
                 ) : (
-                  filteredModels.map((model) => (
-                    <tr key={model.id} className="hover:bg-white/[0.02] transition-colors">
+                  filteredModels.map((model, modIdx) => (
+                    <tr key={model.id ? `mod-row-${model.id}-${modIdx}` : `mod-row-idx-${modIdx}`} className="hover:bg-white/[0.02] transition-colors">
                       <td className="px-6 py-4">
                         <div className="flex items-center gap-3">
                           <div className="p-2 bg-blue-500/10 text-blue-500 rounded-lg">
@@ -469,9 +469,9 @@ export default function CategoriesTable() {
                     className="w-full bg-[#242424] border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-orange-500 text-sm font-bold text-white cursor-pointer text-right"
                   >
                     <option value="" disabled> -- اختر النوع الرئيسي -- </option>
-                    {categories.map(c => (
-                      <option key={c.id} value={c.id}>{c.name}</option>
-                    ))}
+                    {categories.map((c, cIdx) => (
+                    <option key={c.id ? `cat-opt2-${c.id}-${cIdx}` : `cat-opt2-idx-${cIdx}`} value={c.id}>{c.name}</option>
+                  ))}
                   </select>
                 </div>
 

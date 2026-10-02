@@ -1262,7 +1262,11 @@ class LocalDatabase {
       // ----------------------------------------------------
 
       if (platform === 'web') {
-        await sqlite.saveToStore('snd_system');
+        try {
+          await sqlite.saveToStore('snd_system');
+        } catch (saveErr) {
+          console.warn('sqlite.saveToStore ignored during init:', saveErr);
+        }
       }
 
     } catch (err) {
@@ -1329,7 +1333,11 @@ class LocalDatabase {
       
       const info = await Device.getInfo();
       if (info.platform === 'web') {
-        await this.getSqlite().saveToStore('snd_system');
+        try {
+          await this.getSqlite().saveToStore('snd_system');
+        } catch (saveErr) {
+          console.warn('sqlite.saveToStore ignored during run:', saveErr);
+        }
       }
       
       return result;

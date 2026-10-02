@@ -970,10 +970,10 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                    className="flex-1 bg-black/40 border border-white/10 px-3 py-2 focus:border-orange-500 outline-none transition-all rounded-lg text-xs text-right text-white box-border"
                  >
                    <option value="" disabled>اختر الجهاز</option>
-                   {invoiceItems.map(it => {
+                   {invoiceItems.map((it, itIdx) => {
                      const available = getAvailableQuantity(it.id!, editingIndex !== null ? editingIndex : -1);
                      if (available <= 0 && currentFormRow.id !== it.id) return null;
-                     return <option key={it.id} value={it.id}>{it.deviceType} - {it.deviceName} - متوفر: {available}</option>;
+                     return <option key={it.id ? `maint-opt-${it.id}-${itIdx}` : `maint-opt-idx-${itIdx}`} value={it.id}>{it.deviceType} - {it.deviceName} - متوفر: {available}</option>;
                    })}
                  </select>
                </div>
@@ -1222,8 +1222,8 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 text-slate-300 text-[10px] sm:text-xs">
-              {currentInvoices.map(invoice => (
-                <tr key={invoice.id} className="hover:bg-white/5 transition-colors">
+              {currentInvoices.map((invoice, idx) => (
+                <tr key={invoice.id ? `maint-inv-${invoice.id}-${idx}` : `maint-inv-idx-${idx}`} className="hover:bg-white/5 transition-colors">
                   <td className="px-2 py-2 font-mono text-white text-center whitespace-nowrap">{invoice.invoiceNumber}</td>
                   <td className="px-2 py-2 font-mono text-gray-400 text-center whitespace-nowrap">{getCustomerNumber(invoice.customerId)}</td>
                   <td className="px-2 py-2 font-bold truncate">{invoice.customerName || getCustomerName(invoice.customerId)}</td>

@@ -481,14 +481,14 @@ export default function PrintPreviewOverlay({
               const items: React.ReactNode[] = [];
               if (shopConfig?.bankHolderName) {
                 items.push(
-                  <span key="holder" className="text-gray-900 font-bold">
+                  <span className="text-gray-900 font-bold">
                     باسم: {shopConfig.bankHolderName}
                   </span>
                 );
               }
               if (shopConfig?.bankYerAccount) {
                 items.push(
-                  <span key="yer" className="inline-flex items-center gap-1 text-gray-900">
+                  <span className="inline-flex items-center gap-1 text-gray-900">
                     <span dir="ltr" className="font-mono font-semibold">{shopConfig.bankYerAccount}</span>
                     {shopConfig?.bankYerName && <span className="text-gray-600">({shopConfig.bankYerName})</span>}
                   </span>
@@ -496,7 +496,7 @@ export default function PrintPreviewOverlay({
               }
               if (shopConfig?.bankSarAccount) {
                 items.push(
-                  <span key="sar" className="inline-flex items-center gap-1 text-gray-900">
+                  <span className="inline-flex items-center gap-1 text-gray-900">
                     <span dir="ltr" className="font-mono font-semibold">{shopConfig.bankSarAccount}</span>
                     {shopConfig?.bankSarName && <span className="text-gray-600">({shopConfig.bankSarName})</span>}
                   </span>
@@ -504,7 +504,7 @@ export default function PrintPreviewOverlay({
               }
               if (shopConfig?.bankUsdAccount) {
                 items.push(
-                  <span key="usd" className="inline-flex items-center gap-1 text-gray-900">
+                  <span className="inline-flex items-center gap-1 text-gray-900">
                     <span dir="ltr" className="font-mono font-semibold">{shopConfig.bankUsdAccount}</span>
                     {shopConfig?.bankUsdName && <span className="text-gray-600">({shopConfig.bankUsdName})</span>}
                   </span>

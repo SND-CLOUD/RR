@@ -240,9 +240,9 @@ export default function EntryExit({ user, onBack, view, setView }: EntryExitProp
       <div className="max-w-4xl mx-auto px-4 space-y-6">
         {/* Action Grid - White background, aspect-square, premium styling */}
         <div className="grid grid-cols-2 gap-4 max-w-md mx-auto mt-6 justify-center">
-          {categories.map((cat) => (
+          {categories.map((cat, idx) => (
             <motion.button
-              key={cat.id}
+              key={cat.id ? `ee-cat-${cat.id}-${idx}` : `ee-cat-idx-${idx}`}
               whileHover={{ scale: 1.02, y: -2 }}
               whileTap={{ scale: 0.98 }}
               onClick={() => setView(cat.id as any)}

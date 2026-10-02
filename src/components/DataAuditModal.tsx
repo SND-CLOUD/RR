@@ -1254,82 +1254,10 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
       step++;
 
       if (auditResults.paymentImbalances.length > 0) {
-        setRepairProgress({ status: 'running', message: `[${step}/${totalSteps}] موازنة وتسجيل المعاملات المالية المفقودة لـ ${auditResults.paymentImbalances.length} حالة...` });
+        setRepairProgress({ status: 'running', message: `[${step}/${totalSteps}] تدقيق ومطابقة فواتير المدفوعات لـ ${auditResults.paymentImbalances.length} حالة...` });
         
-        let currentVoucherNum = 1000;
-        let availableFunds: any[] = [];
-        try {
-          const vRes = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
-          currentVoucherNum = Number(vRes.values?.[0]?.maxNum || 1000);
-          const fRes = await localDb.query("SELECT * FROM fin_funds");
-          availableFunds = fRes.values || [];
-        } catch (err) {
-          console.warn("Could not query max voucherNumber or funds, defaulting:", err);
-        }
-
-        const normalizeCurr = (c: string) => {
-          const u = (c || '').toUpperCase().trim();
-          if (u === 'SAR' || u === 'ر.س' || u === 'سعودي') return 'SAR';
-          if (u === 'YER' || u === 'ر.ي' || u === 'يمني') return 'YER';
-          if (u === 'USD' || u === '$' || u === 'دولار') return 'USD';
-          return u;
-        };
-
         for (const item of auditResults.paymentImbalances) {
-          if (item.amountInLedger === 0 && item.amountPaidOnInvoice > 0) {
-            currentVoucherNum++;
-            const txId = `tx_audit_${item.invoiceNumber}_${Math.random().toString(36).substring(2, 6)}`;
-            const isPurchase = !!item.isPurchase;
-            const txType = isPurchase ? 'payment' : 'receipt';
-            
-            // Distinguish Maintenance device exit vs Other Sales/Services vs Purchases
-            let categoryName = 'إيراد صيانة';
-            if (isPurchase) {
-              categoryName = 'مشتريات قطع وملحقات';
-            } else if (String(item.invoiceNumber).startsWith('O-') || String(item.invoiceNumber).startsWith('S-')) {
-              categoryName = 'مبيعات قطع وخدمات';
-            }
-
-            const noteText = isPurchase 
-              ? `سند صرف مسجل لتسوية ومطابقة المدفوع بفاتورة شراء رقم #${item.invoiceNumber}`
-              : (categoryName === 'إيراد صيانة' 
-                  ? `سند قبض إيراد صيانة لتسوية ومطابقة المدفوع بفاتورة الأجهزة رقم #${item.invoiceNumber}`
-                  : `سند قبض مبيعات لتسوية ومطابقة المدفوع بالفاتورة رقم #${item.invoiceNumber}`);
-
-            const matchedFund = availableFunds.find((f: any) => f.type === 'cash' && normalizeCurr(f.currency) === normalizeCurr(item.currency)) || availableFunds[0];
-
-            const txData: any = {
-              id: txId,
-              voucherNumber: currentVoucherNum,
-              currency: matchedFund?.currency || item.currency,
-              amount: Number(item.amountPaidOnInvoice),
-              liabilityCurrency: item.currency,
-              liabilityAmount: Number(item.amountPaidOnInvoice),
-              receiptCurrency: matchedFund?.currency || item.currency,
-              receiptAmount: Number(item.amountPaidOnInvoice),
-              fundId: matchedFund ? matchedFund.id : '',
-              fundName: matchedFund ? matchedFund.name : 'الصندوق الرئيسي',
-              customerName: item.customerName || (isPurchase ? 'مورد نقدي' : 'عميل نقدي'),
-              customerId: item.customerId || null,
-              invoiceNumber: String(item.invoiceNumber),
-              userName: user.name || 'المدير العام',
-              userNumber: 1,
-              userId: user.id || 'primary-admin',
-              timestamp: serverTimestamp(),
-              type: txType,
-              transactionCategory: categoryName,
-              notes: noteText,
-              statementNote: noteText
-            };
-            await addDoc(collection(db, 'vault_transactions'), txData);
-        
-            try {
-              await LocalProviderInstance.setDoc('vault_transactions', txId, {
-                ...txData,
-                timestamp: new Date().toISOString()
-              }, undefined, 'BYPASS_OUTBOX');
-            } catch (e) {}
-          } else if (item.amountInLedger > 0 && item.amountPaidOnInvoice !== item.amountInLedger) {
+          if (item.amountInLedger > 0 && item.amountPaidOnInvoice !== item.amountInLedger) {
             let newStatus = item.status;
             if (!item.isPurchase && item.amountInLedger >= item.totalCost) {
               newStatus = 'delivered';
@@ -1841,17 +1769,7 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                       </div>
                       <div className="flex items-center gap-2">
                         {auditResults.paymentImbalances.length > 0 ? (
-                          <>
-                            <span className="px-2.5 py-1 bg-red-500/10 text-red-500 rounded-lg text-[10px] font-black">{auditResults.paymentImbalances.length} عدم تطابق</span>
-                            <button
-                              type="button"
-                              onClick={() => repairPaymentImbalances()}
-                              disabled={repairProgress.status === 'running'}
-                              className="px-2.5 py-1 bg-green-600 hover:bg-green-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
-                            >
-                              موازنة الكل
-                            </button>
-                          </>
+                          <span className="px-2.5 py-1 bg-red-500/10 text-red-500 rounded-lg text-[10px] font-black">{auditResults.paymentImbalances.length} عدم تطابق</span>
                         ) : (
                           <span className="px-2.5 py-1 bg-emerald-500/10 text-emerald-500 rounded-lg text-[10px] font-black">سليم</span>
                         )}

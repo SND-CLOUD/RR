@@ -565,7 +565,7 @@ export default function MaintenanceActionForm({
               return (
                 <div className="flex items-center gap-4 mb-2 text-sm font-bold text-gray-900 mt-2 flex-wrap">
                   {activeCounters.map((counter, index) => (
-                    <span key={counter.key} className="flex items-center gap-4">
+                    <span key={`counter-${counter.key}-${index}`} className="flex items-center gap-4">
                       {index > 0 && <span className="text-gray-400 font-normal">|</span>}
                       <div className="flex items-center gap-2">
                         <div className={`w-12 h-8 border-2 border-gray-400 bg-gray-50 rounded flex items-center justify-center font-mono font-black text-base ${counter.textColor}`}>
@@ -686,8 +686,8 @@ export default function MaintenanceActionForm({
                            className="w-full bg-transparent border border-white/10 rounded-md px-2 py-1.5 outline-none focus:border-orange-500 text-xs"
                         >
                            <option value="">Select...</option>
-                           {availableItems.map(i => (
-                             <option key={i.id} value={i.id}>
+                           {availableItems.map((i, itIdx) => (
+                              <option key={i.id ? `maint-dev-${i.id}-${itIdx}` : `maint-dev-idx-${itIdx}`} value={i.id}>
                                {i.deviceType} - #{i.invoiceNumber || '---'}
                              </option>
                            ))}
@@ -702,8 +702,8 @@ export default function MaintenanceActionForm({
                            className="w-full bg-orange-500/10 text-orange-500 border border-orange-500/30 rounded-md px-2 py-1.5 outline-none focus:border-orange-500 disabled:opacity-50 text-[10px] font-black uppercase"
                         >
                            <option value="">Select...</option>
-                           {availableNextStatuses.map(st => (
-                             <option key={st} value={st}>{t(`inventory.status_${st}`)}</option>
+                           {availableNextStatuses.map((st, stIdx) => (
+                             <option key={`maint-st-${st}-${stIdx}`} value={st}>{t(`inventory.status_${st}`)}</option>
                            ))}
                         </select>
                      </div>

@@ -157,9 +157,9 @@ export default function DeviceMovement({
 
         {/* Action List - Horizontal, modern, independent layout */}
         <div className="flex flex-col gap-4 w-full px-4 sm:px-0">
-          {categories.map((cat) => (
+          {categories.map((cat, idx) => (
             <motion.button
-              key={cat.id}
+              key={cat.id ? `mv-cat-${cat.id}-${idx}` : `mv-cat-idx-${idx}`}
               whileHover={{ scale: 1.01, y: -1 }}
               whileTap={{ scale: 0.99 }}
               onClick={() => setView(cat.id as any)}

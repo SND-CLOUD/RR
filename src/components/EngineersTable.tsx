@@ -97,8 +97,8 @@ export default function EngineersTable() {
             </tr>
           </thead>
           <tbody className="divide-y divide-white/5">
-            {filtered.map((eng) => (
-              <tr key={eng.id} className="hover:bg-white/[0.02] transition-colors">
+            {filtered.map((eng, idx) => (
+              <tr key={eng.id ? `eng-${eng.id}-${idx}` : `eng-idx-${idx}`} className="hover:bg-white/[0.02] transition-colors">
                 <td className="px-6 py-4">
                   <div className="flex items-center gap-3">
                     <div className="p-2 bg-orange-500/10 text-orange-500 rounded-lg">

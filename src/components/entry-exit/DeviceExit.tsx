@@ -2224,7 +2224,17 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                           dir="ltr"
                           lang="en"
                           value={exitDiscountAmount || ''}
-                          onFocus={e => e.target.select()}
+                          onFocus={e => {
+                            if (Number(exitPaidAmount || 0) > 0 && remainingCostForSelection > 0) {
+                              const val = Number(remainingCostForSelection.toFixed(2));
+                              setExitDiscountAmount(val);
+                            }
+                            setTimeout(() => {
+                              try {
+                                e.target.select();
+                              } catch (_) {}
+                            }, 50);
+                          }}
                           onChange={(e) => {
                             const val = e.target.value.replace(/[^0-9.]/g, '');
                             const parts = val.split('.');

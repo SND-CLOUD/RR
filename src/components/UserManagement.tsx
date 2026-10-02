@@ -523,7 +523,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
           }
 
           return canViewAllUsers || u.id === currentUser.id;
-        }).map(u => {
+        }).map((u, idx) => {
           const isUserAdmin = u.isPrimary || u.username === 'admin';
           const isUserActive = (u.isActive as any) === undefined || (u.isActive as any) === null || (u.isActive as any) === true || (u.isActive as any) === 1 || (u.isActive as any) === 'true' || (u.isActive as any) === '1';
           const isCurrentUserGM = currentUser.isPrimary || currentUser.username === 'admin';
@@ -534,7 +534,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
           const accountStatus = u.account_status || (isUserActive ? 'نشط' : 'معطل');
 
           return (
-            <div key={u.id} className="bg-[#242424] p-3 sm:p-4 rounded-2xl border border-white/5 flex flex-col gap-3 group">
+            <div key={u.id ? `user-card-${u.id}-${idx}` : `user-card-idx-${idx}`} className="bg-[#242424] p-3 sm:p-4 rounded-2xl border border-white/5 flex flex-col gap-3 group">
               {/* First Row */}
               <div className="flex items-center flex-wrap gap-2 sm:gap-3">
                 {/* Initial */}
@@ -689,8 +689,8 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
                       className="w-full bg-black/40 border border-white/10 rounded-2xl px-4 py-3 focus:border-orange-500 outline-none text-white text-right appearance-none"
                     >
                       <option value="">لا يوجد</option>
-                      {jobTitles.map(job => (
-                        <option key={job.id} value={job.id}>{job.title}</option>
+                      {jobTitles.map((job, jIdx) => (
+                        <option key={job.id ? `add-job-${job.id}-${jIdx}` : `add-job-idx-${jIdx}`} value={job.id}>{job.title}</option>
                       ))}
                     </select>
                   </div>
@@ -758,8 +758,8 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
                         className="w-full bg-black/40 border border-white/10 rounded-2xl px-4 py-3 focus:border-orange-500 outline-none text-white text-right font-mono appearance-none"
                       >
                         <option value="">اختر الجهاز...</option>
-                        {userDevices.map(dev => (
-                          <option key={dev.id} value={dev.serialImei || dev.id}>
+                        {userDevices.map((dev, dIdx) => (
+                          <option key={dev.id ? `add-dev-${dev.id}-${dIdx}` : `add-dev-idx-${dIdx}`} value={dev.serialImei || dev.id}>
                             {dev.deviceName || `جهاز ${dev.deviceNumber}`} {dev.serialImei ? `(${dev.serialImei})` : ''}
                           </option>
                         ))}
@@ -1009,8 +1009,8 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
                             className="w-full bg-black/40 border border-white/10 rounded-2xl px-4 py-3 focus:border-orange-500 outline-none disabled:opacity-50 text-white text-right appearance-none"
                           >
                             <option value="">لا يوجد</option>
-                            {jobTitles.map(job => (
-                              <option key={job.id} value={job.id}>{job.title}</option>
+                            {jobTitles.map((job, jIdx) => (
+                              <option key={job.id ? `edit-job-${job.id}-${jIdx}` : `edit-job-idx-${jIdx}`} value={job.id}>{job.title}</option>
                             ))}
                           </select>
                         </div>
@@ -1083,8 +1083,8 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
                               className="w-full bg-black/40 border border-white/10 rounded-2xl px-4 py-3 focus:border-orange-500 outline-none disabled:opacity-50 text-white text-right font-mono appearance-none"
                             >
                               <option value="">اختر الجهاز...</option>
-                              {userDevices.map(dev => (
-                                <option key={dev.id} value={dev.serialImei || dev.id}>
+                              {userDevices.map((dev, dIdx) => (
+                                <option key={dev.id ? `edit-dev-${dev.id}-${dIdx}` : `edit-dev-idx-${dIdx}`} value={dev.serialImei || dev.id}>
                                   {dev.deviceName || `جهاز ${dev.deviceNumber}`} {dev.serialImei ? `(${dev.serialImei})` : ''}
                                 </option>
                               ))}

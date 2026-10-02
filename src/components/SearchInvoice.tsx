@@ -973,9 +973,9 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                     {/* Dropdown suggestions */}
                     {showCustomerDropdown && getCustomerSuggestions().length > 0 && (
                       <div className="absolute top-14 right-0 left-0 bg-[#161616] border border-white/10 rounded-2xl shadow-2xl z-50 divide-y divide-white/5 max-h-60 overflow-y-auto">
-                        {getCustomerSuggestions().map((cust) => (
+                        {getCustomerSuggestions().map((cust, idx) => (
                           <button
-                            key={cust.id}
+                            key={cust.id ? `sug-cust-${cust.id}-${idx}` : `sug-cust-idx-${idx}`}
                             onClick={() => {
                               handleCustomerSearchExecute(cust);
                             }}
@@ -1092,7 +1092,7 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                                   const arCurrency = getCustomerCurrencyLabel(selectedCustomer.id!);
                                   const globalIndex = ((safeCurrentPage - 1) * itemsPerPage) + index + 1;
                                   return (
-                                    <tr key={entry.id} className="hover:bg-white/[0.02] transition-colors whitespace-nowrap">
+                                    <tr key={entry.id ? `lead-entry-${entry.id}-${index}` : `lead-entry-idx-${index}`} className="hover:bg-white/[0.02] transition-colors whitespace-nowrap">
                                       <td className="px-4 py-3.5 text-center font-mono font-bold text-gray-500">{globalIndex}</td>
                                       <td className="px-4 py-3.5 font-bold font-cairo text-white">{entry.type}</td>
                                       <td className="px-4 py-3.5 text-center font-mono font-bold text-amber-500">{entry.reference}</td>
@@ -1220,9 +1220,9 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                     {/* Suggestions list */}
                     {showInvoiceDropdown && getInvoiceSuggestions().length > 0 && (
                       <div className="absolute top-14 right-0 left-0 bg-[#161616] border border-white/10 rounded-2xl shadow-2xl z-50 divide-y divide-white/5 max-h-60 overflow-y-auto">
-                        {getInvoiceSuggestions().map((inv) => (
+                        {getInvoiceSuggestions().map((inv, idx) => (
                           <button
-                            key={inv.id}
+                            key={inv.id ? `sug-inv-${inv.id}-${idx}` : `sug-inv-idx-${idx}`}
                             onClick={() => {
                               handleInvoiceSearchExecute(inv);
                             }}
@@ -1331,7 +1331,7 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {getInvoiceItemsList(selectedInvoice.invoiceNumber, selectedInvoice.id).map((item, idx) => (
-                        <div key={item.id} className="bg-black/30 p-4 border border-white/5 rounded-2xl space-y-3">
+                        <div key={item.id ? `sug-it-${item.id}-${idx}` : `sug-it-idx-${idx}`} className="bg-black/30 p-4 border border-white/5 rounded-2xl space-y-3">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-black text-white font-cairo">{item.deviceName || 'جهاز تقني'}</span>
                             <span className={`px-2.5 py-0.5 rounded-full border text-[9px] font-bold ${getStatusStyle(item.status)}`}>
@@ -1429,9 +1429,9 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                     {/* Voucher dropdown suggestions */}
                     {showVoucherDropdown && getVoucherSuggestions().length > 0 && (
                       <div className="absolute top-14 right-0 left-0 bg-[#161616] border border-white/10 rounded-2xl shadow-2xl z-50 divide-y divide-white/5 max-h-60 overflow-y-auto">
-                        {getVoucherSuggestions().map((tx) => (
+                        {getVoucherSuggestions().map((tx, idx) => (
                           <button
-                            key={tx.id}
+                            key={tx.id ? `sug-tx-${tx.id}-${idx}` : `sug-tx-idx-${idx}`}
                             onClick={() => {
                               handleVoucherSearchExecute(tx);
                             }}
@@ -1617,9 +1617,9 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                     {/* Suggestions list */}
                     {showReportDropdown && getReportSuggestions().length > 0 && (
                       <div className="absolute top-14 right-0 left-0 bg-[#161616] border border-white/10 rounded-2xl shadow-2xl z-50 divide-y divide-white/5 max-h-60 overflow-y-auto">
-                        {getReportSuggestions().map((inv) => (
+                        {getReportSuggestions().map((inv, idx) => (
                           <button
-                            key={inv.id}
+                            key={inv.id ? `sug-rep-${inv.id}-${idx}` : `sug-rep-idx-${idx}`}
                             onClick={() => handleReportSearchExecute(inv)}
                             className="w-full text-right px-4 py-3 hover:bg-orange-600/10 transition-colors flex items-center justify-between text-xs"
                           >

@@ -1524,10 +1524,10 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                     onChange={e => handleUpdateCurrentField('id', e.target.value)}
                     className="flex-1 bg-black/40 border border-white/10 px-4 py-3 focus:border-purple-500 outline-none transition-all rounded-xl"
                   >
-                    {invoiceItems.map(it => {
+                    {invoiceItems.map((it, itIdx) => {
                       const availableForThisRow = getAvailableQuantity(it.id!, -1);
                       if (availableForThisRow <= 0 && currentActionItem.id !== it.id) return null;
-                      return <option key={it.id} value={it.id}>{it.deviceType} - {it.deviceName} - متوفر: {availableForThisRow}</option>;
+                      return <option key={it.id ? `insp-opt-${it.id}-${itIdx}` : `insp-opt-idx-${itIdx}`} value={it.id}>{it.deviceType} - {it.deviceName} - متوفر: {availableForThisRow}</option>;
                     })}
                   </select>
                 </div>
@@ -2054,10 +2054,10 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 text-[10px] sm:text-xs">
-              {currentInvoices.map(invoice => {
+              {currentInvoices.map((invoice, idx) => {
                 const currentChoice = selectedOptions[invoice.id!] || 'action1';
                 return (
-                  <tr key={invoice.id} className="hover:bg-white/5 transition-colors">
+                  <tr key={invoice.id ? `insp-inv-${invoice.id}-${idx}` : `insp-inv-idx-${idx}`} className="hover:bg-white/5 transition-colors">
                     <td className="px-2 py-2 font-mono text-white text-center whitespace-nowrap">{invoice.invoiceNumber}</td>
                     <td className="px-3 py-2 font-bold text-white text-right whitespace-nowrap truncate" title={invoice.customerName || getCustomerName(invoice.customerId)}>
                       {invoice.customerName || getCustomerName(invoice.customerId)}

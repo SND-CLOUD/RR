@@ -1203,7 +1203,7 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
               </thead>
               <tbody>
                 {groupedInvoices.map((inv, idx) => (
-                  <tr key={inv.invoiceNumber} className="border-b border-black">
+                  <tr key={inv.invoiceNumber ? `grp-inv-${inv.invoiceNumber}-${idx}` : `grp-inv-idx-${idx}`} className="border-b border-black">
                     <td className="p-2 border border-black text-center">{idx + 1}</td>
                     <td className="p-2 border border-black font-mono">#{inv.invoiceNumber}</td>
                     <td className="p-2 border border-black">
@@ -1245,7 +1245,7 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
                 {tableItems.map((item, idx) => {
                   const custDetails = getCustomerDetails(item);
                   return (
-                    <tr key={item.id} className="border-b border-black">
+                    <tr key={item.id ? `tbl-it-${item.id}-${idx}` : `tbl-it-idx-${idx}`} className="border-b border-black">
                       <td className="p-2 border border-black text-center">{idx + 1}</td>
                       <td className="p-2 border border-black font-mono">{item.invoiceNumber}</td>
                       <td className="p-2 border border-black">
@@ -2090,7 +2090,7 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
                           </thead>
                           <tbody>
                             {paginatedInvoices.map((inv, idx) => (
-                              <tr key={inv.invoiceNumber} className="border-b border-white/[0.02] hover:bg-white/[0.01]">
+                              <tr key={inv.invoiceNumber ? `inshop-inv-${inv.invoiceNumber}-${idx}` : `inshop-inv-idx-${idx}`} className="border-b border-white/[0.02] hover:bg-white/[0.01]">
                                 <td className="py-4 font-mono text-[#fa5f1c] font-bold px-2">
                                   {((safeCurrentPage - 1) * itemsPerPage) + idx + 1} - #{inv.invoiceNumber}
                                 </td>
@@ -2192,7 +2192,7 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
                             {paginatedItems.map((item, idx) => {
                               const custDetails = getCustomerDetails(item);
                               return (
-                                <tr key={item.id} className="border-b border-white/[0.02] hover:bg-white/[0.01]">
+                                <tr key={item.id ? `inshop-it-${item.id}-${idx}` : `inshop-it-idx-${idx}`} className="border-b border-white/[0.02] hover:bg-white/[0.01]">
                                   <td className="py-4 font-mono text-[#fa5f1c] font-bold px-2">{((safeCurrentPage - 1) * itemsPerPage) + idx + 1} - {item.invoiceNumber}</td>
                                   <td className="py-4 text-white font-bold px-2">
                                     <div>{custDetails.name}</div>
@@ -2494,7 +2494,7 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
                           </thead>
                           <tbody>
                             {paginatedInvoices.map((inv, idx) => (
-                              <tr key={inv.invoiceNumber} className="border-b border-white/[0.02] hover:bg-white/[0.01]">
+                              <tr key={inv.invoiceNumber ? `deliv-inv-${inv.invoiceNumber}-${idx}` : `deliv-inv-idx-${idx}`} className="border-b border-white/[0.02] hover:bg-white/[0.01]">
                                 <td className="py-4 font-mono text-emerald-500 font-bold px-2">
                                   {((safeCurrentPage - 1) * itemsPerPage) + idx + 1} - #{inv.invoiceNumber}
                                 </td>
@@ -2596,7 +2596,7 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
                             {paginatedItems.map((item, idx) => {
                               const custDetails = getCustomerDetails(item);
                               return (
-                                <tr key={item.id} className="border-b border-white/[0.02] hover:bg-white/[0.01]">
+                                <tr key={item.id ? `deliv-it-${item.id}-${idx}` : `deliv-it-idx-${idx}`} className="border-b border-white/[0.02] hover:bg-white/[0.01]">
                                   <td className="py-4 font-mono text-emerald-500 font-bold px-2">{((safeCurrentPage - 1) * itemsPerPage) + idx + 1} - {item.invoiceNumber}</td>
                                   <td className="py-4 text-white font-bold px-2">
                                     <div>{custDetails.name}</div>

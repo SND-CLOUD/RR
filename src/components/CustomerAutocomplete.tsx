@@ -146,9 +146,9 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
 
       {isOpen && (suggestions.length > 0 || onAddNew) && (
         <div className="absolute z-[100] w-full mt-1 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl overflow-hidden animate-in fade-in slide-in-from-top-2 duration-200">
-          {suggestions.map((customer) => (
+          {suggestions.map((customer, cIdx) => (
             <button
-              key={customer.id}
+              key={customer.id ? `sug-${customer.id}-${cIdx}` : `sug-idx-${cIdx}`}
               type="button"
               onClick={() => handleSelect(customer)}
               className="w-full px-4 py-3 text-right hover:bg-white/5 transition-colors border-b border-white/5 last:border-0 flex items-center justify-between group"

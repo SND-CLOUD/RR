@@ -565,13 +565,13 @@ export default function Inventory({ user, onBack }: { user: User, onBack?: () =>
             </thead>
             <tbody className="divide-y divide-white/5 text-slate-300 text-[10px] sm:text-xs">
               <AnimatePresence>
-                {currentItems.map((item) => (
+                {currentItems.map((item, idx) => (
                   <motion.tr 
                     layout
                     initial={{ opacity: 0 }}
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
-                    key={item.id} 
+                    key={item.id ? `inv-it-${item.id}-${idx}` : `inv-it-idx-${idx}`} 
                     className="hover:bg-white/[0.03] transition-colors"
                   >
                     <td className="px-2.5 py-2">

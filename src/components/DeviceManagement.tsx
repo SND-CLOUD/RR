@@ -1445,8 +1445,8 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
           <div className="bg-[#1a1a1a] rounded-3xl p-6 border border-white/5 space-y-4">
             <h3 className="text-lg font-black text-white">الأجهزة النشطة</h3>
             <div className="grid grid-cols-1 gap-4">
-              {activeInvoicesFiltered.map(inv => (
-                <div key={inv.id} className="bg-black/40 p-4 rounded-2xl border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              {activeInvoicesFiltered.map((inv, idx) => (
+                <div key={inv.id ? `act-${inv.id}-${idx}` : `act-idx-${idx}`} className="bg-black/40 p-4 rounded-2xl border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div>
                     <span className="text-sm font-bold text-white font-mono">#{inv.invoiceNumber}</span>
                     <h4 className="text-md font-bold text-gray-300">{inv.customerName}</h4>
@@ -1477,8 +1477,8 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
           <div className="bg-[#1a1a1a] rounded-3xl p-6 border border-white/5 space-y-4">
             <h3 className="text-lg font-black text-white">الأجهزة المسلمة</h3>
             <div className="grid grid-cols-1 gap-4">
-              {deliveredInvoicesFiltered.map(inv => (
-                <div key={inv.id} className="bg-black/40 p-4 rounded-2xl border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
+              {deliveredInvoicesFiltered.map((inv, idx) => (
+                <div key={inv.id ? `del-${inv.id}-${idx}` : `del-idx-${idx}`} className="bg-black/40 p-4 rounded-2xl border border-white/5 flex flex-col md:flex-row md:items-center justify-between gap-4">
                   <div>
                     <span className="text-sm font-bold text-white font-mono">#{inv.invoiceNumber}</span>
                     <h4 className="text-md font-bold text-gray-300">{inv.customerName}</h4>
@@ -1614,12 +1614,12 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {getFilteredInvoicesForAdmin().map(inv => {
+                  {getFilteredInvoicesForAdmin().map((inv, idx) => {
                     const isDetailed = adminDetailedModes[inv.id!] !== false;
                     const currentStatusVal = adminInvoiceStatuses[inv.id!] || inv.status;
                     
                     return (
-                      <tr key={inv.id} className="hover:bg-white/[0.02] transition-colors whitespace-nowrap">
+                      <tr key={inv.id ? `adm-inv-${inv.id}-${idx}` : `adm-inv-idx-${idx}`} className="hover:bg-white/[0.02] transition-colors whitespace-nowrap">
                         <td className="p-4 font-mono text-white font-bold whitespace-nowrap">#{inv.invoiceNumber}</td>
                         <td className="p-4 font-bold text-rose-400 whitespace-nowrap">{inv.customerName}</td>
                         <td className="p-4 text-gray-400 font-mono whitespace-nowrap">{getDevicesCount(inv.invoiceNumber)}</td>
@@ -1650,8 +1650,8 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
                             }}
                             className={`bg-black/60 border rounded-xl px-3 py-1.5 text-xs font-bold text-white font-cairo outline-none transition-all ${isDetailed ? 'border-white/5 opacity-50 cursor-not-allowed' : 'border-white/20 focus:border-orange-500'}`}
                           >
-                            {ALL_STATUSES.map(st => (
-                              <option key={st.value} value={st.value} className="bg-[#121212] text-white">
+                            {ALL_STATUSES.map((st, stIdx) => (
+                              <option key={`st-opt-${st.value}-${stIdx}`} value={st.value} className="bg-[#121212] text-white">
                                 {st.label}
                               </option>
                             ))}
@@ -1767,8 +1767,8 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
                   <option value="NEW_DEVICE">🆕 إضافة جهاز جديد كلياً (New Device)</option>
                   {items
                     .filter(it => it.invoiceNumber === selectedInvoiceForAdmin.invoiceNumber)
-                    .map(it => (
-                      <option key={it.id} value={it.id}>
+                    .map((it, itIdx) => (
+                      <option key={it.id ? `dev-it-${it.id}-${itIdx}` : `dev-it-idx-${itIdx}`} value={it.id}>
                         🛠️ {it.deviceType} {it.deviceName ? `- ${it.deviceName}` : ''} ({it.quantity} حبة)
                       </option>
                     ))}
@@ -1792,7 +1792,7 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
                         >
                           <option value="">📋 اختيار من الأنواع المسجلة</option>
                           {registeredCategoryNames.map((cat, i) => (
-                            <option key={i} value={cat}>{cat}</option>
+                            <option key={`reg-cat-${cat}-${i}`} value={cat}>{cat}</option>
                           ))}
                         </select>
                       )}
@@ -1807,7 +1807,7 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
                     />
                     <datalist id="registered_categories_list">
                       {registeredCategoryNames.map((cat, i) => (
-                        <option key={i} value={cat} />
+                        <option key={`dl-cat-${cat}-${i}`} value={cat} />
                       ))}
                     </datalist>
                   </div>
@@ -1826,7 +1826,7 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
                         >
                           <option value="">📋 اختيار من الموديلات</option>
                           {filteredModelNames.map((mod, i) => (
-                            <option key={i} value={mod}>{mod}</option>
+                            <option key={`reg-mod-${mod}-${i}`} value={mod}>{mod}</option>
                           ))}
                         </select>
                       )}
@@ -1841,7 +1841,7 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
                     />
                     <datalist id="registered_models_list">
                       {filteredModelNames.map((mod, i) => (
-                        <option key={i} value={mod} />
+                        <option key={`dl-mod-${mod}-${i}`} value={mod} />
                       ))}
                     </datalist>
                   </div>
@@ -1902,8 +1902,8 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
                     onChange={(e) => setDetailedStatus(e.target.value)}
                     className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-white focus:border-orange-500 outline-none transition-all"
                   >
-                    {ALL_STATUSES.map(st => (
-                      <option key={st.value} value={st.value} className="bg-[#121212]">{st.label}</option>
+                    {ALL_STATUSES.map((st, stIdx) => (
+                      <option key={`st-opt2-${st.value}-${stIdx}`} value={st.value} className="bg-[#121212]">{st.label}</option>
                     ))}
                   </select>
                 </div>
@@ -2242,8 +2242,8 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
               <div className="space-y-2">
                 <label className="text-[11px] text-gray-500 font-bold block">المستندات المالية المتأثرة التي سيتم عكس قيودها:</label>
                 <div className="bg-black/40 border border-white/5 rounded-xl p-3 max-h-32 overflow-y-auto space-y-2">
-                  {reversalConfirmData.transactionsToReverse.map((tx: any) => (
-                    <div key={tx.id} className="text-[10px] flex justify-between items-center bg-white/[0.02] p-2 rounded-lg border border-white/5 font-mono">
+                  {reversalConfirmData.transactionsToReverse.map((tx: any, idx: number) => (
+                    <div key={tx.id ? `rev-tx-${tx.id}-${idx}` : `rev-tx-idx-${idx}`} className="text-[10px] flex justify-between items-center bg-white/[0.02] p-2 rounded-lg border border-white/5 font-mono">
                       <div className="text-right">
                         <div className="text-white font-bold">مستند رقم: {tx.voucherNumber}</div>
                         <div className="text-gray-500 text-[9px]">{tx.notes || 'سند دفع للفاتورة'}</div>

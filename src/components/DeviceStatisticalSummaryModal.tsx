@@ -750,11 +750,11 @@ export default function DeviceStatisticalSummaryModal({
                     </button>
 
                     {/* Individual Items */}
-                    {filteredRollItems.map((item) => {
+                    {filteredRollItems.map((item, idx) => {
                       const isSelected = selectedValue === item.name;
                       return (
                         <button
-                          key={item.name}
+                          key={`roll-${item.name}-${idx}`}
                           type="button"
                           onClick={() => {
                             setSelectedValue(item.name);

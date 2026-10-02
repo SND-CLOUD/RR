@@ -331,8 +331,8 @@ export default function AddCustomerModal({
                   className="w-full bg-black/40 border border-white/10 rounded-2xl px-4 py-3 focus:border-orange-500 outline-none transition-all text-sm font-bold text-white text-right font-cairo appearance-none"
                 >
                   {availableCurrencies.length > 0 ? (
-                    availableCurrencies.map((curr) => (
-                      <option key={curr.id} value={curr.name}>
+                    availableCurrencies.map((curr, cIdx) => (
+                      <option key={curr.id ? `add-cust-curr-${curr.id}-${cIdx}` : `add-cust-curr-idx-${cIdx}`} value={curr.name}>
                         {curr.name === 'USD' ? 'دولار (USD)' : curr.name === 'SAR' ? 'ريال سعودي (SAR)' : curr.name === 'YER' ? 'ريال يمني (YER)' : curr.name === 'EUR' ? 'يورو (EUR)' : curr.name}
                       </option>
                     ))

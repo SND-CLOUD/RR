@@ -698,7 +698,7 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
                <div className="mb-4">
                  <h4 className="text-orange-500 text-xs font-black mb-1">الأنواع الجديدة:</h4>
                  <div className="flex flex-wrap gap-2">
-                    {pendingNewDevices.categories.map(c => <span key={c} className="bg-white/5 border border-white/10 px-2 py-1 rounded text-xs text-white">{c}</span>)}
+                    {pendingNewDevices.categories.map((c, idx) => <span key={`cat-${c}-${idx}`} className="bg-white/5 border border-white/10 px-2 py-1 rounded text-xs text-white">{c}</span>)}
                  </div>
                </div>
              )}
@@ -707,7 +707,7 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
                <div className="mb-4">
                  <h4 className="text-orange-500 text-xs font-black mb-1">الموديلات/الأجهزة الجديدة:</h4>
                  <div className="flex flex-wrap gap-2">
-                    {pendingNewDevices.models.map(m => <span key={m} className="bg-white/5 border border-white/10 px-2 py-1 rounded text-xs text-white">{m}</span>)}
+                    {pendingNewDevices.models.map((m, idx) => <span key={`mod-${m}-${idx}`} className="bg-white/5 border border-white/10 px-2 py-1 rounded text-xs text-white">{m}</span>)}
                  </div>
                </div>
              )}
@@ -942,9 +942,9 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
                             
                             return (
                               <div className="absolute top-[calc(100%+0.25rem)] right-0 w-full bg-[#1e1e1e] border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden max-h-40 overflow-y-auto">
-                                {list.length > 0 ? list.map(cat => (
+                                {list.length > 0 ? list.map((cat, catIdx) => (
                                   <button
-                                   key={cat.id}
+                                   key={cat.id ? `dev-cat-${cat.id}-${catIdx}` : `dev-cat-idx-${catIdx}`}
                                    className="w-full text-right px-4 py-2 hover:bg-white/5 text-xs text-white"
                                    onMouseDown={(e) => {
                                      e.preventDefault();
@@ -1014,9 +1014,9 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
                             
                             return (
                               <div className="absolute top-[calc(100%+0.25rem)] right-0 w-full bg-[#1e1e1e] border border-white/10 rounded-xl shadow-2xl z-50 overflow-hidden max-h-40 overflow-y-auto">
-                                {list.length > 0 ? list.map(model => (
+                                {list.length > 0 ? list.map((model, modIdx) => (
                                   <button
-                                   key={model.id}
+                                   key={model.id ? `dev-mod-${model.id}-${modIdx}` : `dev-mod-idx-${modIdx}`}
                                    className="w-full text-right px-4 py-2 hover:bg-white/5 text-xs text-white flex flex-col"
                                    onMouseDown={(e) => {
                                      e.preventDefault();

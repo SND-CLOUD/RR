@@ -1727,7 +1727,7 @@ export default function OtherServiceInvoice({
                       </thead>
                       <tbody className="divide-y divide-white/5 text-gray-200">
                         {purchaseItems.map((pi, idx) => (
-                          <tr key={pi.id} className={editingPurchaseIdx === idx ? 'bg-purple-500/10' : ''}>
+                          <tr key={pi.id ? `purch-item-${pi.id}-${idx}` : `purch-item-idx-${idx}`} className={editingPurchaseIdx === idx ? 'bg-purple-500/10' : ''}>
                             <td className="p-3 font-mono text-gray-500">{idx + 1}</td>
                             <td className="p-3 font-bold text-white">{pi.name}</td>
                             <td className="p-3 text-gray-300 max-w-[180px] truncate" title={pi.notes}>
@@ -1808,8 +1808,8 @@ export default function OtherServiceInvoice({
                     onChange={(e) => setSelectedFundId(e.target.value)}
                     className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl p-2.5 text-xs font-bold text-white focus:outline-none focus:border-purple-500"
                   >
-                    {funds.map(f => (
-                      <option key={f.id} value={f.id}>
+                    {funds.map((f, fIdx) => (
+                      <option key={f.id ? `purch-fund-${f.id}-${fIdx}` : `purch-fund-idx-${fIdx}`} value={f.id}>
                         {f.name} ({f.currency || 'USD'}) - الرصيد: {formatMoney(parseFundBalance(f.balance), f.currency)}
                       </option>
                     ))}
@@ -2186,7 +2186,7 @@ export default function OtherServiceInvoice({
                     </thead>
                     <tbody className="divide-y divide-white/5 text-gray-200">
                       {items.map((it, idx) => (
-                        <tr key={it.id}>
+                        <tr key={it.id ? `sale-it-${it.id}-${idx}` : `sale-it-idx-${idx}`}>
                           <td className="p-3 font-mono text-gray-500">{idx + 1}</td>
                           <td className="p-3 font-bold text-white">
                             <div className="flex items-center gap-1.5 flex-wrap">
@@ -2263,8 +2263,8 @@ export default function OtherServiceInvoice({
                   onChange={(e) => setSelectedFundId(e.target.value)}
                   className="w-full bg-[#181818] border border-white/10 rounded-xl p-2.5 text-xs font-bold text-white focus:outline-none"
                 >
-                  {funds.map(f => (
-                    <option key={f.id} value={f.id}>
+                  {funds.map((f, fIdx) => (
+                    <option key={f.id ? `sale-fund-${f.id}-${fIdx}` : `sale-fund-idx-${fIdx}`} value={f.id}>
                       {f.name} ({f.currency || 'USD'})
                     </option>
                   ))}

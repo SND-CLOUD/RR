@@ -1751,7 +1751,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                           </td>
                         </tr>
                       ) : (
-                        customerInvoices.map((inv) => {
+                        customerInvoices.map((inv, idx) => {
                           const invItems = items.filter(it => it.invoiceNumber === inv.invoiceNumber);
                           const itemsCount = invItems.reduce((acc, it) => acc + (Number(it.quantity) || 0), 0);
                           const actualCost = getInvoiceActualCost(invItems, inv);
@@ -1766,7 +1766,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                           });
                           
                           return (
-                            <tr key={inv.id} className="hover:bg-white/[0.01] transition-colors">
+                            <tr key={inv.id ? `cust-inv-${inv.id}-${idx}` : `cust-inv-idx-${idx}`} className="hover:bg-white/[0.01] transition-colors">
                               <td className="px-6 py-4 font-mono font-bold text-white">{inv.invoiceNumber}</td>
                               <td className="px-6 py-4 font-mono text-slate-400">
                                 {inv.createdAt 
@@ -1780,8 +1780,8 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                               <td className="px-6 py-4 font-mono text-rose-500 font-bold">{remainingForInv.toFixed(2)} <span className="text-[9px] text-gray-500">{curr}</span></td>
                               <td className="px-6 py-4">
                                 <div className="flex flex-col gap-1.5 justify-end">
-                                  {Object.entries(statusGroups).map(([status, count]) => (
-                                    <div key={status} className="flex items-center gap-1.5 justify-end">
+                                  {Object.entries(statusGroups).map(([status, count], sIdx) => (
+                                    <div key={`status-${status}-${sIdx}`} className="flex items-center gap-1.5 justify-end">
                                       <span className="text-[10px] font-bold text-gray-400 font-mono">{count}x</span>
                                       <span className={`inline-block px-2.5 py-0.5 rounded-full border text-[9px] font-bold ${getStatusStyle(status)}`}>
                                         {getStatusTextArabic(status)}
@@ -1878,14 +1878,14 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                     </td>
                   </tr>
                 ) : (
-                  currentCustomers.map((cust) => {
+                  currentCustomers.map((cust, idx) => {
                     const remainingDevices = getCustomerRemainingDevices(cust.id!);
                     const outstandingAmt = getCustomerOutstandingAmount(cust.id!);
                     const currLabel = getCustomerCurrencyLabel(cust.id!);
                     const isSelected = selectedCustomer?.id === cust.id;
 
                     return (
-                      <tr key={cust.id} className="hover:bg-white/[0.03] transition-colors cursor-pointer" onClick={() => selectCustomer(cust)}>
+                      <tr key={cust.id ? `cust-${cust.id}-${idx}` : `cust-idx-${idx}`} className="hover:bg-white/[0.03] transition-colors cursor-pointer" onClick={() => selectCustomer(cust)}>
                         <td className="px-1.5 py-1.5 font-mono font-bold text-gray-500 text-center text-[9px] sm:text-[10px]">
                           {cust.customerNumber || '---'}
                         </td>
@@ -2593,7 +2593,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
 
                           return (
                             <tr 
-                              key={inv.id || index} 
+                              key={inv.id ? `log-inv-${inv.id}-${index}` : `log-inv-idx-${index}`} 
                               onClick={() => setSelectedLogInvoice(inv)}
                               className={`hover:bg-white/[0.04] even:bg-white/[0.01] cursor-pointer transition-colors ${isSelected ? 'bg-orange-600/15 border-r-4 border-r-orange-500' : ''}`}
                             >

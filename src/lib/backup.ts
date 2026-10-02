@@ -170,19 +170,32 @@ export async function restoreBackupData(jsonString: string): Promise<boolean> {
         if (!isNaN(num) && num > maxCustomer) maxCustomer = num;
       });
 
+      const txsSnap = await targetProvider.getDocs('vault_transactions');
+      let maxVoucher = 1000;
+      txsSnap.docs.forEach((d: any) => {
+        const num = parseInt(d.data()?.voucherNumber, 10);
+        if (!isNaN(num) && num > maxVoucher) maxVoucher = num;
+      });
+
       // Update counters in settings/app document
       let existingSettings = await targetProvider.getDoc('settings', 'app');
       if (existingSettings.exists()) {
         await targetProvider.updateDoc('settings', 'app', {
           lastInvoiceNumber: maxInvoice,
-          lastCustomerNumber: maxCustomer
+          lastCustomerNumber: maxCustomer,
+          lastVoucherNumber: maxVoucher
         }, 'BYPASS_OUTBOX');
       } else {
         await targetProvider.setDoc('settings', 'app', {
           lastInvoiceNumber: maxInvoice,
-          lastCustomerNumber: maxCustomer
+          lastCustomerNumber: maxCustomer,
+          lastVoucherNumber: maxVoucher
         }, undefined, 'BYPASS_OUTBOX');
       }
+
+      try {
+        await localDb.run("UPDATE settings SET value = ? WHERE key = 'lastVoucherNumber'", [String(maxVoucher)]);
+      } catch (e) {}
     } catch (err) {
       console.warn('Failed to recalibrate settings counters after restore:', err);
     }
