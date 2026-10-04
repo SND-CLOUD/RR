@@ -89,9 +89,9 @@ function getItemSubStatus(item: any): string {
   
   // For unified status codes
   if (item.status === '50' || item.status === '60' || item.status === 'delivered') {
-    const report = (item.engineerReport || '').toLowerCase();
-    const reason = (item.failureReason || '').toLowerCase();
-    const notes = (item.technicalNotes || '').toLowerCase();
+    const report = String(item.engineerReport || '').toLowerCase();
+    const reason = String(item.failureReason || '').toLowerCase();
+    const notes = String(item.technicalNotes || '').toLowerCase();
     
     if (reason.includes('لم يوافق') || report.includes('لم يوافق') || notes.includes('لم يوافق')) return 'refused';
     if (reason.includes('لا يصلح') || report.includes('لا يصلح') || reason.includes('unrepairable') || report.includes('unrepairable')) return 'unrepairable';

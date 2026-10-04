@@ -310,6 +310,7 @@ class LocalDatabase {
           amount REAL,
           customerName TEXT,
           invoiceNumber TEXT,
+          invoiceId TEXT,
           userName TEXT,
           userNumber INTEGER,
           userId TEXT,
@@ -570,6 +571,34 @@ class LocalDatabase {
           await this.db.run(`ALTER TABLE user_devices ADD COLUMN ${col}`);
         } catch (e) {}
       }
+
+      // Ensure fin_funds columns exist
+      try {
+        await this.db.run(`ALTER TABLE fin_funds ADD COLUMN updatedAt TEXT`);
+      } catch (e) {}
+
+      // Ensure vault_transactions invoiceId exists
+      try {
+        await this.db.run(`ALTER TABLE vault_transactions ADD COLUMN invoiceId TEXT`);
+      } catch (e) {}
+
+      // Heal historical invoiceNumber mismatch for Shamshan transaction in local SQLite
+      try {
+        await this.db.run(`
+          UPDATE vault_transactions 
+          SET invoiceNumber = 'O-8', invoiceId = 'har667q9rq8' 
+          WHERE (invoiceNumber = 'O-9' OR invoiceId = 'har667q9rq8') 
+            AND customerId = 'suw12184gk'
+        `);
+        await this.db.run(`UPDATE invoice_items SET invoiceNumber = 'O-8' WHERE id = 'wyovvu7p0bc' OR (invoiceId = 'har667q9rq8' AND invoiceNumber = 'O-9')`);
+        await this.db.run(`UPDATE invoice_items SET invoiceNumber = 'O-9' WHERE id = 'pgp68beu6id' OR (invoiceId = 'iyi9ymwm1m' AND invoiceNumber = 'O-10')`);
+        await this.db.run(`
+          UPDATE vault_transactions 
+          SET invoiceNumber = '128', invoiceId = 'x3m3ys6yrv' 
+          WHERE id = 'vtx-x3m3ys6yrv-musfylzg-uqar' OR (invoiceId = 'x3m3ys6yrv' AND invoiceNumber = '130')
+        `);
+        await this.db.run(`UPDATE invoice_items SET invoiceNumber = '128' WHERE id = '2gd56ly9ru7' OR (invoiceId = 'x3m3ys6yrv' AND invoiceNumber = '130')`);
+      } catch (e) {}
 
       // Ensure document_outputs table is created for existing databases as well
       try {
@@ -1262,11 +1291,7 @@ class LocalDatabase {
       // ----------------------------------------------------
 
       if (platform === 'web') {
-        try {
-          await sqlite.saveToStore('snd_system');
-        } catch (saveErr) {
-          console.warn('sqlite.saveToStore ignored during init:', saveErr);
-        }
+        await sqlite.saveToStore('snd_system');
       }
 
     } catch (err) {
@@ -1333,11 +1358,7 @@ class LocalDatabase {
       
       const info = await Device.getInfo();
       if (info.platform === 'web') {
-        try {
-          await this.getSqlite().saveToStore('snd_system');
-        } catch (saveErr) {
-          console.warn('sqlite.saveToStore ignored during run:', saveErr);
-        }
+        await this.getSqlite().saveToStore('snd_system');
       }
       
       return result;

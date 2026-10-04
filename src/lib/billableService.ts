@@ -5,67 +5,83 @@ import { Invoice, InvoiceItem } from '../types';
 /**
  * Determines whether a device item was rejected by customer, cannot be repaired,
  * or lacked required spare parts, meaning it should NOT incur repair costs.
+ * Relies STRICTLY on the technical decision (القرار الفني) and status,
+ * and does NOT search inside text reports or notes.
  */
 export function isItemRefusedOrFailed(item: any): boolean {
   if (!item) return false;
 
-  const sub = String(item.subStatus || '').toLowerCase().trim();
   const status = String(item.status || '').toLowerCase().trim();
+  const sub = String(item.subStatus || '').toLowerCase().trim();
+  const decision = String(item.decision || item.technicalDecision || '').toLowerCase().trim();
+  const outcome = String(item.outcome || item.approvalStatus || '').toLowerCase().trim();
   const src = String(item.source || '').toLowerCase().trim();
-  const failureReason = String(item.failureReason || '').toLowerCase().trim();
-  const engineerReport = String(item.engineerReport || '').toLowerCase().trim();
-  const technicalNotes = String(item.technicalNotes || '').toLowerCase().trim();
 
-  // Explicit subStatus codes
-  if (['refused', 'unrepairable', 'no_parts', 'parts_not_available', 'failed', 'cancelled'].includes(sub)) {
-    return true;
-  }
-
-  // Explicit status codes
-  if (['70', 'cancelled', '55', '45'].includes(status)) {
-    return true;
-  }
-
-  // Explicit source codes
-  if (['refused', 'unrepairable', 'no_parts', 'parts_not_available', 'failed', 'cancelled'].includes(src)) {
-    return true;
-  }
-
-  // Common keywords in failure reason
-  const failureKeywords = [
-    'لم يوافق',
-    'رفض',
-    'لا تصلح',
-    'لا يصلح',
-    'لم يتم الاصلاح',
-    'لم يتم الإصلاح',
-    'تعذر الاصلاح',
-    'تعذر الإصلاح',
-    'قطع الغيار',
-    'عدم توفر قطع',
-    'لم تتوفر قطع',
-    'قطع غير متوفرة',
-    'بدون قطع'
+  // 1. Devices in active in-progress stages (10: new, 20/21/22: inspection, 25/30: waiting approval, 35: waiting parts, 40: repairing)
+  // MUST NEVER be zeroed out unless an explicit final terminal refusal/failure decision was made.
+  // Note: '30' / 'waiting_approval' and '35' / 'waiting_parts' are active pending stages, NOT failures.
+  const IN_PROGRESS_STATUSES = [
+    '10', 'new',
+    '20', '21', '22', 'inspection',
+    '25', '30', 'waiting_approval', 'awaiting_approval',
+    '35', 'waiting_parts', 'awaiting_parts',
+    '40', 'maintenance', 'repairing', 'in_progress'
   ];
 
-  if (failureReason && failureKeywords.some(kw => failureReason.includes(kw))) {
+  if (IN_PROGRESS_STATUSES.includes(status)) {
+    // If explicitly marked as waiting for parts or waiting for approval, it is active and NOT zeroed
+    if (decision === 'waiting_parts' || decision === 'waiting_approval' || decision === 'awaiting_parts' || decision === 'awaiting_approval' ||
+        sub === 'waiting_parts' || sub === 'waiting_approval' || outcome === 'waiting_parts' || outcome === 'waiting_approval' ||
+        decision === 'repairing' || decision === 'صيانة') {
+      return false;
+    }
+
+    const isExplicitTerminalRefusal = ['refused', '70', 'cancelled', 'لم يوافق'].includes(decision) ||
+                                     ['refused', '70', 'cancelled', 'لم يوافق'].includes(outcome) ||
+                                     (sub === 'refused' || sub === 'cancelled');
+    const isExplicitTerminalUnrepairable = ['unrepairable', '55', 'failed', 'لا يصلح'].includes(decision) ||
+                                          ['unrepairable', '55', 'failed', 'لا يصلح'].includes(outcome) ||
+                                          (sub === 'unrepairable' || sub === 'failed');
+    return isExplicitTerminalRefusal || isExplicitTerminalUnrepairable;
+  }
+
+  // 2. If technical decision is explicitly active maintenance/repairing
+  if (decision === 'repairing' || decision === 'صيانة') {
+    if (!['refused', 'cancelled', '70', 'unrepairable', '55'].includes(outcome) &&
+        !['refused', 'cancelled', '70', 'unrepairable', '55'].includes(sub) &&
+        !['refused', 'cancelled', '70', 'unrepairable', '55'].includes(status)) {
+      return false;
+    }
+  }
+
+  // 3. Explicit terminal refused status / decision
+  if (['70', 'cancelled', 'refused'].includes(status) || sub === 'refused' || sub === 'cancelled' ||
+      ['refused', 'cancelled', 'لم يوافق'].includes(decision) || ['refused', 'cancelled', 'لم يوافق'].includes(outcome)) {
     return true;
   }
 
-  // Decision outcome in engineer report / technical notes
-  if (engineerReport && failureKeywords.some(kw => engineerReport.includes(kw))) {
-    // Only if it represents a terminal decision (not merely diagnostic note in active stage)
-    if (['50', '60', 'ready', 'delivered'].includes(status) || sub !== '') {
-      return true;
-    }
+  // 4. Explicit terminal unrepairable status / decision
+  if (status === '55' || sub === 'unrepairable' || sub === 'failed' ||
+      ['unrepairable', 'failed', 'لا يصلح'].includes(decision) || ['unrepairable', 'failed', 'لا يصلح'].includes(outcome)) {
+    return true;
   }
 
-  if (technicalNotes && failureKeywords.some(kw => technicalNotes.includes(kw))) {
-    if (['50', '60', 'ready', 'delivered'].includes(status) || sub !== '') {
-      return true;
-    }
+  // 5. Explicit terminal permanently cancelled for no parts (Code 45 only, NOT stage 35 waiting parts!)
+  if (status === '45' || (status !== '35' && status !== '30' && (sub === 'no_parts' || sub === 'parts_unavailable' || decision === 'عدم توفر قطع' || decision === 'no_parts'))) {
+    return true;
   }
 
+  // 6. Intact device (no fault) -> non-billable / 0 cost
+  if (status === 'intact' || sub === 'intact' || decision === 'intact' || outcome === 'intact' || decision === 'سليم') {
+    return true;
+  }
+
+  // 7. Explicit source codes
+  if (['refused', 'unrepairable', 'failed', 'cancelled'].includes(src)) {
+    return true;
+  }
+
+  // Rely STRICTLY on the technical decision - NEVER search inside text reports or notes
   return false;
 }
 

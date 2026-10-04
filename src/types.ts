@@ -456,24 +456,6 @@ export function getItemSubStatus(item: any): string {
 
   // Fallback for code '50' with no subStatus
   if (status === '50') {
-    const report = String(item.engineerReport || '').toLowerCase();
-    const reason = String(item.failureReason || '').toLowerCase();
-    
-    if (reason.includes('لم يوافق') || report.includes('لم يوافق') || reason.includes('refused')) return 'refused';
-    if (reason.includes('لا يصلح') || report.includes('لا يصلح') || reason.includes('unrepairable') || report.includes('unrepairable')) return 'unrepairable';
-    if (report.includes('سليم') || report.includes('intact')) return 'intact';
-    if (
-      reason.includes('قطع') ||
-      report.includes('قطع') ||
-      reason.includes('no_parts') ||
-      report.includes('no_parts') ||
-      reason.includes('عدم توفر') ||
-      reason.includes('غير متوفر') ||
-      report.includes('عدم توفر') ||
-      report.includes('غير متوفر')
-    ) {
-      return 'no_parts';
-    }
     return 'ready';
   }
   

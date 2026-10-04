@@ -381,12 +381,23 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
 
       dbInvoices.forEach((inv: any) => {
         const invNumNorm = normalizeInvNum(inv.invoiceNumber);
-        const txsByNum = (invNumNorm ? txGroupsByInvoiceNum[invNumNorm] : []) || [];
-        const txsById = (inv.id ? txGroupsByInvoiceId[inv.id] : []) || [];
+        
+        // 1. Primary: match by immutable invoiceId
+        const txsById = (inv.id && txGroupsByInvoiceId[inv.id]) || [];
+        
+        // 2. Secondary fallback by invoiceNumber ONLY IF customerId matches and tx has no conflicting invoiceId
+        const candidateTxsByNum = (invNumNorm ? txGroupsByInvoiceNum[invNumNorm] : []) || [];
+        const validTxsByNum = candidateTxsByNum.filter((tx: any) => {
+          // If transaction already has an explicit invoiceId that doesn't match this invoice, reject
+          if (tx.invoiceId && tx.invoiceId !== inv.id) return false;
+          // Transaction MUST belong to the same customer if customerId exists on both
+          if (tx.customerId && inv.customerId && tx.customerId !== inv.customerId) return false;
+          return true;
+        });
         
         // Merge unique transactions linked to this invoice
         const uniqueTxMap = new Map<string, any>();
-        [...txsByNum, ...txsById].forEach((tx: any) => {
+        [...txsById, ...validTxsByNum].forEach((tx: any) => {
           if (tx.id) uniqueTxMap.set(tx.id, tx);
         });
         const txs = Array.from(uniqueTxMap.values());
@@ -1293,15 +1304,6 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
       }
       step++;
 
-      // Retroactive cleanup of non-billable items
-      setRepairProgress({ status: 'running', message: `[${step}/${totalSteps}] تصفير تكاليف الأجهزة المرفوضة والتالفة وتحديث الفواتير السابقة...` });
-      try {
-        await runRetroactiveNonBillableCleanup();
-      } catch (e) {
-        console.error('Failed to run retroactive non-billable cleanup:', e);
-      }
-      step++;
-
       setRepairProgress({ status: 'completed', message: 'تم التحديث وتسوية وتوحيد أجهزة الفواتير وقواعد الاختلافات بنجاح! جميع أرقام العدادات والمعاملات والأجهزة تتوافق 100% بين القاعدة المحلية والمخدم السحابي.' });
       await runDatabaseAudit();
       window.dispatchEvent(new CustomEvent('snd_data_synced'));
@@ -1692,27 +1694,6 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                         ))}
                       </div>
                     )}
-                  </div>
-
-                  {/* 5c. Non-Billable Devices Cleanup */}
-                  <div className="p-4 bg-white/5 rounded-2xl border border-white/5 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <DollarSign size={16} className="text-rose-400" />
-                        <span className="font-bold text-sm text-white">تصفير تكاليف الأجهزة غير المعتمدة والملغاة</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={repairNonBillableDevices}
-                        disabled={repairProgress.status === 'running'}
-                        className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white rounded-lg text-[10px] font-bold transition-all cursor-pointer disabled:opacity-50"
-                      >
-                        تصفير وتحديث الفواتير
-                      </button>
-                    </div>
-                    <p className="text-xs text-gray-400">
-                      تصفير تكلفة الأجهزة ذات القرار الفني (لم يوافق العميل / لا تصلح / عدم توفر قطع الغيار) في قاعدة البيانات فورياً وتحديث إجمالي فواتيرها، لمنع احتسابها في أي تقرير أو صفحة.
-                    </p>
                   </div>
 
                   {/* 6. Status Discrepancies */}

@@ -790,12 +790,24 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
       });
 
       // Insert reversal counter-transaction via ProviderFactory
+      let reversalInvId = tx.invoiceId || inv.id || '';
+      if (!reversalInvId && (tx.invoiceNumber || inv.invoiceNumber)) {
+        try {
+          const targetNum = String(tx.invoiceNumber || inv.invoiceNumber).replace('#', '').trim();
+          const invRes = await localDb.query("SELECT id FROM invoices WHERE invoiceNumber = ? OR invoiceNumber = ?", [targetNum, `#${targetNum}`]);
+          if (invRes.values && invRes.values.length > 0) {
+            reversalInvId = invRes.values[0].id;
+          }
+        } catch (e) {}
+      }
+
       await ProviderFactory.getProvider().setDoc('vault_transactions', reversalTxId, {
           id: reversalTxId,
           currency: tx.currency || 'USD',
           amount: reverseAmount,
           customerName: tx.customerName || inv.customerName,
           invoiceNumber: tx.invoiceNumber || inv.invoiceNumber,
+          invoiceId: reversalInvId,
           userName: user.name || user.username || 'المدير العام',
           userNumber: user.userNumber || 1,
           userId: user.id || 'none',

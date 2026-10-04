@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs, writeBatch, updateDoc, deleteDoc, addDoc, serverTimestamp } from '../firebase';
-import { Save, RefreshCw, Smartphone, Database, Languages, LogOut, Shield, Fingerprint, Lock, Clock, HardDrive, Download, Archive, Upload, RotateCcw, FileText, User as UserIcon, Tag, X, Cpu, Calculator, ArrowLeft, ArrowRight, Edit, Phone, Mail, Facebook, MapPin, Store, ChevronLeft, ChevronDown, Globe, Settings as SettingsIcon, CheckCircle, XCircle, Bell, Printer, SunMoon } from 'lucide-react';
+import { Save, RefreshCw, Smartphone, Database, Languages, LogOut, Shield, Fingerprint, Lock, Clock, HardDrive, Download, Archive, Upload, RotateCcw, FileText, User as UserIcon, Tag, X, Cpu, Calculator, ArrowLeft, ArrowRight, Edit, Phone, Mail, Facebook, MapPin, Store, ChevronLeft, ChevronDown, Globe, Settings as SettingsIcon, CheckCircle, XCircle, Bell, Printer, SunMoon, Wrench } from 'lucide-react';
 import { localDb } from '../lib/local-db';
 import { FirebaseProviderInstance } from '../data/FirebaseProvider';
 import { LocalProviderInstance } from '../data/LocalProvider';
@@ -13,6 +13,7 @@ import EngineersTable from './EngineersTable';
 import CategoriesTable from './CategoriesTable';
 import DeviceManagement from './DeviceManagement';
 import AccountingInputs from './AccountingInputs';
+import AdvancedDatabaseMaintenance from './AdvancedDatabaseMaintenance';
 import { AnimatePresence, motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -69,7 +70,7 @@ const TABLE_ARABIC_NAMES: Record<string, string> = {
   saved_pdfs: 'أرشيف ومستندات PDF المحفوظة',
 };
 
-export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignOut }: { user: User, shopConfig: ShopConfig | null, onShopConfigUpdate?: (config: any) => void, onSignOut?: () => void }) {
+export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignOut, onNavigateToAdvancedMaintenance }: { user: User, shopConfig: ShopConfig | null, onShopConfigUpdate?: (config: any) => void, onSignOut?: () => void, onNavigateToAdvancedMaintenance?: () => void }) {
   const { t, i18n } = useTranslation();
   const { hasPermission } = usePermissions(user);
   const hasHybridDbPermission = user.role === 'admin' || user.role === 'manager' || !!user.permissions?.settings_hybrid_db?.view;
@@ -99,7 +100,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
   // Shop details states
   const [activeCategoriesEngineersModal, setActiveCategoriesEngineersModal] = useState<'categories' | 'engineers' | null>(null);
   const [activeAccountingInputsModal, setActiveAccountingInputsModal] = useState<'accounting' | 'details' | 'backup' | null>(null);
-  const [activeAdvancedManagementModal, setActiveAdvancedManagementModal] = useState<'database-sync' | 'database-backup' | 'devices' | null>(null);
+  const [activeAdvancedManagementModal, setActiveAdvancedManagementModal] = useState<'database-sync' | 'database-backup' | 'devices' | 'advanced-maintenance' | null>(null);
   const [generalSubTab, setGeneralSubTab] = useState<'language' | 'details' | 'advanced' | 'database'>('language');
   const [activeGeneralModal, setActiveGeneralModal] = useState<'language' | 'details' | 'advanced' | 'database' | null>(null);
   
@@ -849,18 +850,42 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
 
       const paymentImbalances: any[] = [];
       const txGroupsByInvoiceNum: Record<string, any[]> = {};
+      const txGroupsByInvoiceId: Record<string, any[]> = {};
       dbTransactions.forEach((tx: any) => {
-        if ((tx.type === 'receipt' || tx.type === 'payment' || tx.type === 'invoice_payment') && tx.invoiceNumber) {
-          const invNum = String(tx.invoiceNumber).trim();
-          if (!txGroupsByInvoiceNum[invNum]) {
-            txGroupsByInvoiceNum[invNum] = [];
+        if (tx.isReversed || tx.isReversal || tx.status === 'reversed' || tx.status === 'reversal') return;
+        if (tx.type === 'receipt' || tx.type === 'payment' || tx.type === 'invoice_payment') {
+          if (tx.invoiceId) {
+            if (!txGroupsByInvoiceId[tx.invoiceId]) {
+              txGroupsByInvoiceId[tx.invoiceId] = [];
+            }
+            txGroupsByInvoiceId[tx.invoiceId].push(tx);
           }
-          txGroupsByInvoiceNum[invNum].push(tx);
+          if (tx.invoiceNumber) {
+            const invNum = String(tx.invoiceNumber).replace('#', '').trim();
+            if (!txGroupsByInvoiceNum[invNum]) {
+              txGroupsByInvoiceNum[invNum] = [];
+            }
+            txGroupsByInvoiceNum[invNum].push(tx);
+          }
         }
       });
 
       dbInvoices.forEach((inv: any) => {
-        const txs = txGroupsByInvoiceNum[String(inv.invoiceNumber).trim()] || [];
+        const invNumClean = String(inv.invoiceNumber || '').replace('#', '').trim();
+        // 1. Primary: match by immutable invoiceId
+        const txsById = (inv.id && txGroupsByInvoiceId[inv.id]) || [];
+        // 2. Secondary: fallback by invoiceNumber ONLY IF customerId matches
+        const candidateTxsByNum = (invNumClean && txGroupsByInvoiceNum[invNumClean]) || [];
+        const validTxsByNum = candidateTxsByNum.filter((tx: any) => {
+          if (tx.invoiceId && tx.invoiceId !== inv.id) return false;
+          if (tx.customerId && inv.customerId && tx.customerId !== inv.customerId) return false;
+          return true;
+        });
+        const uniqueTxMap = new Map<string, any>();
+        [...txsById, ...validTxsByNum].forEach((tx: any) => {
+          if (tx.id) uniqueTxMap.set(tx.id, tx);
+        });
+        const txs = Array.from(uniqueTxMap.values());
         const computedPaid = txs.reduce((sum, tx) => sum + (Number(tx.liabilityAmount) || Number(tx.amount) || 0), 0);
         if (Math.abs(computedPaid - Number(inv.amountPaid)) > 0.01) {
           const explicitType = inv.invoiceType || inv.templateType || inv.type || '';
@@ -3584,34 +3609,60 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         </div>
         <ChevronLeft size={20} className="text-gray-500 group-hover:text-white group-hover:translate-x-[-4px] transition-all" />
       </button>
+
+      {/* 4. Advanced Database Maintenance Option */}
+      <button
+        type="button"
+        onClick={() => {
+          if (onNavigateToAdvancedMaintenance) {
+            onNavigateToAdvancedMaintenance();
+          } else {
+            setActiveAdvancedManagementModal('advanced-maintenance');
+          }
+        }}
+        className="w-full flex items-center justify-between p-6 bg-white/5 hover:bg-white/[0.08] border border-white/5 hover:border-amber-500/30 rounded-2xl transition-all group text-right shadow-lg cursor-pointer mx-4 md:mx-0"
+      >
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center group-hover:bg-amber-500 group-hover:text-white transition-all">
+            <Wrench size={22} />
+          </div>
+          <div>
+            <h3 className="font-bold text-white text-base">صيانة متقدمة لقاعدة البيانات</h3>
+            <p className="text-xs text-gray-400 mt-1">صيانة وترقيم السندات وفواتير الصيانة والعملاء وفواتير أخرى</p>
+          </div>
+        </div>
+        <ChevronLeft size={20} className="text-gray-500 group-hover:text-white group-hover:translate-x-[-4px] transition-all" />
+      </button>
     </div>
 
     {/* Modals for advanced-management options */}
     <AnimatePresence>
       {activeAdvancedManagementModal !== null && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/80 backdrop-blur-sm">
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-0 sm:p-6 bg-black/80 backdrop-blur-sm">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
             exit={{ opacity: 0, scale: 0.95 }}
-            className="bg-[#1a1a1a] w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-5xl sm:rounded-[2rem] border border-white/10 shadow-2xl flex flex-col p-4 md:p-6 overflow-hidden"
+            className="bg-white dark:bg-[#1a1a1a] w-full h-full sm:h-auto sm:max-h-[90vh] sm:max-w-5xl sm:rounded-[2rem] border border-slate-200 dark:border-white/10 shadow-2xl flex flex-col p-4 md:p-6 overflow-hidden"
             dir="rtl"
           >
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-white/10 pb-4 mb-6 shrink-0">
-              <h3 className="text-lg font-black text-white flex items-center gap-2">
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/10 pb-4 mb-6 shrink-0">
+              <h3 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
                 {activeAdvancedManagementModal === 'database-sync' && <RefreshCw className="text-indigo-500" size={20} />}
                 {activeAdvancedManagementModal === 'database-backup' && <Database className="text-indigo-500" size={20} />}
                 {activeAdvancedManagementModal === 'devices' && <Cpu className="text-indigo-500" size={20} />}
+                {activeAdvancedManagementModal === 'advanced-maintenance' && <Wrench className="text-amber-500" size={20} />}
                 {activeAdvancedManagementModal === 'database-sync' && 'قاعدة البيانات والمزامنة'}
                 {activeAdvancedManagementModal === 'database-backup' && 'نسخ البيانات والمزامنة'}
                 {activeAdvancedManagementModal === 'devices' && 'إدارة الأجهزة المعتمدة'}
+                {activeAdvancedManagementModal === 'advanced-maintenance' && 'صيانة متقدمة لقاعدة البيانات'}
               </h3>
               <button
                 onClick={() => setActiveAdvancedManagementModal(null)}
-                className="p-2 hover:bg-white/10 rounded-xl transition-all cursor-pointer"
+                className="p-2 hover:bg-slate-100 dark:hover:bg-white/10 text-slate-500 hover:text-slate-900 dark:text-gray-400 dark:hover:text-white rounded-xl transition-all cursor-pointer"
               >
-                <X size={20} className="text-gray-400 hover:text-white" />
+                <X size={20} />
               </button>
             </div>
 
@@ -4109,6 +4160,11 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
               {activeAdvancedManagementModal === 'devices' && (
                 <div className="animate-in fade-in duration-200 h-full">
                   <DeviceManagement user={user} onBack={() => setActiveAdvancedManagementModal(null)} shopConfig={shopConfig} />
+                </div>
+              )}
+              {activeAdvancedManagementModal === 'advanced-maintenance' && (
+                <div className="animate-in fade-in duration-200">
+                  <AdvancedDatabaseMaintenance onClose={() => setActiveAdvancedManagementModal(null)} />
                 </div>
               )}
             </div>

@@ -9,6 +9,7 @@ import { db, doc, updateDoc, increment, collection, getDocs } from '../firebase'
 import { sharePdfFile, openWhatsApp } from '../lib/shareHelper';
 import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../lib/pdfHelper';
 import { tafqeet } from '../lib/tafqeet';
+import { resolveVoucherDynamicStatement, resolveVoucherExtraNotes, resolveLiveInvoiceNumber, formatCustomerReference } from '../lib/voucherDisplayService';
 
 function getCurrencyFullName(curr?: string) {
   if (!curr) return '';
@@ -78,21 +79,31 @@ export default function PrintPreviewOverlay({
   const printAreaRef = useRef<HTMLDivElement>(null);
   const [contentHeight, setContentHeight] = useState(1123);
   const [customersMap, setCustomersMap] = useState<Map<string, any>>(new Map());
+  const [invoicesMap, setInvoicesMap] = useState<Map<string, any>>(new Map());
 
   useEffect(() => {
-    const fetchCustomers = async () => {
+    const fetchEntities = async () => {
       try {
-        const snap = await getDocs(collection(db, 'customers'));
-        const m = new Map<string, any>();
-        snap.docs.forEach((d: any) => {
-          m.set(d.id, { id: d.id, ...d.data() });
+        const [custSnap, invSnap] = await Promise.all([
+          getDocs(collection(db, 'customers')),
+          getDocs(collection(db, 'invoices'))
+        ]);
+        const cm = new Map<string, any>();
+        custSnap.docs.forEach((d: any) => {
+          cm.set(d.id, { id: d.id, ...d.data() });
         });
-        setCustomersMap(m);
+        setCustomersMap(cm);
+
+        const im = new Map<string, any>();
+        invSnap.docs.forEach((d: any) => {
+          im.set(d.id, { id: d.id, ...d.data() });
+        });
+        setInvoicesMap(im);
       } catch (err) {
-        console.error("Error fetching customers for preview:", err);
+        console.error("Error fetching entities for preview:", err);
       }
     };
-    fetchCustomers();
+    fetchEntities();
   }, []);
 
   useEffect(() => {
@@ -299,8 +310,8 @@ export default function PrintPreviewOverlay({
               {type === 'invoice' 
                 ? invoice?.invoiceNumber 
                 : (type === 'statement' 
-                    ? (statement?.customerNumber || statement?.id?.substring(0, 5)) 
-                    : (type === 'table' ? (tableData?.reportNumber || '00000') : (voucher?.voucherNumber || voucher?.reference || '0000')))}
+                    ? (statement?.customerNumber ? `#${statement.customerNumber}` : '---') 
+                    : (type === 'table' ? (tableData?.reportNumber || '00000') : (voucher?.voucherNumber ? `#${voucher.voucherNumber}` : (voucher?.reference ? `#${voucher.reference}` : '0000'))))}
             </span>
           </div>
           <div className="font-bold text-gray-700 flex justify-between gap-4">
@@ -1107,7 +1118,8 @@ export default function PrintPreviewOverlay({
       const isReceipt = voucher?.type === 'receipt';
       const vTypeName = isReceipt ? 'سند قبض مالي' : 'سند صرف مالي';
       const vNum = voucher?.voucherNumber ? ` #${voucher.voucherNumber}` : '';
-      msg = `*${vTypeName}${vNum}*\nعزيزي *${customerName || 'العميل'}* المحترم،\nمرفق لكم تفاصيل السند المالي بمبلغ: ${Number(voucher?.amount || 0).toLocaleString('en-US')} ${voucher?.currency || ''}.\n• التصنيف: ${voucher?.category || voucher?.transactionCategory || 'عام'}\n• البيان: ${voucher?.details || voucher?.notes || '-'}`;
+      const dynamicStatement = resolveVoucherDynamicStatement(voucher, invoicesMap);
+      msg = `*${vTypeName}${vNum}*\nعزيزي *${customerName || 'العميل'}* المحترم،\nمرفق لكم تفاصيل السند المالي بمبلغ: ${Number(voucher?.amount || 0).toLocaleString('en-US')} ${voucher?.currency || ''}.\n• التصنيف: ${voucher?.category || voucher?.transactionCategory || 'عام'}\n• البيان: ${dynamicStatement}`;
     } else if (customerName) {
       msg = `*${docName}${invNum}*\nعزيزي ${isPurchaseDoc ? 'المورد' : 'العميل'} *${customerName}* المحترم،\nمرفق لكم الفاتورة الإلكترونية.`;
       if (invoice?.totalCost !== undefined) {
@@ -1447,11 +1459,11 @@ export default function PrintPreviewOverlay({
                         </td>
                         <td className="w-3/4 py-2.5 px-3 font-black text-sm bg-white text-gray-950 text-right">
                           <span className="text-base text-gray-900">{voucher.customerName || 'جهة عامة أخرى'}</span>
-                          {voucher.customerId && voucher.customerId !== 'walk-in' && (
+                          {voucher.customerNumber ? (
                             <span className="text-[10px] text-gray-600 font-mono mr-2 bg-gray-100 px-2 py-0.5 rounded border border-gray-300">
-                              كود: {voucher.customerId}
+                              رقم العميل: #{voucher.customerNumber}
                             </span>
-                          )}
+                          ) : null}
                         </td>
                       </tr>
 
@@ -1529,21 +1541,25 @@ export default function PrintPreviewOverlay({
                           البيان والشرح المالي:
                         </td>
                         <td className="w-3/4 py-2.5 px-3 bg-white text-right font-bold text-xs leading-relaxed text-gray-950">
-                          {voucher.details || voucher.notes || 'لا يوجد بيان مسجل.'}
+                          {resolveVoucherDynamicStatement(voucher, invoicesMap)}
                         </td>
                       </tr>
 
                       {/* 6. Extra Notes */}
-                      {voucher.notes && voucher.notes.trim() !== String(voucher.details || '').trim() && (
-                        <tr className="bg-white">
-                          <td className="w-1/4 bg-gray-100 py-2.5 px-3 font-black text-gray-900 border-l-2 border-black text-right text-xs whitespace-nowrap">
-                            ملاحظات إضافية:
-                          </td>
-                          <td className="w-3/4 py-2.5 px-3 bg-white text-right font-semibold text-xs leading-relaxed text-gray-700">
-                            {voucher.notes}
-                          </td>
-                        </tr>
-                      )}
+                      {(() => {
+                        const extraNotes = resolveVoucherExtraNotes(voucher);
+                        if (!extraNotes) return null;
+                        return (
+                          <tr className="bg-white">
+                            <td className="w-1/4 bg-gray-100 py-2.5 px-3 font-black text-gray-900 border-l-2 border-black text-right text-xs whitespace-nowrap">
+                              ملاحظات إضافية:
+                            </td>
+                            <td className="w-3/4 py-2.5 px-3 bg-white text-right font-semibold text-xs leading-relaxed text-gray-700">
+                              {extraNotes}
+                            </td>
+                          </tr>
+                        );
+                      })()}
                     </tbody>
                   </table>
                 </div>
@@ -1918,10 +1934,27 @@ export default function PrintPreviewOverlay({
             {type === 'invoice' && templateType === 'inspection' && (() => {
               const isPhase1 = invoice?.status === '21';
               const getItemStatus = (it: any) => {
-                const statusVal = String(it.status || '').trim();
-                if (['55', '45', '70'].includes(statusVal) || it.subStatus === 'unrepairable' || (it.engineerReport || '').includes('لا يصلح') || (it.technicalNotes || '').includes('لا يصلح')) {
+                const statusVal = String(it.status || '').trim().toLowerCase();
+                const subStatus = String(it.subStatus || '').trim().toLowerCase();
+                const decision = String(it.decision || it.technicalDecision || '').trim().toLowerCase();
+                const outcome = String(it.outcome || it.approvalStatus || '').trim().toLowerCase();
+
+                if (['55', '45', 'unrepairable', 'failed'].includes(statusVal) || 
+                    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable'].includes(subStatus) ||
+                    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable', 'لا يصلح'].includes(decision) ||
+                    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable', 'لا يصلح'].includes(outcome)) {
                   return 'لا يصلح';
-                } else if (['50', '60'].includes(statusVal)) {
+                }
+                if (['70', 'cancelled', 'refused'].includes(statusVal) ||
+                    ['cancelled', 'refused'].includes(subStatus) ||
+                    ['cancelled', 'refused', 'لم يوافق'].includes(decision) ||
+                    ['cancelled', 'refused', 'لم يوافق'].includes(outcome)) {
+                  return 'لم يوافق';
+                }
+                if (statusVal === 'intact' || subStatus === 'intact' || decision === 'intact' || decision === 'سليم') {
+                  return 'سليم';
+                }
+                if (['50', '60', 'ready', 'delivered'].includes(statusVal) || subStatus === 'ready') {
                   return 'سليم';
                 }
                 return 'صيانة';
@@ -2071,43 +2104,35 @@ export default function PrintPreviewOverlay({
                 const statusVal = String(it.status || '').trim().toLowerCase();
                 const subStatus = String(it.subStatus || '').trim().toLowerCase();
                 const decision = String(it.decision || it.technicalDecision || '').trim().toLowerCase();
-                const report = String(it.engineerReport || '').toLowerCase();
-                const notes = String(it.technicalNotes || '').toLowerCase();
-                const failure = String(it.failureReason || '').toLowerCase();
 
-                // 1. لا يصلح
+                // 1. If actively repairing, status is صيانة
+                if (decision === 'repairing' || decision === 'صيانة') {
+                  if (isItemRefusedOrFailed(it)) {
+                    return 'لا يصلح';
+                  }
+                  return 'صيانة';
+                }
+
+                // 2. لا يصلح
                 if (
                   ['55', '45', '70', 'unrepairable', 'failed'].includes(statusVal) ||
-                  subStatus === 'unrepairable' ||
-                  decision === 'unrepairable' ||
-                  decision === 'failed' ||
-                  report.includes('لا يصلح') ||
-                  report.includes('لايصلح') ||
-                  report.includes('unrepairable') ||
-                  notes.includes('لا يصلح') ||
-                  notes.includes('لايصلح') ||
-                  notes.includes('unrepairable') ||
-                  failure.includes('لا يصلح') ||
-                  failure.includes('لايصلح') ||
+                  ['unrepairable', 'failed', 'no_parts', 'parts_unavailable'].includes(subStatus) ||
+                  ['unrepairable', 'failed', 'no_parts', 'parts_unavailable', 'لا يصلح'].includes(decision) ||
                   isItemRefusedOrFailed(it)
                 ) {
                   return 'لا يصلح';
                 }
 
-                // 2. سليم
+                // 3. سليم
                 if (
                   statusVal === 'intact' ||
                   subStatus === 'intact' ||
-                  decision === 'intact' ||
-                  report.includes('سليم') ||
-                  report.includes('intact') ||
-                  notes.includes('سليم') ||
-                  notes.includes('intact')
+                  decision === 'intact'
                 ) {
                   return 'سليم';
                 }
 
-                // 3. صيانة
+                // 4. صيانة
                 return 'صيانة';
               };
 
@@ -2269,10 +2294,27 @@ export default function PrintPreviewOverlay({
 
             {type === 'invoice' && templateType === 'assignment' && (() => {
               const getItemStatus = (it: any) => {
-                const statusVal = String(it.status || '').trim();
-                if (['55', '45', '70'].includes(statusVal) || it.subStatus === 'unrepairable' || (it.engineerReport || '').includes('لا يصلح') || (it.technicalNotes || '').includes('لا يصلح')) {
+                const statusVal = String(it.status || '').trim().toLowerCase();
+                const subStatus = String(it.subStatus || '').trim().toLowerCase();
+                const decision = String(it.decision || it.technicalDecision || '').trim().toLowerCase();
+                const outcome = String(it.outcome || it.approvalStatus || '').trim().toLowerCase();
+
+                if (['55', '45', 'unrepairable', 'failed'].includes(statusVal) || 
+                    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable'].includes(subStatus) ||
+                    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable', 'لا يصلح'].includes(decision) ||
+                    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable', 'لا يصلح'].includes(outcome)) {
                   return 'لا يصلح';
-                } else if (['50', '60'].includes(statusVal)) {
+                }
+                if (['70', 'cancelled', 'refused'].includes(statusVal) ||
+                    ['cancelled', 'refused'].includes(subStatus) ||
+                    ['cancelled', 'refused', 'لم يوافق'].includes(decision) ||
+                    ['cancelled', 'refused', 'لم يوافق'].includes(outcome)) {
+                  return 'لم يوافق';
+                }
+                if (statusVal === 'intact' || subStatus === 'intact' || decision === 'intact' || decision === 'سليم') {
+                  return 'سليم';
+                }
+                if (['50', '60', 'ready', 'delivered'].includes(statusVal) || subStatus === 'ready') {
                   return 'سليم';
                 }
                 return 'صيانة';
@@ -2390,10 +2432,27 @@ export default function PrintPreviewOverlay({
 
             {type === 'invoice' && templateType === 'maintenance' && (() => {
               const getItemStatus = (it: any) => {
-                const statusVal = String(it.status || '').trim();
-                if (['55', '45', '70'].includes(statusVal) || it.subStatus === 'unrepairable' || (it.engineerReport || '').includes('لا يصلح') || (it.technicalNotes || '').includes('لا يصلح')) {
+                const statusVal = String(it.status || '').trim().toLowerCase();
+                const subStatus = String(it.subStatus || '').trim().toLowerCase();
+                const decision = String(it.decision || it.technicalDecision || '').trim().toLowerCase();
+                const outcome = String(it.outcome || it.approvalStatus || '').trim().toLowerCase();
+
+                if (['55', '45', 'unrepairable', 'failed'].includes(statusVal) || 
+                    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable'].includes(subStatus) ||
+                    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable', 'لا يصلح'].includes(decision) ||
+                    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable', 'لا يصلح'].includes(outcome)) {
                   return 'لا يصلح';
-                } else if (['50', '60'].includes(statusVal)) {
+                }
+                if (['70', 'cancelled', 'refused'].includes(statusVal) ||
+                    ['cancelled', 'refused'].includes(subStatus) ||
+                    ['cancelled', 'refused', 'لم يوافق'].includes(decision) ||
+                    ['cancelled', 'refused', 'لم يوافق'].includes(outcome)) {
+                  return 'لم يوافق';
+                }
+                if (statusVal === 'intact' || subStatus === 'intact' || decision === 'intact' || decision === 'سليم') {
+                  return 'سليم';
+                }
+                if (['50', '60', 'ready', 'delivered'].includes(statusVal) || subStatus === 'ready') {
                   return 'سليم';
                 }
                 return 'صيانة';

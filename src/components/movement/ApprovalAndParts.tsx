@@ -45,34 +45,49 @@ function getItemStatus(it: any) {
   const statusVal = String(it.status || '').trim().toLowerCase();
   const subStatus = String(it.subStatus || '').trim().toLowerCase();
   const decision = String(it.decision || it.technicalDecision || '').trim().toLowerCase();
-  const report = String(it.engineerReport || '').toLowerCase();
-  const notes = String(it.technicalNotes || '').toLowerCase();
-  const failure = String(it.failureReason || '').toLowerCase();
+  const outcome = String(it.outcome || it.approvalStatus || '').trim().toLowerCase();
 
+  // 1. If actively repairing, status is صيانة
+  if (decision === 'repairing' || decision === 'صيانة') {
+    if (['refused', 'cancelled', '70'].includes(outcome) || ['refused', 'cancelled', '70'].includes(subStatus)) {
+      return 'لم يوافق';
+    }
+    if (['unrepairable', 'failed', '55'].includes(outcome) || ['unrepairable', 'failed', '55'].includes(subStatus)) {
+      return 'لا يصلح';
+    }
+    return 'صيانة';
+  }
+
+  // 2. Explicit terminal unrepairable
   if (
-    ['55', '45', '70', 'unrepairable', 'failed'].includes(statusVal) || 
-    subStatus === 'unrepairable' || 
-    decision === 'unrepairable' ||
-    decision === 'failed' ||
-    report.includes('لا يصلح') || 
-    report.includes('لايصلح') || 
-    report.includes('unrepairable') ||
-    notes.includes('لا يصلح') ||
-    notes.includes('لايصلح') ||
-    failure.includes('لا يصلح') ||
-    failure.includes('لايصلح')
+    ['55', '45', 'unrepairable', 'failed'].includes(statusVal) || 
+    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable'].includes(subStatus) || 
+    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable', 'لا يصلح'].includes(decision) ||
+    ['unrepairable', 'failed', 'no_parts', 'parts_unavailable', 'لا يصلح'].includes(outcome)
   ) {
     return 'لا يصلح';
-  } else if (
+  }
+
+  // 3. Intact
+  if (
     statusVal === 'intact' || 
     subStatus === 'intact' || 
     decision === 'intact' ||
-    report.includes('سليم') || 
-    report.includes('intact') ||
-    notes.includes('سليم')
+    outcome === 'intact'
   ) {
     return 'سليم';
   }
+
+  // 4. Refused / Cancelled
+  if (
+    ['70', 'cancelled', 'refused'].includes(statusVal) ||
+    ['cancelled', 'refused'].includes(subStatus) ||
+    ['cancelled', 'refused', 'لم يوافق'].includes(decision) ||
+    ['cancelled', 'refused', 'لم يوافق'].includes(outcome)
+  ) {
+    return 'لم يوافق';
+  }
+
   return 'صيانة';
 }
 

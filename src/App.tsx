@@ -66,6 +66,8 @@ import DataAuditModal from './components/DataAuditModal';
 import Vault from './components/Vault';
 import SecurityGuard from './components/SecurityGuard';
 
+import AdvancedDatabaseMaintenance from './components/AdvancedDatabaseMaintenance';
+
 import { useTranslation } from 'react-i18next';
 import { Filesystem, Directory, Encoding } from '@capacitor/filesystem';
 import { App as CapacitorApp } from '@capacitor/app';
@@ -80,11 +82,12 @@ export default function App() {
   const [shopConfig, setShopConfig] = useState<ShopConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSetup, setShowSetup] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'entry-exit' | 'device-movement' | 'inspection' | 'maintenance' | 'inventory' | 'reports' | 'customers' | 'settings' | 'search' | 'vault' | 'device-management' | 'approval' | 'other-services'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'entry-exit' | 'device-movement' | 'inspection' | 'maintenance' | 'inventory' | 'reports' | 'customers' | 'settings' | 'search' | 'vault' | 'device-management' | 'approval' | 'other-services' | 'advanced-database-maintenance'>('dashboard');
   const [dashboardResetTrigger, setDashboardResetTrigger] = useState(0);
 
   const goToDashboard = () => {
     setActiveTab('dashboard');
+    setVaultInitialProps(null);
     setDashboardResetTrigger(prev => prev + 1);
     window.dispatchEvent(new CustomEvent('reset-dashboard-counter'));
   };
@@ -116,6 +119,8 @@ export default function App() {
     customerId?: string;
     liabilityCurrency?: string;
     showAddModal?: boolean;
+    invoiceNumber?: string;
+    invoiceId?: string;
   } | null>(null);
 
   // Settle Outstanding Payment state
@@ -855,7 +860,8 @@ export default function App() {
       const amount = Number(settleAmount);
       const batch = writeBatch(db);
       
-      const invoiceRef = doc(db, 'invoices', settleInvoice.invoiceId);
+      const invId = settleInvoice.invoiceId || settleInvoice.id || '';
+      const invoiceRef = doc(db, 'invoices', invId);
       const updatedAmountPaid = Number(settleInvoice.amountPaid || 0) + amount;
       
       batch.update(invoiceRef, {
@@ -863,17 +869,35 @@ export default function App() {
         updatedAt: serverTimestamp()
       });
 
+      let nextVoucherNum = 1001;
+      try {
+        const { localDb } = await import('./lib/local-db');
+        const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
+        nextVoucherNum = (resNum.values?.[0]?.maxNum || 1000) + 1;
+      } catch (e) {}
+
+      const timestampIso = new Date().toISOString();
       const txRef = doc(collection(db, 'vault_transactions'));
       batch.set(txRef, {
         id: txRef.id,
         currency: settleInvoice.currency || 'USD',
         amount: amount,
         customerName: settleInvoice.customerName || 'عميل نقدي',
-        invoiceNumber: String(settleInvoice.invoiceNumber),
+        customerId: settleInvoice.customerId || '',
+        invoiceNumber: String(settleInvoice.invoiceNumber || '').replace('#', '').trim(),
+        invoiceId: invId,
         userName: user?.name || user?.username || 'مدير النظام',
         userId: user?.id || 'admin',
-        timestamp: new Date().getTime(),
-        type: 'invoice_payment',
+        timestamp: timestampIso,
+        updatedAt: timestampIso,
+        voucherNumber: nextVoucherNum,
+        type: 'receipt',
+        transactionCategory: 'سداد تنبيهات',
+        paymentType: 1,
+        liabilityCurrency: settleInvoice.currency || 'USD',
+        liabilityAmount: amount,
+        receiptCurrency: settleInvoice.currency || 'USD',
+        receiptAmount: amount,
         notes: `تسوية جزئية/كلية من خلال نافذة التنبيهات للفاتورة ${settleInvoice.invoiceNumber}`
       });
 
@@ -1181,6 +1205,7 @@ export default function App() {
         return (
           <Dashboard 
             onNavigate={(tab: any, subView?: any) => {
+              setVaultInitialProps(null);
               if (tab === 'entry-exit' && subView) {
                 setEntryExitView(subView);
               }
@@ -1221,12 +1246,25 @@ export default function App() {
             initialCustomerId={vaultInitialProps?.customerId}
             initialLiabilityCurrency={vaultInitialProps?.liabilityCurrency}
             initialShowAddModal={vaultInitialProps?.showAddModal}
+            initialInvoiceNumber={vaultInitialProps?.invoiceNumber}
+            initialInvoiceId={vaultInitialProps?.invoiceId}
+            onClearInitialProps={() => setVaultInitialProps(null)}
           />
         );
       case 'customers':
         return <Customers user={user} shopConfig={shopConfig} onBack={goToDashboard} />;
       case 'settings':
-        return <Settings user={user} shopConfig={shopConfig} onShopConfigUpdate={setShopConfig} onSignOut={() => setShowSignOutModal(true)} />;
+        return (
+          <Settings 
+            user={user} 
+            shopConfig={shopConfig} 
+            onShopConfigUpdate={setShopConfig} 
+            onSignOut={() => setShowSignOutModal(true)} 
+            onNavigateToAdvancedMaintenance={() => setActiveTab('advanced-database-maintenance')}
+          />
+        );
+      case 'advanced-database-maintenance':
+        return <AdvancedDatabaseMaintenance onBack={() => setActiveTab('settings')} />;
       case 'search':
         return <SearchInvoice onBack={goToDashboard} user={user} />;
       case 'device-management':
@@ -1265,12 +1303,12 @@ export default function App() {
 
           <nav className="flex-1 px-4 py-8 space-y-2 overflow-hidden">
             <NavItem active={activeTab === 'dashboard'} onClick={goToDashboard} icon={<LayoutDashboard size={22} />} label={t('common.dashboard')} />
-            <NavItem active={activeTab === 'entry-exit'} onClick={() => setActiveTab('entry-exit')} icon={<FilePlus size={22} />} label={t('common.entryExit')} />
-            <NavItem active={activeTab === 'vault'} onClick={() => setActiveTab('vault')} icon={<CircleDollarSign size={22} />} label={t('common.vault')} />
-            <NavItem active={activeTab === 'customers'} onClick={() => setActiveTab('customers')} icon={<Users size={22} />} label={t('common.customers')} />
-            <NavItem active={activeTab === 'device-movement'} onClick={() => setActiveTab('device-movement')} icon={<SettingsIcon size={22} />} label={t('common.deviceMovement')} />
-            <NavItem active={activeTab === 'inspection'} onClick={() => setActiveTab('inspection')} icon={<ClipboardCheck size={22} />} label="فحص" />
-            <NavItem active={activeTab === 'maintenance'} onClick={() => setActiveTab('maintenance')} icon={<Wrench size={22} />} label="صيانة" />
+            <NavItem active={activeTab === 'entry-exit'} onClick={() => { setVaultInitialProps(null); setActiveTab('entry-exit'); }} icon={<FilePlus size={22} />} label={t('common.entryExit')} />
+            <NavItem active={activeTab === 'vault'} onClick={() => { setVaultInitialProps(null); setActiveTab('vault'); }} icon={<CircleDollarSign size={22} />} label={t('common.vault')} />
+            <NavItem active={activeTab === 'customers'} onClick={() => { setVaultInitialProps(null); setActiveTab('customers'); }} icon={<Users size={22} />} label={t('common.customers')} />
+            <NavItem active={activeTab === 'device-movement'} onClick={() => { setVaultInitialProps(null); setActiveTab('device-movement'); }} icon={<SettingsIcon size={22} />} label={t('common.deviceMovement')} />
+            <NavItem active={activeTab === 'inspection'} onClick={() => { setVaultInitialProps(null); setActiveTab('inspection'); }} icon={<ClipboardCheck size={22} />} label="فحص" />
+            <NavItem active={activeTab === 'maintenance'} onClick={() => { setVaultInitialProps(null); setActiveTab('maintenance'); }} icon={<Wrench size={22} />} label="صيانة" />
           </nav>
 
           <div className="p-4 border-t border-white/5 space-y-2">
@@ -1834,7 +1872,9 @@ export default function App() {
                                           showAddModal: true,
                                           customerName: a.customerName,
                                           customerId: a.customerId,
-                                          liabilityCurrency: a.currency
+                                          liabilityCurrency: a.currency,
+                                          invoiceNumber: a.latestInvoiceNumber || '',
+                                          invoiceId: a.latestInvoiceId || ''
                                         });
                                         setActiveTab('vault');
                                       }}

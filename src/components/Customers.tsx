@@ -3,6 +3,7 @@ import AddCustomerModal from './AddCustomerModal';
 import { sharePdfFile, openWhatsApp, sendUniversalReminder } from '../lib/shareHelper';
 import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../lib/pdfHelper';
 import { getItemBillableCost, isItemRefusedOrFailed } from '../lib/billableService';
+import { resolveLiveInvoiceNumber, resolveVoucherDynamicStatement } from '../lib/voucherDisplayService';
 import PrintPreviewOverlay from './PrintPreviewOverlay';
 import React, { useState, useEffect } from 'react';
 import { motion } from 'motion/react';
@@ -546,7 +547,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
     const customerName = customers.find(c => c.id === customerId)?.name || '';
     const customerInvs = invoices.filter(inv => inv.customerId === customerId || inv.supplierId === customerId || (customerName && (inv.customerName === customerName || inv.supplierName === customerName)));
     customerInvs.forEach(inv => {
-      const invItems = items.filter(it => it.invoiceNumber === inv.invoiceNumber);
+      const invItems = items.filter(it => (inv.id && it.invoiceId ? it.invoiceId === inv.id : it.invoiceNumber === inv.invoiceNumber));
       const actualCost = getInvoiceActualCost(invItems, inv);
       // Row 1: Invoice debit
       const invDate = parseDate(inv.createdAt);
@@ -635,73 +636,31 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
         currencyNote = ` [المسدد: ${rawAmount.toLocaleString('en-US')} ${payCurr}]`;
       }
 
+      const liveInvNum = resolveLiveInvoiceNumber(tx, invoices);
+      const isLinkedToInvoice = !!liveInvNum;
+      const dynamicStatement = resolveVoucherDynamicStatement(tx, invoices);
+      const fullDetails = currencyNote ? `${dynamicStatement}${currencyNote}` : dynamicStatement;
+      const refStr = tx.voucherNumber ? String(tx.voucherNumber) : (liveInvNum || '0000');
+
       if (tx.type === 'receipt' || tx.type === 'invoice_payment') {
-        const isLinkedToInvoice = !!tx.invoiceNumber;
-        
-        let docType = 'سند قبض';
-        let statement = tx.transactionCategory || 'سند قبض / دفعه تحت الحساب';
-        let refStr = String(tx.voucherNumber || tx.id?.substring(0, 5)).replace(/#/g, '');
-
-        if (isLinkedToInvoice) {
-           docType = 'سند قبض';
-           statement = `سند قبض / سداد في فاتورة رقم ${tx.invoiceNumber}`;
-           refStr = String(tx.voucherNumber || tx.invoiceNumber).replace(/#/g, '');
-        } else if (tx.transactionCategory === 'دفعة أجهزة') {
-           docType = 'سند قبض';
-           statement = `سند قبض / سداد في فاتورة رقم ${tx.invoiceNumber || '؟'}`;
-           if (tx.voucherNumber || tx.invoiceNumber) {
-             refStr = String(tx.voucherNumber || tx.invoiceNumber).replace(/#/g, '');
-           }
-        }
-
-        let details = '';
-        if (tx.statementNote && tx.statementNote.trim()) {
-          details = tx.statementNote.trim();
-        } else if (tx.notes && tx.notes.trim() && tx.notes.trim() !== statement) {
-          const cleanTxNote = tx.notes.replace(/^سند قبض \/ سداد في فاتورة مبيعات رقم [^\s-]+(\s*-\s*)?/, '').trim();
-          details = cleanTxNote || (isLinkedToInvoice ? `سداد دفعة نقدية في الفاتورة #${tx.invoiceNumber}` : 'دفعة نقدية');
-        } else {
-          details = isLinkedToInvoice ? `سداد دفعة نقدية في الفاتورة #${tx.invoiceNumber}` : 'دفعة نقدية';
-        }
-        if (currencyNote) {
-          details += currencyNote;
-        }
-
         entries.push({
           id: `tx-${tx.id}`,
           date: txDate,
-          type: docType,
-          label: statement,
+          type: 'سند قبض',
+          label: dynamicStatement,
           reference: refStr,
-          notes: details,
+          notes: fullDetails,
           debit: 0,
           credit: liabilityAmount
         });
       } else if (tx.type === 'payment') {
-        const refStr = String(tx.voucherNumber || tx.invoiceNumber || tx.id?.substring(0, 5)).replace(/#/g, '');
-        const isLinkedToInvoice = !!tx.invoiceNumber;
-        const statement = isLinkedToInvoice ? `سند صرف قيمة فاتورة مشتريات رقم ${tx.invoiceNumber}` : (tx.transactionCategory || 'سند صرف');
-        
-        let details = '';
-        if (tx.statementNote && tx.statementNote.trim()) {
-          details = tx.statementNote.trim();
-        } else if (tx.notes && tx.notes.trim() && tx.notes.trim() !== statement) {
-          const cleanTxNote = tx.notes.replace(/^سند صرف قيمة فاتورة مشتريات رقم [^\s-]+(\s*-\s*)?/, '').trim();
-          details = cleanTxNote || (isLinkedToInvoice ? `صرف نقدي مسدد للفاتورة #${tx.invoiceNumber}` : 'صرف نقدي');
-        } else {
-          details = isLinkedToInvoice ? `صرف نقدي مسدد للفاتورة #${tx.invoiceNumber}` : 'صرف نقدي';
-        }
-        if (currencyNote) {
-          details += currencyNote;
-        }
-
         entries.push({
           id: `tx-${tx.id}`,
           date: txDate,
           type: 'سند صرف',
-          label: statement,
+          label: dynamicStatement,
           reference: refStr,
-          notes: details,
+          notes: fullDetails,
           debit: liabilityAmount,
           credit: 0
         });
@@ -2477,12 +2436,12 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
 
           const invItems = items.filter(it => it.invoiceNumber === inv.invoiceNumber);
           const deviceMatches = invItems.some(it => 
-            it.deviceName?.toLowerCase().includes(s) || 
-            it.serialNumber?.toLowerCase().includes(s)
+            String(it.deviceName || '').toLowerCase().includes(s) || 
+            String(it.serialNumber || '').toLowerCase().includes(s)
           );
 
           return (
-            inv.invoiceNumber?.toLowerCase().includes(s) ||
+            String(inv.invoiceNumber || '').toLowerCase().includes(s) ||
             formattedDateStr.includes(s) ||
             deviceMatches
           );

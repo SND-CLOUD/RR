@@ -1,6 +1,7 @@
 import { sharePdfFile, openWhatsApp, sendUniversalReminder } from '../lib/shareHelper';
 import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../lib/pdfHelper';
 import { getItemBillableCost, isItemRefusedOrFailed, calculateInvoiceBillableTotal } from '../lib/billableService';
+import { resolveLiveInvoiceNumber, resolveVoucherDynamicStatement } from '../lib/voucherDisplayService';
 import PrintPreviewOverlay from './PrintPreviewOverlay';
 import { tafqeet } from '../lib/tafqeet';
 import { parseFundBalance, formatMoney, getCurrencySymbol } from '../lib/fundUtils';
@@ -272,7 +273,10 @@ export default function Vault({
   initialCustomerName,
   initialCustomerId,
   initialLiabilityCurrency,
-  initialShowAddModal
+  initialShowAddModal,
+  initialInvoiceNumber,
+  initialInvoiceId,
+  onClearInitialProps
 }: { 
   user: User; 
   shopConfig: ShopConfig | null; 
@@ -282,6 +286,9 @@ export default function Vault({
   initialCustomerId?: string;
   initialLiabilityCurrency?: string;
   initialShowAddModal?: boolean;
+  initialInvoiceNumber?: string;
+  initialInvoiceId?: string;
+  onClearInitialProps?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const { hasPermission, canAdd, canEdit, canDelete, canPrint } = usePermissions(user, 'vault');
@@ -407,10 +414,18 @@ export default function Vault({
   useBackHandler(txToDelete !== null, () => setTxToDelete(null));
   useBackHandler(discountToDelete !== null, () => setDiscountToDelete(null));
   useBackHandler(showPrintPreview, () => setShowPrintPreview(false));
-  useBackHandler(showAddModal, () => setShowAddModal(false));
+  useBackHandler(showAddModal, () => {
+    setShowAddModal(false);
+    resetForm();
+    onClearInitialProps?.();
+  });
   useBackHandler(isLedgerModalOpen, () => setIsLedgerModalOpen(false));
   useBackHandler(selectedFundForReport !== null, () => setSelectedFundForReport(null));
-  useBackHandler(activeSegment !== 'dashboard' && !showAddModal && !showPrintPreview && !reversalTxToConfirm && !isLedgerModalOpen && !selectedFundForReport && !discountToDelete, () => setActiveSegment('dashboard'));
+  useBackHandler(activeSegment !== 'dashboard' && !showAddModal && !showPrintPreview && !reversalTxToConfirm && !isLedgerModalOpen && !selectedFundForReport && !discountToDelete, () => {
+    setActiveSegment('dashboard');
+    resetForm();
+    onClearInitialProps?.();
+  });
 
   // LEDGER CUSTOMER MATH & HELPERS
   const getInvoiceItemsForInvoice = (invoiceNumber: string) => {
@@ -468,7 +483,7 @@ export default function Vault({
         const matchSearch =
           (tx.customerName || '').toLowerCase().includes(searchStr) || 
           (tx.fundName || '').toLowerCase().includes(searchStr) ||
-          (tx.voucherNumber || '').toLowerCase().includes(searchStr) ||
+          String(tx.voucherNumber || '').toLowerCase().includes(searchStr) ||
           String(tx.invoiceNumber || '').toLowerCase().includes(searchStr) ||
           (tx.notes || '').toLowerCase().includes(searchStr) ||
           (tx.transactionCategory || '').toLowerCase().includes(searchStr) ||
@@ -893,8 +908,10 @@ export default function Vault({
   const [selectedFundId, setSelectedFundId] = useState<string>('');
   const [referenceNumber, setReferenceNumber] = useState<string>('');
   const [depositorName, setDepositorName] = useState<string>('');
-    const [liabilityCurrency, setLiabilityCurrency] = useState<string>('USD');
+  const [liabilityCurrency, setLiabilityCurrency] = useState<string>('USD');
   const [liabilityAmount, setLiabilityAmount] = useState<string>('');
+  const [selectedInvoiceNumber, setSelectedInvoiceNumber] = useState<string>('');
+  const [selectedInvoiceId, setSelectedInvoiceId] = useState<string>('');
   
   // EXCHANGE RATE STATES
   const [voucherExchangeRate, setVoucherExchangeRate] = useState<string>('1');
@@ -1150,6 +1167,8 @@ export default function Vault({
     setDepositorName('');
     setLiabilityCurrency('USD');
     setLiabilityAmount('');
+    setSelectedInvoiceNumber('');
+    setSelectedInvoiceId('');
     setVoucherExchangeRate('1');
 
     // 2. Reset Transfer States
@@ -1166,8 +1185,7 @@ export default function Vault({
 
   const isInitializedRef = useRef(false);
   useEffect(() => {
-    if (!isInitializedRef.current) {
-      isInitializedRef.current = true;
+    if (initialCustomerName || initialCustomerId || initialLiabilityCurrency || initialSegment || initialShowAddModal || initialInvoiceNumber || initialInvoiceId) {
       if (initialCustomerName) {
         setCustomerSearch(initialCustomerName);
       }
@@ -1177,14 +1195,27 @@ export default function Vault({
       if (initialLiabilityCurrency) {
         setLiabilityCurrency(initialLiabilityCurrency);
       }
+      if (initialInvoiceNumber) {
+        setSelectedInvoiceNumber(initialInvoiceNumber);
+      }
+      if (initialInvoiceId) {
+        setSelectedInvoiceId(initialInvoiceId);
+      }
       if (initialSegment) {
         setActiveSegment(initialSegment);
       }
       if (initialShowAddModal) {
         setShowAddModal(true);
       }
+      onClearInitialProps?.();
     }
-  }, [initialCustomerName, initialCustomerId, initialLiabilityCurrency, initialSegment, initialShowAddModal]);
+  }, [initialCustomerName, initialCustomerId, initialLiabilityCurrency, initialSegment, initialShowAddModal, initialInvoiceNumber, initialInvoiceId]);
+
+  useEffect(() => {
+    return () => {
+      onClearInitialProps?.();
+    };
+  }, []);
 
   const prevSegmentRef = useRef(activeSegment);
 
@@ -1368,14 +1399,53 @@ export default function Vault({
         await localDb.run('ALTER TABLE vault_transactions ADD COLUMN statementNote TEXT');
       } catch (e) {}
 
+      // Resolve invoiceNumber and invoiceId properly
+      let finalInvoiceNumber = selectedInvoiceNumber || initialInvoiceNumber || '';
+      let finalInvoiceId = selectedInvoiceId || initialInvoiceId || '';
+
+      if (finalInvoiceNumber && !finalInvoiceId) {
+        const cleanNo = String(finalInvoiceNumber).replace('#', '').trim();
+        const matchedInv = invoices.find(inv => String(inv.invoiceNumber || '').replace('#', '').trim() === cleanNo);
+        if (matchedInv) {
+          finalInvoiceId = matchedInv.id;
+        }
+      } else if (!finalInvoiceNumber && finalInvoiceId) {
+        const matchedInv = invoices.find(inv => inv.id === finalInvoiceId);
+        if (matchedInv) {
+          finalInvoiceNumber = String(matchedInv.invoiceNumber || '').replace('#', '').trim();
+        }
+      }
+
       // 1. Insert into database
       const txData1 = {
-        id: txId, currency: selectedCurrency, amount: isReceipt ? parsedAmount : -parsedAmount, customerName: customerSearch.trim() || 'جهة عامة أخرى', invoiceNumber: '',
-        userName: user.name || 'المدير العام', userNumber: user.userNumber || 1, userId: user.id || 'none', timestamp: timestampIso, type: isReceipt ? 'receipt' : 'payment',
+        id: txId, 
+        currency: selectedCurrency, 
+        amount: isReceipt ? parsedAmount : -parsedAmount, 
+        customerName: customerSearch.trim() || 'جهة عامة أخرى', 
+        invoiceNumber: finalInvoiceNumber,
+        invoiceId: finalInvoiceId,
+        userName: user.name || 'المدير العام', 
+        userNumber: user.userNumber || 1, 
+        userId: user.id || 'none', 
+        timestamp: timestampIso, 
+        type: isReceipt ? 'receipt' : 'payment',
         notes: matchedFund.type !== 'cash' ? `رقم المرجع: ${referenceNumber.trim()} | المودع: ${depositorName.trim()} | الملاحظات: ${finalVoucherNotes}` : finalVoucherNotes,
-        updatedAt: timestampIso, voucherNumber: nextVoucherNum, transactionCategory: selectedCategory, fundId: matchedFund.id, fundName: matchedFund.name,
-        customerId: selectedCustomerId || '', isReversed: 0, isReversal: 0, reversalOf: '', paymentType: finalPaymentType, liabilityCurrency: finalLiabilityCurrency,
-        liabilityAmount: finalLiabilityAmount, receiptCurrency: finalReceiptCurrency, receiptAmount: finalReceiptAmount, bankDetails: JSON.stringify(finalBankDetails), statementNote: customerStatementNote
+        updatedAt: timestampIso, 
+        voucherNumber: nextVoucherNum, 
+        transactionCategory: selectedCategory, 
+        fundId: matchedFund.id, 
+        fundName: matchedFund.name,
+        customerId: selectedCustomerId || '', 
+        isReversed: 0, 
+        isReversal: 0, 
+        reversalOf: '', 
+        paymentType: finalPaymentType, 
+        liabilityCurrency: finalLiabilityCurrency,
+        liabilityAmount: finalLiabilityAmount, 
+        receiptCurrency: finalReceiptCurrency, 
+        receiptAmount: finalReceiptAmount, 
+        bankDetails: JSON.stringify(finalBankDetails), 
+        statementNote: customerStatementNote
       };
       await ProviderFactory.getProvider().setDoc('vault_transactions', txId, txData1);
 
@@ -1390,6 +1460,7 @@ export default function Vault({
       setShowAddModal(false);
 
       resetForm();
+      onClearInitialProps?.();
       
       // Reload everything
       await loadDatabaseData();
@@ -1562,12 +1633,22 @@ export default function Vault({
           const reversalNotes = `[قيد عكسي] للمستند رقم ${t.voucherNumber} - ${originalVoucherNotes}`;
           const reversalTxId = `vtx-${Math.random().toString(36).substring(2, 8)}`;
 
+          let reversalInvId = t.invoiceId || '';
+          if (t.invoiceNumber && !reversalInvId) {
+            const cleanNo = String(t.invoiceNumber).replace('#', '').trim();
+            const invs = await localDb.query("SELECT id FROM invoices WHERE invoiceNumber = ? OR invoiceNumber = ?", [cleanNo, `#${cleanNo}`]);
+            if (invs.values && invs.values.length > 0) {
+              reversalInvId = invs.values[0].id;
+            }
+          }
+
           // 1. Update original transaction in SQLite
           await ProviderFactory.getProvider().updateDoc('vault_transactions', t.id, { isReversed: 1, notes: updatedOriginalNotes, updatedAt: timestampIso });
 
           // 2. Insert reversal counter-transaction
           await ProviderFactory.getProvider().setDoc('vault_transactions', reversalTxId, {
             id: reversalTxId, currency: t.currency, amount: reverseAmount, customerName: t.customerName, invoiceNumber: t.invoiceNumber || '',
+            invoiceId: reversalInvId,
             userName: user.name || 'المدير العام', userNumber: user.userNumber || 1, userId: user.id || 'none', timestamp: timestampIso,
             type: t.type === 'receipt' ? 'payment' : 'receipt', notes: reversalNotes, updatedAt: timestampIso, voucherNumber: currentNextNum,
             transactionCategory: 'عكس قيد مال', fundId: t.fundId || '', fundName: t.fundName || '', customerId: t.customerId || '',
@@ -1614,6 +1695,7 @@ export default function Vault({
               amount: reverseAmount,
               customerName: t.customerName,
               invoiceNumber: t.invoiceNumber || '',
+              invoiceId: reversalInvId,
               userName: user.name || 'المدير العام',
               userNumber: user.userNumber || 1,
               userId: user.id || 'none',
@@ -2149,69 +2231,30 @@ export default function Vault({
     );
     customerTransactions.forEach(tx => {
       const txDate = parseTxDate(tx) || new Date();
+      const liabilityAmount = tx.liabilityAmount || Math.abs(Number(tx.amount || 0));
+      const liveInvNum = resolveLiveInvoiceNumber(tx, invoices);
+      const dynamicStatement = resolveVoucherDynamicStatement(tx, invoices);
+      const refStr = tx.voucherNumber ? String(tx.voucherNumber) : (liveInvNum || '0000');
+
       if (tx.type === 'receipt' || tx.type === 'invoice_payment') {
-        const isLinkedToInvoice = !!tx.invoiceNumber;
-        const liabilityAmount = tx.liabilityAmount || Math.abs(Number(tx.amount || 0));
-        
-        let docType = 'سند قبض';
-        let statement = tx.transactionCategory || 'سند قبض / دفعه تحت الحساب';
-        let refStr = String(tx.voucherNumber || tx.id?.substring(0, 5)).replace(/#/g, '');
-
-        if (isLinkedToInvoice) {
-           docType = 'سند قبض';
-           statement = `سند قبض / سداد في فاتورة رقم ${tx.invoiceNumber}`;
-           refStr = String(tx.voucherNumber || tx.invoiceNumber).replace(/#/g, '');
-        } else if (tx.transactionCategory === 'دفعة أجهزة') {
-           docType = 'سند قبض';
-           statement = `سند قبض / سداد في فاتورة رقم ${tx.invoiceNumber || '؟'}`;
-           if (tx.voucherNumber || tx.invoiceNumber) {
-             refStr = String(tx.voucherNumber || tx.invoiceNumber).replace(/#/g, '');
-           }
-        }
-
-        let details = '';
-        if (tx.statementNote && tx.statementNote.trim()) {
-          details = tx.statementNote.trim();
-        } else if (tx.notes && tx.notes.trim() && tx.notes.trim() !== statement) {
-          const cleanTxNote = tx.notes.replace(/^سند قبض \/ سداد في فاتورة مبيعات رقم [^\s-]+(\s*-\s*)?/, '').trim();
-          details = cleanTxNote || (isLinkedToInvoice ? `سداد دفعة نقدية في الفاتورة #${tx.invoiceNumber}` : 'دفعة نقدية');
-        } else {
-          details = isLinkedToInvoice ? `سداد دفعة نقدية في الفاتورة #${tx.invoiceNumber}` : 'دفعة نقدية';
-        }
-
         entries.push({
           id: `tx-${tx.id}`,
           date: txDate,
-          type: docType,
-          label: statement,
+          type: 'سند قبض',
+          label: dynamicStatement,
           reference: refStr,
-          notes: details,
+          notes: dynamicStatement,
           debit: 0,
           credit: liabilityAmount
         });
       } else if (tx.type === 'payment') {
-        const liabilityAmount = tx.liabilityAmount || Math.abs(Number(tx.amount || 0));
-        const refStr = String(tx.voucherNumber || tx.invoiceNumber || tx.id?.substring(0, 5)).replace(/#/g, '');
-        const isLinkedToInvoice = !!tx.invoiceNumber;
-        const statement = isLinkedToInvoice ? `سند صرف قيمة فاتورة مشتريات رقم ${tx.invoiceNumber}` : (tx.transactionCategory || 'سند صرف');
-        
-        let details = '';
-        if (tx.statementNote && tx.statementNote.trim()) {
-          details = tx.statementNote.trim();
-        } else if (tx.notes && tx.notes.trim() && tx.notes.trim() !== statement) {
-          const cleanTxNote = tx.notes.replace(/^سند صرف قيمة فاتورة مشتريات رقم [^\s-]+(\s*-\s*)?/, '').trim();
-          details = cleanTxNote || (isLinkedToInvoice ? `صرف نقدي مسدد للفاتورة #${tx.invoiceNumber}` : 'صرف نقدي');
-        } else {
-          details = isLinkedToInvoice ? `صرف نقدي مسدد للفاتورة #${tx.invoiceNumber}` : 'صرف نقدي';
-        }
-
         entries.push({
           id: `tx-${tx.id}`,
           date: txDate,
           type: 'سند صرف',
-          label: statement,
+          label: dynamicStatement,
           reference: refStr,
-          notes: details,
+          notes: dynamicStatement,
           debit: liabilityAmount,
           credit: 0
         });
@@ -2624,7 +2667,11 @@ export default function Vault({
                       {activeSegment === 'receipt' ? 'سندات القبض' : 'سندات الصرف'}
                     </h3>
                     <button 
-                      onClick={() => setActiveSegment('dashboard')}
+                      onClick={() => {
+                        setActiveSegment('dashboard');
+                        resetForm();
+                        onClearInitialProps?.();
+                      }}
                       className="p-1.5 bg-white/5 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-all"
                     >
                       <ArrowRight size={16} />
@@ -3051,7 +3098,11 @@ export default function Vault({
                     <div className="flex items-center gap-3">
                       <button
                         type="button"
-                        onClick={() => setShowAddModal(false)}
+                        onClick={() => {
+                          setShowAddModal(false);
+                          resetForm();
+                          onClearInitialProps?.();
+                        }}
                         className="p-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all border border-white/5 flex items-center justify-center cursor-pointer"
                         title="إلغاء والعودة للقائمة"
                       >
@@ -3323,6 +3374,7 @@ export default function Vault({
                         onClick={() => {
                           setShowAddModal(false);
                           resetForm();
+                          onClearInitialProps?.();
                         }}
                         className="p-2.5 bg-white/5 hover:bg-red-500/10 text-gray-400 hover:text-red-500 rounded-xl transition-all active:scale-95 border border-white/5 flex items-center justify-center gap-2 w-full sm:w-auto cursor-pointer"
                         title="رجوع وإلغاء"
@@ -4975,7 +5027,7 @@ export default function Vault({
           if (fundReportSearch) {
             const s = fundReportSearch.toLowerCase().trim();
             const match = (entry.details || '').toLowerCase().includes(s) ||
-                          (entry.voucherNumber || '').toLowerCase().includes(s) ||
+                          String(entry.voucherNumber || '').toLowerCase().includes(s) ||
                           (entry.rawTx.customerName || '').toLowerCase().includes(s) ||
                           (entry.rawTx.notes || '').toLowerCase().includes(s) ||
                           String(entry.rawTx.invoiceNumber || '').toLowerCase().includes(s);

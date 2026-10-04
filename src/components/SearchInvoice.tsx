@@ -13,6 +13,7 @@ import { formatTxDate, parseTxDate, parseDate, formatDate, formatTime } from '..
 import { isInShopMaintenanceDevice, isShopMaintenanceItem, isPurchaseInvoice } from '../types';
 import { deleteInvoiceWithCascade, checkIsPurchase, checkIsSale } from '../lib/invoiceCascadeService';
 import { getItemBillableCost, isItemRefusedOrFailed } from '../lib/billableService';
+import { resolveLiveInvoiceNumber, resolveVoucherDynamicStatement } from '../lib/voucherDisplayService';
 
 export default function SearchInvoice({ onBack, user }: { onBack?: () => void, user: any }) {
   const { t } = useTranslation();
@@ -269,7 +270,7 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
     // Invoices
     const customerInvs = invoices.filter(inv => inv.customerId === customerId || inv.supplierId === customerId || (custName && (inv.customerName === custName || inv.supplierName === custName)));
     customerInvs.forEach(inv => {
-      const invItems = invoiceItems.filter(it => it.invoiceId === inv.id || it.invoiceNumber === inv.invoiceNumber);
+      const invItems = invoiceItems.filter(it => (inv.id && it.invoiceId ? it.invoiceId === inv.id : it.invoiceNumber === inv.invoiceNumber));
       const actualCost = getInvoiceActualCost(invItems, inv);
 
       const explicitType = inv.invoiceType || inv.templateType || inv.type || '';
@@ -351,58 +352,32 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
         currencyNote = ` [المسدد: ${rawAmount.toLocaleString('en-US')} ${payCurr}]`;
       }
 
+      const liveInvNum = resolveLiveInvoiceNumber(tx, invoices);
+      const isLinkedToInvoice = !!liveInvNum;
+      const dynamicStatement = resolveVoucherDynamicStatement(tx, invoices);
+      const fullDetails = currencyNote ? `${dynamicStatement}${currencyNote}` : dynamicStatement;
+      const refNumber = tx.voucherNumber ? String(tx.voucherNumber) : (liveInvNum || '0000');
+
       if (tx.type === 'receipt' || tx.type === 'invoice_payment') {
-        const isLinkedToInvoice = !!tx.invoiceNumber;
-        const statement = isLinkedToInvoice ? `سند قبض / سداد في فاتورة رقم ${tx.invoiceNumber}` : (tx.transactionCategory || 'سند قبض / دفعه تحت الحساب');
-        
-        let details = '';
-        if (tx.statementNote && tx.statementNote.trim()) {
-          details = tx.statementNote.trim();
-        } else if (tx.notes && tx.notes.trim() && tx.notes.trim() !== statement) {
-          const cleanTxNote = tx.notes.replace(/^سند قبض \/ سداد في فاتورة مبيعات رقم [^\s-]+(\s*-\s*)?/, '').trim();
-          details = cleanTxNote || (isLinkedToInvoice ? `سداد دفعة نقدية في الفاتورة #${tx.invoiceNumber}` : 'دفعة نقدية');
-        } else {
-          details = isLinkedToInvoice ? `سداد دفعة نقدية في الفاتورة #${tx.invoiceNumber}` : 'دفعة نقدية';
-        }
-        if (currencyNote) {
-          details += currencyNote;
-        }
-        
         entries.push({
           id: `tx-${tx.id}`,
           date: txDate,
           type: 'سند قبض',
-          label: statement,
-          reference: String(tx.voucherNumber || tx.invoiceNumber || tx.id?.substring(0, 5)).replace(/#/g, ''),
-          details: details,
+          label: dynamicStatement,
+          reference: refNumber,
+          details: fullDetails,
           debit: 0,
           credit: liabilityAmount,
           currency: targetCustLiabilityCurrency
         });
       } else if (tx.type === 'payment') {
-        const isLinkedToInvoice = !!tx.invoiceNumber;
-        const statement = isLinkedToInvoice ? `سند صرف قيمة فاتورة مشتريات رقم ${tx.invoiceNumber}` : (tx.transactionCategory || 'سند صرف');
-        
-        let details = '';
-        if (tx.statementNote && tx.statementNote.trim()) {
-          details = tx.statementNote.trim();
-        } else if (tx.notes && tx.notes.trim() && tx.notes.trim() !== statement) {
-          const cleanTxNote = tx.notes.replace(/^سند صرف قيمة فاتورة مشتريات رقم [^\s-]+(\s*-\s*)?/, '').trim();
-          details = cleanTxNote || (isLinkedToInvoice ? `صرف نقدي مسدد للفاتورة #${tx.invoiceNumber}` : 'صرف نقدي');
-        } else {
-          details = isLinkedToInvoice ? `صرف نقدي مسدد للفاتورة #${tx.invoiceNumber}` : 'صرف نقدي';
-        }
-        if (currencyNote) {
-          details += currencyNote;
-        }
-
         entries.push({
           id: `tx-${tx.id}`,
           date: txDate,
           type: 'سند صرف',
-          label: statement,
-          reference: String(tx.voucherNumber || tx.invoiceNumber || tx.id?.substring(0, 5)).replace(/#/g, ''),
-          details: details,
+          label: dynamicStatement,
+          reference: refNumber,
+          details: fullDetails,
           debit: liabilityAmount,
           credit: 0,
           currency: targetCustLiabilityCurrency
@@ -654,15 +629,33 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
   };
 
   // Invoice Items details helper
-  const getInvoiceItemsList = (invNo: any, invId?: string) => {
+  const getInvoiceItemsList = (invNo: any, invId?: string, custId?: string) => {
     const cleanInvNo = String(invNo || '').replace(/#/g, '').trim();
     const cleanInvId = String(invId || '').trim();
+    const cleanCustId = String(custId || '').trim();
+
     return invoiceItems.filter(item => {
       const itemInvNo = String(item.invoiceNumber || '').replace(/#/g, '').trim();
       const itemInvId = String(item.invoiceId || '').trim();
-      return (cleanInvNo && itemInvNo === cleanInvNo) || 
-             (cleanInvId && itemInvId === cleanInvId) || 
-             (cleanInvNo && itemInvId === cleanInvNo);
+      const itemCustId = String(item.customerId || '').trim();
+
+      // Guard against customer mismatch
+      if (cleanCustId && itemCustId && itemCustId !== cleanCustId) {
+        return false;
+      }
+
+      // If both item and invoice have an ID: strict ID equality
+      if (cleanInvId && itemInvId) {
+        return cleanInvId === itemInvId;
+      }
+
+      // If invoice has an ID and item has an ID that belongs to someone else, reject
+      if (cleanInvId && itemInvId && itemInvId !== cleanInvId) {
+        return false;
+      }
+
+      // Fallback for legacy records without invoiceId
+      return (cleanInvNo && itemInvNo === cleanInvNo) || (cleanInvId && itemInvId === cleanInvId);
     });
   };
 
@@ -679,7 +672,7 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
               ...inv,
               customerPhone: cust?.phone1 || inv.customerPhone || ''
             },
-            items: getInvoiceItemsList(inv.invoiceNumber, inv.id)
+            items: getInvoiceItemsList(inv.invoiceNumber, inv.id, inv.customerId)
           }
         });
       }
@@ -710,7 +703,8 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
     const enrichedEntries = entries.map(entry => {
       if (entry.id.startsWith('inv-')) {
         const invId = entry.id.substring(4);
-        const items = getInvoiceItemsList(entry.reference, invId);
+        const inv = invoices.find(i => i.id === invId);
+        const items = getInvoiceItemsList(entry.reference, invId, inv?.customerId || customer.id);
         const deviceList = items.map(it => it.deviceName || 'جهاز تقني').join(' + ');
         const typeTitle = entry.type || 'فاتورة';
         const labelStr = deviceList ? `${typeTitle}: ${deviceList}` : (entry.details || typeTitle);
@@ -752,7 +746,7 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
           ...inv,
           customerPhone: cust?.phone1 || inv.customerPhone || ''
         },
-        items: getInvoiceItemsList(inv.invoiceNumber, inv.id),
+        items: getInvoiceItemsList(inv.invoiceNumber, inv.id, inv.customerId),
         templateType: tmpl
       }
     });
@@ -1327,10 +1321,10 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
 
                   {/* List of items on this invoice */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-black text-white font-cairo">تفاصيل الأجهزة المدرجة في الفاتورة ({getInvoiceItemsList(selectedInvoice.invoiceNumber, selectedInvoice.id).length}):</h3>
+                    <h3 className="text-xs font-black text-white font-cairo">تفاصيل الأجهزة المدرجة في الفاتورة ({getInvoiceItemsList(selectedInvoice.invoiceNumber, selectedInvoice.id, selectedInvoice.customerId).length}):</h3>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      {getInvoiceItemsList(selectedInvoice.invoiceNumber, selectedInvoice.id).map((item, idx) => (
+                      {getInvoiceItemsList(selectedInvoice.invoiceNumber, selectedInvoice.id, selectedInvoice.customerId).map((item, idx) => (
                         <div key={item.id ? `sug-it-${item.id}-${idx}` : `sug-it-idx-${idx}`} className="bg-black/30 p-4 border border-white/5 rounded-2xl space-y-3">
                           <div className="flex items-center justify-between">
                             <span className="text-xs font-black text-white font-cairo">{item.deviceName || 'جهاز تقني'}</span>
