@@ -688,7 +688,10 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         message += `تم استلام دفعة مالية على حساب فاتورة صيانة أجهزتكم رقم *#${invoice.invoiceNumber}*:\n\n`;
         message += `- *رقم السند:* #${activePrintData.voucherData?.voucherNumber || ''}\n`;
         message += `- *المبلغ المستلم:* ${Number(activePrintData.paidAmount).toLocaleString('en-US')} ${currency}\n`;
-        message += `- *إجمالي تكلفة الفاتورة:* ${selectedCost.toLocaleString('en-US')} ${currency}\n`;
+        if (Number(activePrintData.discountAmount || 0) > 0) {
+          message += `- *الخصم المعتمد:* ${Number(activePrintData.discountAmount).toLocaleString('en-US')} ${currency}\n`;
+        }
+        message += `- *إجمالي تكلفة الفاتورة:* ${(selectedCost - Number(activePrintData.discountAmount || 0)).toLocaleString('en-US')} ${currency}\n`;
         message += `- *إجمالي المسدد حتى الآن:* ${(Number(invoice.amountPaid || 0) + Number(activePrintData.paidAmount)).toLocaleString('en-US')} ${currency}\n`;
         message += `- *المبلغ المتبقي:* ${activePrintData.remainingAmount.toLocaleString('en-US')} ${currency}\n`;
         message += `\n*ملاحظة:* أجهزتكم ما زالت في مركز الصيانة وبإمكانكم استلامها في أي وقت.\n`;
@@ -797,20 +800,34 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
   // 5. Debt left from previous delivery or credit
   const previousDebt = previousDeliveredCost > previousPaid ? (previousDeliveredCost - previousPaid) : 0;
   const availableCredit = previousPaid > previousDeliveredCost ? (previousPaid - previousDeliveredCost) : 0;
+  const remainingInvoiceDebt = Math.max(0, totalInvoiceAmount - previousPaid);
 
-  // 6. Current net cost
-  const discount = exitDiscountAmount;
-  const currentNetCost = Math.max(0, currentSelectedCost - discount);
+  // Existing discount already applied to this invoice
+  const existingInvoiceDiscount = Number(selectedInvoice ? (selectedInvoice.discount !== undefined ? selectedInvoice.discount : (selectedInvoice.discountAmount || 0)) : 0);
+
+  // 6. Current net cost considering existing discount and newly entered discount
+  const newDiscount = Number(exitDiscountAmount || 0);
+  const totalEffectiveDiscount = existingInvoiceDiscount + newDiscount;
+  const currentNetCost = Math.max(0, currentSelectedCost - existingInvoiceDiscount - newDiscount);
 
   // 7. Total Due (المبلغ المستحق)
-  const totalDueAmount = Math.max(0, currentNetCost + previousDebt - availableCredit);
+  // When exiting devices, amount due can never exceed the remaining invoice debt (minus any additional discount applied now)
+  const normalDue = Math.min(
+    Math.max(0, remainingInvoiceDebt - newDiscount),
+    Math.max(0, currentNetCost + previousDebt - availableCredit)
+  );
+  const totalDueAmount = isPayOnly 
+    ? Math.max(0, remainingInvoiceDebt - newDiscount) 
+    : normalDue;
   const total = totalDueAmount;
 
   // 8. Remaining balance
   const remainingCostForSelection = Math.max(0, totalDueAmount - exitPaidAmount);
 
-  // Maximum allowed total coverage (الحد الأقصى المسموح به لمجموع الواصل + الخصم)
-  const maxAllowedExitAmount = Math.max(0, currentSelectedCost + previousDebt - availableCredit);
+  // Maximum allowed total coverage (الحد الأقصى المسموح به لمجموع الواصل + الخصم الجديد)
+  const maxAllowedExitAmount = isPayOnly 
+    ? remainingInvoiceDebt 
+    : Math.min(remainingInvoiceDebt, Math.max(0, currentSelectedCost - existingInvoiceDiscount + previousDebt - availableCredit));
   const totalCoveredAmount = Number(exitPaidAmount || 0) + Number(exitDiscountAmount || 0);
   const isOverAmount = totalCoveredAmount > (maxAllowedExitAmount + 0.001);
 
@@ -838,8 +855,10 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
 
     if (isPayOnly) {
       const payAmount = otherPayment?.isActive ? otherPayment.amount : exitPaidAmount;
-      if (payAmount <= 0) {
-        alert('يرجى كتابة المبلغ الواصل أو تحديد طريقة الدفع أولاً لإنشاء سند القبض.');
+      const discountAmt = Number(exitDiscountAmount || 0);
+
+      if (payAmount <= 0 && discountAmt <= 0) {
+        alert('يرجى كتابة المبلغ الواصل أو تحديد الخصم أو طريقة الدفع أولاً لإنشاء سند القبض أو اعتماد التحديث.');
         return;
       }
       if (exitPaidAmount > totalDueAmount && !otherPayment?.isActive) {
@@ -847,17 +866,26 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         return;
       }
 
-      let nextNum = 1000;
-      try {
-        const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
-        nextNum = (resNum.values?.[0]?.maxNum || 1000) + 1;
-      } catch (e) {
-        nextNum = 1001;
+      let nextNum = 0;
+      if (payAmount > 0) {
+        try {
+          const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+          nextNum = (resNum.values?.[0]?.maxNum || 0) + 1;
+        } catch (e) {
+          nextNum = 1;
+        }
       }
 
-      const printItems = invoiceItems.filter(i => selectedItemIds.has(i.id!) && !isDeliveredStatus(i.status));
+      const printItems = invoiceItems.filter(i => (selectedItemIds.has(i.id!) || selectedItemIds.size === 0) && !isDeliveredStatus(i.status));
       const sessionId = `prepay-sess-${selectedInvoice.id}-${Date.now()}`;
       const timestampIso = new Date().toISOString();
+
+      let detailsText = `سداد مسبق على فاتورة صيانة رقم #${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة)`;
+      if (discountAmt > 0) {
+        detailsText += ` [خصم معتمد: ${discountAmt} ${selectedInvoice.currency || 'USD'}]`;
+      }
+
+      const discountTag = discountAmt > 0 ? ` [خصم معتمد: ${discountAmt} ${selectedInvoice.currency || 'USD'}]` : '';
 
       const voucherData = {
         id: `preview-vtx-${selectedInvoice.id}`,
@@ -865,19 +893,22 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         voucherNumber: nextNum,
         amount: otherPayment?.isActive ? otherPayment.amount : exitPaidAmount,
         currency: otherPayment?.isActive ? otherPayment.currency : (selectedInvoice.currency || 'USD'),
-        details: `سداد مسبق على فاتورة صيانة رقم #${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة)`,
+        details: detailsText,
         category: 'سداد مسبق أجهزة',
         notes: otherPayment?.isActive 
-          ? `طريقة الدفع: ${otherPayment.fundName} - ما يعادل ${exitPaidAmount} ${selectedInvoice.currency || 'USD'}${otherPayment.notes ? ' - ' + otherPayment.notes : ''}`
-          : `سداد نقدي في الصندوق`,
+          ? `طريقة الدفع: ${otherPayment.fundName} - ما يعادل ${exitPaidAmount} ${selectedInvoice.currency || 'USD'}${otherPayment.notes ? ' - ' + otherPayment.notes : ''}${discountTag}`
+          : `سداد نقدي في الصندوق${discountTag}`,
         customerName: selectedInvoice.customerName || 'عميل نقدي',
         customerId: selectedInvoice.customerId || '',
         customerPhone: selectedInvoice.customerPhone || getCustomerPhone(selectedInvoice.customerId),
         date: new Date().toLocaleDateString('ar-EG'),
         timestamp: timestampIso,
         userName: user?.name || user?.username || 'مدير النظام',
-        fundName: otherPayment?.isActive ? otherPayment.fundName : (funds.find(f => f.type === 'cash')?.name || 'الصندوق الرئيسي')
+        fundName: otherPayment?.isActive ? otherPayment.fundName : (funds.find(f => f.type === 'cash')?.name || 'الصندوق الرئيسي'),
+        discountAmount: discountAmt
       };
+
+      const displayCost = (currentSelectedCost > 0) ? currentSelectedCost : totalInvoiceAmount;
 
       setActivePrintData({
         isPayOnly: true,
@@ -887,12 +918,12 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         invoice: selectedInvoice,
         items: printItems,
         paidAmount: exitPaidAmount,
-        discountAmount: 0,
+        discountAmount: discountAmt,
         taxAmount: 0,
         remainingAmount: remainingCostForSelection,
-        selectedCost: currentSelectedCost,
+        selectedCost: displayCost,
         isPartialExit: true,
-        currentItemsTotal: currentSelectedCost,
+        currentItemsTotal: displayCost,
         previousRemaining: previousDebt,
         previousPaid,
         paidForCurrent: exitPaidAmount,
@@ -925,10 +956,13 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
       isPayOnly: false,
       sessionId,
       timestamp: timestampIso,
-      invoice: selectedInvoice,
+      invoice: {
+        ...selectedInvoice,
+        discount: totalEffectiveDiscount,
+      },
       items: printItems,
       paidAmount: exitPaidAmount,
-      discountAmount: exitDiscountAmount,
+      discountAmount: totalEffectiveDiscount,
       taxAmount: 0,
       remainingAmount: remainingCostForSelection,
       selectedCost: currentSelectedCost,
@@ -957,78 +991,44 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
     setIsFinalizing(true);
 
     try {
-      const paidAmount = Number(activePrintData.paidAmount);
-      if (paidAmount <= 0) {
-        alert('المبلغ الواصل يجب أن يكون أكبر من الصفر لإنشاء سند القبض.');
+      const paidAmount = Number(activePrintData.paidAmount || 0);
+      const discountAmount = Number(activePrintData.discountAmount || 0);
+      if (paidAmount <= 0 && discountAmount <= 0) {
+        alert('المبلغ الواصل أو الخصم يجب أن يكون أكبر من الصفر لاعتماد العملية.');
         return false;
       }
 
-      // Generate the voucher number
-      let nextNum = 1000;
-      try {
-        const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
-        nextNum = (resNum.values?.[0]?.maxNum || 1000) + 1;
-      } catch (e) {
-        nextNum = 1001;
-      }
+      // Generate the voucher number if money is being received
+      let nextNum = 0;
+      if (paidAmount > 0) {
+        try {
+          const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+          nextNum = (resNum.values?.[0]?.maxNum || 0) + 1;
+        } catch (e) {
+          nextNum = 1;
+        }
 
-      const txId = `vtx-${selectedInvoice.id}-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
-      const timestampIso = activePrintData.timestamp || new Date().toISOString();
+        const txId = `vtx-${selectedInvoice.id}-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+        const timestampIso = activePrintData.timestamp || new Date().toISOString();
+        const discountTag = discountAmount > 0 ? ` [خصم معتمد: ${discountAmount} ${selectedInvoice.currency || 'USD'}]` : '';
 
-      if (otherPayment && otherPayment.isActive) {
-        const bankDetailsJson = otherPayment.type === 'bank' && otherPayment.bankDetails
-          ? JSON.stringify(otherPayment.bankDetails)
-          : '';
+        if (otherPayment && otherPayment.isActive) {
+          const bankDetailsJson = otherPayment.type === 'bank' && otherPayment.bankDetails
+            ? JSON.stringify(otherPayment.bankDetails)
+            : '';
 
-        const exchangeRateText = otherPayment.invoiceRate && otherPayment.paymentRate
-          ? ` [سعر الصرف: ${otherPayment.invoiceRate} لعملة الفاتورة مقابل ${otherPayment.paymentRate} لعملة الدفع]`
-          : '';
+          const exchangeRateText = otherPayment.invoiceRate && otherPayment.paymentRate
+            ? ` [سعر الصرف: ${otherPayment.invoiceRate} لعملة الفاتورة مقابل ${otherPayment.paymentRate} لعملة الدفع]`
+            : '';
 
-        const finalNotes = otherPayment.notes 
-          ? `سداد مسبق لفاتورة صيانة رقم ${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة) - ${otherPayment.notes}${exchangeRateText}` 
-          : `سداد مسبق لفاتورة صيانة رقم ${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة)${exchangeRateText}`;
+          const finalNotes = otherPayment.notes 
+            ? `سداد مسبق لفاتورة صيانة رقم ${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة) - ${otherPayment.notes}${exchangeRateText}${discountTag}` 
+            : `سداد مسبق لفاتورة صيانة رقم ${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة)${exchangeRateText}${discountTag}`;
 
-        await ProviderFactory.getProvider().setDoc('vault_transactions', txId, {
-          id: txId,
-          currency: otherPayment.currency,
-          amount: otherPayment.amount,
-          customerName: selectedInvoice.customerName || 'عميل نقدي',
-          invoiceNumber: String(selectedInvoice.invoiceNumber),
-          invoiceId: selectedInvoice.id || '',
-          userName: user?.name || user?.username || 'مدير النظام',
-          userNumber: 1,
-          userId: user?.id || 'admin',
-          timestamp: timestampIso,
-          type: 'receipt',
-          notes: finalNotes,
-          updatedAt: timestampIso,
-          voucherNumber: nextNum,
-          transactionCategory: 'سداد مسبق أجهزة',
-          tag: `PREPAY_INV_${selectedInvoice.invoiceNumber}`,
-          fundId: otherPayment.fundId,
-          fundName: otherPayment.fundName,
-          customerId: selectedInvoice.customerId || '',
-          isReversed: 0,
-          isReversal: 0,
-          reversalOf: '',
-          paymentType: 2,
-          liabilityCurrency: selectedInvoice.currency || 'USD',
-          liabilityAmount: paidAmount,
-          receiptCurrency: otherPayment.currency,
-          receiptAmount: otherPayment.amount,
-          bankDetails: bankDetailsJson
-        });
-
-        await ProviderFactory.getProvider().updateDoc('fin_funds', otherPayment.fundId, { 
-          balance: { type: 'increment', value: otherPayment.amount } 
-        });
-      } else {
-        const defaultFund = funds.find(f => f.type === 'cash' && f.currency === (selectedInvoice.currency || 'USD')) || funds.find(f => f.type === 'cash');
-        if (defaultFund) {
           await ProviderFactory.getProvider().setDoc('vault_transactions', txId, {
             id: txId,
-            currency: selectedInvoice.currency || 'USD',
-            amount: paidAmount,
+            currency: otherPayment.currency,
+            amount: otherPayment.amount,
             customerName: selectedInvoice.customerName || 'عميل نقدي',
             invoiceNumber: String(selectedInvoice.invoiceNumber),
             invoiceId: selectedInvoice.id || '',
@@ -1037,58 +1037,127 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
             userId: user?.id || 'admin',
             timestamp: timestampIso,
             type: 'receipt',
-            notes: `سداد مسبق لفاتورة صيانة رقم ${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة)`,
+            notes: finalNotes,
             updatedAt: timestampIso,
             voucherNumber: nextNum,
             transactionCategory: 'سداد مسبق أجهزة',
             tag: `PREPAY_INV_${selectedInvoice.invoiceNumber}`,
-            fundId: defaultFund.id,
-            fundName: defaultFund.name,
+            fundId: otherPayment.fundId,
+            fundName: otherPayment.fundName,
             customerId: selectedInvoice.customerId || '',
             isReversed: 0,
             isReversal: 0,
             reversalOf: '',
-            paymentType: 1,
+            paymentType: 2,
             liabilityCurrency: selectedInvoice.currency || 'USD',
             liabilityAmount: paidAmount,
-            receiptCurrency: selectedInvoice.currency || 'USD',
-            receiptAmount: paidAmount,
-            bankDetails: ''
+            receiptCurrency: otherPayment.currency,
+            receiptAmount: otherPayment.amount,
+            bankDetails: bankDetailsJson
           });
 
-          await ProviderFactory.getProvider().updateDoc('fin_funds', defaultFund.id, { 
-            balance: { type: 'increment', value: paidAmount } 
+          await ProviderFactory.getProvider().updateDoc('fin_funds', otherPayment.fundId, { 
+            balance: { type: 'increment', value: otherPayment.amount } 
           });
+        } else {
+          const defaultFund = funds.find(f => f.type === 'cash' && f.currency === (selectedInvoice.currency || 'USD')) || funds.find(f => f.type === 'cash');
+          if (defaultFund) {
+            await ProviderFactory.getProvider().setDoc('vault_transactions', txId, {
+              id: txId,
+              currency: selectedInvoice.currency || 'USD',
+              amount: paidAmount,
+              customerName: selectedInvoice.customerName || 'عميل نقدي',
+              invoiceNumber: String(selectedInvoice.invoiceNumber),
+              invoiceId: selectedInvoice.id || '',
+              userName: user?.name || user?.username || 'مدير النظام',
+              userNumber: 1,
+              userId: user?.id || 'admin',
+              timestamp: timestampIso,
+              type: 'receipt',
+              notes: `سداد مسبق لفاتورة صيانة رقم ${selectedInvoice.invoiceNumber} (بدون خروج الأجهزة)${discountTag}`,
+              updatedAt: timestampIso,
+              voucherNumber: nextNum,
+              transactionCategory: 'سداد مسبق أجهزة',
+              tag: `PREPAY_INV_${selectedInvoice.invoiceNumber}`,
+              fundId: defaultFund.id,
+              fundName: defaultFund.name,
+              customerId: selectedInvoice.customerId || '',
+              isReversed: 0,
+              isReversal: 0,
+              reversalOf: '',
+              paymentType: 1,
+              liabilityCurrency: selectedInvoice.currency || 'USD',
+              liabilityAmount: paidAmount,
+              receiptCurrency: selectedInvoice.currency || 'USD',
+              receiptAmount: paidAmount,
+              bankDetails: ''
+            });
+
+            await ProviderFactory.getProvider().updateDoc('fin_funds', defaultFund.id, { 
+              balance: { type: 'increment', value: paidAmount } 
+            });
+          }
         }
       }
 
-      // Update invoice amountPaid
+      // Update invoice amountPaid AND discount AND totalCost
       const newAmountPaid = Number(selectedInvoice.amountPaid || 0) + paidAmount;
-      const invoiceRef = doc(db, 'invoices', selectedInvoice.id!);
-      await updateDoc(invoiceRef, {
+      const newDiscount = Number(selectedInvoice.discount || 0) + discountAmount;
+
+      // Calculate new totalCost of the invoice accurately using billable items only and updated discount/tax
+      const newTotalCost = calculateInvoiceBillableTotal(
+        { ...selectedInvoice, discount: newDiscount, tax: Number(selectedInvoice.tax || 0) },
+        allInvoiceMaintenanceItems
+      );
+
+      const invoiceUpdates: any = {
         amountPaid: newAmountPaid,
+        discount: newDiscount,
+        totalCost: newTotalCost,
         updatedAt: serverTimestamp()
-      });
+      };
+
+      const invoiceRef = doc(db, 'invoices', selectedInvoice.id!);
+      await updateDoc(invoiceRef, invoiceUpdates);
 
       try {
-        await localDb.run("UPDATE invoices SET amountPaid = ? WHERE id = ?", [newAmountPaid, selectedInvoice.id]);
+        await localDb.run(
+          "UPDATE invoices SET amountPaid = ?, discount = ?, totalCost = ? WHERE id = ?",
+          [newAmountPaid, newDiscount, newTotalCost, selectedInvoice.id]
+        );
       } catch (e) {}
 
-      setSelectedInvoice(prev => prev ? { ...prev, amountPaid: newAmountPaid } : null);
+      setSelectedInvoice(prev => prev ? { 
+        ...prev, 
+        amountPaid: newAmountPaid,
+        discount: newDiscount,
+        totalCost: newTotalCost
+      } : null);
+
       finalizedSessionIds.current.add(sessionId);
 
-      setPrepaymentSuccessMsg(`تم ترحيل وحفظ سند القبض رقم #${nextNum} بنجاح بمبلغ ${paidAmount} ${selectedInvoice.currency || 'USD'}. تم تحديث حساب الفاتورة (الأجهزة ما زالت في المحل جاهزة للاستلام).`);
+      let successMsg = '';
+      if (paidAmount > 0 && discountAmount > 0) {
+        successMsg = `تم ترحيل وحفظ سند القبض رقم #${nextNum} بمبلغ ${paidAmount} ${selectedInvoice.currency || 'USD'} واعتماد خصم بقيمة ${discountAmount} ${selectedInvoice.currency || 'USD'} بنجاح. تم تحديث حساب الفاتورة (الأجهزة ما زالت في المحل جاهزة للاستلام).`;
+      } else if (paidAmount > 0) {
+        successMsg = `تم ترحيل وحفظ سند القبض رقم #${nextNum} بنجاح بمبلغ ${paidAmount} ${selectedInvoice.currency || 'USD'}. تم تحديث حساب الفاتورة (الأجهزة ما زالت في المحل جاهزة للاستلام).`;
+      } else {
+        successMsg = `تم اعتماد الخصم بقيمة ${discountAmount} ${selectedInvoice.currency || 'USD'} وتحديث رصيد الفاتورة بنجاح.`;
+      }
+
+      setPrepaymentSuccessMsg(successMsg);
       setTimeout(() => setPrepaymentSuccessMsg(null), 9000);
 
-      // Reset payment fields
+      // Reset payment and discount fields
       setExitPaidAmount(0);
+      setExitDiscountAmount(0);
       setOtherPayment(null);
       setIsPayOnly(false);
 
       return true;
     } catch (err) {
       console.error("Error in finalizePrepaymentReceipt:", err);
-      alert('حدث خطأ أثناء حفظ سند القبض. يرجى المحاولة مرة أخرى.');
+      alert('حدث خطأ أثناء حفظ سند القبض أو اعتماد الخصم. يرجى المحاولة مرة أخرى.');
       return false;
     } finally {
       isFinalizingRef.current = false;
@@ -1133,7 +1202,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
       // Update amountPaid on the Invoice
       const invoiceRef = doc(db, 'invoices', selectedInvoice.id!);
       const newAmountPaid = Number(selectedInvoice.amountPaid || 0) + Number(activePrintData.paidAmount);
-      const newDiscount = Number(selectedInvoice.discount || 0) + Number(activePrintData.discountAmount);
+      const newDiscount = Number(activePrintData.discountAmount !== undefined ? activePrintData.discountAmount : (selectedInvoice.discount || 0));
       const newTax = Number(selectedInvoice.tax || 0) + Number(activePrintData.taxAmount);
       
       // Check if ALL items of the invoice are now delivered
@@ -1164,12 +1233,12 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
       // Save transaction in vault_transactions if paid amount is higher than 0
       if (Number(activePrintData.paidAmount) > 0) {
         // Generate the voucher number
-        let nextNum = 1000;
+        let nextNum = 0;
         try {
-          const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
-          nextNum = (resNum.values?.[0]?.maxNum || 1000) + 1;
+          const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+          nextNum = (resNum.values?.[0]?.maxNum || 0) + 1;
         } catch (e) {
-          nextNum = 1001; // fallback
+          nextNum = 1; // fallback
         }
 
         // 1. If Other Payment is active
@@ -1276,6 +1345,12 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
       }
 
       await batch.commit();
+      try {
+        await localDb.run(
+          "UPDATE invoices SET amountPaid = ?, discount = ?, totalCost = ?, status = ? WHERE id = ?",
+          [newAmountPaid, newDiscount, newTotalCost, allDelivered ? '60' : (selectedInvoice.status || '50'), selectedInvoice.id]
+        );
+      } catch (e) {}
       finalizedSessionIds.current.add(sessionId);
       console.log("finalizeExit: batch committed successfully");
       return true;
@@ -1835,7 +1910,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
             </div>
 
             <div className="p-3.5 rounded-xl bg-black/40 border border-white/5 text-xs text-gray-200 leading-relaxed font-bold">
-              سوف يتم انشاء سند قبض فقط دون تنفيذ خروج أجهزة
+              سوف يتم ترحيل السند واعتماد الخصم وتحديث رصيد الفاتورة دون إخراج الأجهزة من المحل.
             </div>
 
             <div className="flex items-center justify-end gap-2 pt-2">
@@ -2126,7 +2201,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
               <div className="pt-2 mt-2 border-t border-white/5 flex flex-col md:flex-row items-center justify-between gap-3 flex-shrink-0">
                 {/* Financial panel on the right (RTL) */}
                 <div className="flex flex-col gap-2.5 w-full md:w-auto">
-                  {/* Top row: 1. اجمالي جزئي ، 2. مسدد مسبقا ، 3. مستحق الدفع */}
+                  {/* Top row: 1. اجمالي جزئي ، 2. خصم معتمد (إن وجد) ، 3. مسدد مسبقا ، 4. مستحق الدفع */}
                   <div className="flex flex-wrap items-center gap-3 sm:gap-4 justify-between md:justify-start">
                     {/* 1. Partial Total (اجمالي جزئي) */}
                     <div className="text-right">
@@ -2139,7 +2214,22 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                     {/* Vertical Separator */}
                     <div className="hidden sm:block w-px h-6 bg-white/10" />
 
-                    {/* 2. Previous Payment (مسدد مسبقا) */}
+                    {/* 2. Existing Invoice Discount (خصم معتمد) */}
+                    {existingInvoiceDiscount > 0 && (
+                      <>
+                        <div className="text-right">
+                          <p className="text-[10px] text-amber-400 uppercase font-black tracking-widest block mb-0.5">خصم معتمد</p>
+                          <p className="text-sm font-black font-mono text-amber-300 text-right w-full">
+                            {existingInvoiceDiscount.toFixed(2)} <span className="text-xs text-amber-400/80 font-sans">{selectedInvoice.currency || 'USD'}</span>
+                          </p>
+                        </div>
+
+                        {/* Vertical Separator */}
+                        <div className="hidden sm:block w-px h-6 bg-white/10" />
+                      </>
+                    )}
+
+                    {/* 3. Previous Payment (مسدد مسبقا) */}
                     <div className="text-right">
                       <p className="text-[10px] text-cyan-400 uppercase font-black tracking-widest block mb-0.5 flex items-center gap-1 justify-end">
                         {previousPaid > 0 && <span className="w-1.5 h-1.5 rounded-full bg-cyan-400 animate-pulse" />}
@@ -2166,7 +2256,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                     {/* Vertical Separator */}
                     <div className="hidden sm:block w-px h-6 bg-white/10" />
 
-                    {/* 3. Amount Due (مستحق الدفع) */}
+                    {/* 4. Amount Due (مستحق الدفع) */}
                     <div className="text-right">
                       <p className="text-[10px] text-purple-400 uppercase font-black tracking-widest block mb-0.5">مستحق الدفع</p>
                       <p className="text-sm font-black font-mono text-purple-300 text-right w-full">
@@ -2205,7 +2295,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                         <div className="flex items-center gap-1.5">
                           <span className="font-black text-xs">سداد بدون خروج</span>
                           {isPayOnly ? (
-                            <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-md font-mono border border-emerald-500/30">سند قبض</span>
+                            <span className="text-[10px] bg-emerald-500/20 text-emerald-300 px-1.5 py-0.5 rounded-md font-mono border border-emerald-500/30">سند قبض / خصم</span>
                           ) : (
                             <span className="text-[10px] text-gray-400">(سند قبض)</span>
                           )}
@@ -2218,7 +2308,9 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
 
                     {/* 1. Discount (خصم) */}
                     <div className="text-right">
-                      <p className="text-[10px] text-amber-500 uppercase font-black tracking-widest block mb-0.5">خصم</p>
+                      <p className="text-[10px] text-amber-500 uppercase font-black tracking-widest block mb-0.5">
+                        خصم {existingInvoiceDiscount > 0 ? <span className="text-[9px] text-amber-300 font-normal">(إضافي)</span> : ''}
+                      </p>
                       <div className="relative">
                         <input
                           type="text"
@@ -2375,7 +2467,10 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                 <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto justify-end">
                   <div className="text-right text-[10px] text-slate-500 leading-tight hidden lg:block">
                     <div>الواصل سابقاً: <span className="font-mono text-gray-300 font-bold">{Number(selectedInvoice.amountPaid || 0).toFixed(2)}</span> {selectedInvoice.currency}</div>
-                    <div>المبلغ الكلي للفاتورة: <span className="font-mono text-gray-300 font-bold">{totalInvoiceAmount.toFixed(2)}</span> {selectedInvoice.currency}</div>
+                    {existingInvoiceDiscount > 0 && (
+                      <div>الخصم المعتمد: <span className="font-mono text-amber-400 font-bold">{existingInvoiceDiscount.toFixed(2)}</span> {selectedInvoice.currency}</div>
+                    )}
+                    <div>المبلغ الصافي للفاتورة: <span className="font-mono text-gray-300 font-bold">{totalInvoiceAmount.toFixed(2)}</span> {selectedInvoice.currency}</div>
                   </div>
 
                   <div className="flex flex-col items-end gap-1.5 w-full md:w-auto mt-2 sm:mt-0">
@@ -2388,7 +2483,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                       onClick={handleShowPreview}
                       disabled={
                         isPayOnly
-                          ? (exitPaidAmount <= 0 && (!otherPayment?.isActive || otherPayment.amount <= 0))
+                          ? (isOverAmount || ((exitPaidAmount <= 0 && (!otherPayment?.isActive || otherPayment.amount <= 0)) && (Number(exitDiscountAmount) <= 0)))
                           : (selectedItemIds.size === 0 || isOverAmount || (otherPayment?.isActive && (Number(exitPaidAmount) + Number(exitDiscountAmount)) === 0))
                       }
                       className={`w-full md:w-auto text-white font-black px-6 py-2 rounded-xl transition-all shadow-lg active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2 text-xs font-cairo cursor-pointer ${
@@ -2398,7 +2493,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                       }`}
                     >
                       <Save size={14} />
-                      <span>{isPayOnly ? 'عرض السند للترحيل' : 'عرض الفاتورة للمراجعة'}</span>
+                      <span>{isPayOnly ? (exitPaidAmount > 0 ? 'عرض السند للترحيل' : 'اعتماد الخصم للترحيل') : 'عرض الفاتورة للمراجعة'}</span>
                     </button>
                   </div>
                 </div>

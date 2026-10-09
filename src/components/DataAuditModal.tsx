@@ -888,11 +888,11 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
         : `جاري موازنة وتسجيل القيود المالية لـ ${auditResults.paymentImbalances.length} حالة...` 
     });
     try {
-      let currentVoucherNum = 1000;
+      let currentVoucherNum = 0;
       let availableFunds: any[] = [];
       try {
-        const vRes = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
-        currentVoucherNum = Number(vRes.values?.[0]?.maxNum || 1000);
+        const vRes = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+        currentVoucherNum = Number(vRes.values?.[0]?.maxNum || 0);
         const fRes = await localDb.query("SELECT * FROM fin_funds");
         availableFunds = fRes.values || [];
       } catch (err) {}

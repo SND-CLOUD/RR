@@ -34,7 +34,7 @@ export default function MaintenanceInvoicesTab() {
   const [progressPercent, setProgressPercent] = useState(0);
   const [executionResult, setExecutionResult] = useState<{ tool: number; type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
-  const [customStartNumber, setCustomStartNumber] = useState<number>(1001);
+  const [customStartNumber, setCustomStartNumber] = useState<number>(1);
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
 
   // Helper to filter in-shop maintenance invoices only
@@ -52,7 +52,7 @@ export default function MaintenanceInvoicesTab() {
 
       let numbered = 0;
       let unnumbered = 0;
-      let maxNum = 1000;
+      let maxNum = 0;
       let minNum = Infinity;
       const numFreq: Record<number, string[]> = {};
       const unnumberedList: any[] = [];
@@ -97,14 +97,18 @@ export default function MaintenanceInvoicesTab() {
         total,
         numbered,
         unnumbered,
-        maxNumber: maxNum > 1000 ? maxNum : 1000,
+        maxNumber: maxNum > 0 ? maxNum : 0,
         minNumber: minNum === Infinity ? 0 : minNum,
         duplicatesCount: totalDuplicateRows,
         duplicateNumbers,
         unnumberedSamples: unnumberedList
       });
 
-      if (maxNum > 1000) setCustomStartNumber(maxNum + 1);
+      if (maxNum > 0) {
+        setCustomStartNumber(maxNum + 1);
+      } else {
+        setCustomStartNumber(1);
+      }
 
     } catch (err: any) {
       console.error("[MaintAudit] error:", err);
@@ -127,7 +131,7 @@ export default function MaintenanceInvoicesTab() {
       const res = await localDb.query("SELECT id, invoiceNumber, createdAt, invoiceType, templateType, type, isPurchase, notes FROM invoices ORDER BY createdAt ASC, rowid ASC");
       const rows = (res.values || []).filter(isMaintenanceInvoice);
 
-      let currentMax = 1000;
+      let currentMax = 0;
       rows.forEach((inv: any) => {
         const clean = String(inv.invoiceNumber || '').replace('#', '').replace('INV-', '').trim();
         const n = parseInt(clean, 10);
@@ -209,7 +213,7 @@ export default function MaintenanceInvoicesTab() {
       const res = await localDb.query("SELECT id, invoiceNumber, createdAt, invoiceType, templateType, type, isPurchase, notes FROM invoices ORDER BY createdAt ASC, rowid ASC");
       const rows = (res.values || []).filter(isMaintenanceInvoice);
 
-      let currentMax = 1000;
+      let currentMax = 0;
       const seen = new Set<number>();
       const duplicates: any[] = [];
 
@@ -297,7 +301,7 @@ export default function MaintenanceInvoicesTab() {
         return;
       }
 
-      const start = Number(customStartNumber) || 1001;
+      const start = Number(customStartNumber) || 1;
       const total = rows.length;
 
       for (let i = 0; i < total; i++) {
@@ -521,7 +525,7 @@ export default function MaintenanceInvoicesTab() {
               <input
                 type="number"
                 value={customStartNumber}
-                onChange={(e) => setCustomStartNumber(Math.max(1, parseInt(e.target.value) || 1001))}
+                onChange={(e) => setCustomStartNumber(Math.max(1, parseInt(e.target.value) || 1))}
                 disabled={activeRunningTool !== null}
                 className="w-24 bg-slate-100 dark:bg-black/60 border border-slate-300 dark:border-white/20 rounded-lg px-2.5 py-1 text-xs font-mono font-bold text-blue-600 dark:text-blue-400 text-center"
               />

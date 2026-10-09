@@ -774,8 +774,8 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
       const reversalTxId = `vtx-${Math.random().toString(36).substring(2, 8)}`;
       
       // Get next voucher number
-      const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
-      const nextNum = (resNum.values?.[0]?.maxNum || 1000) + 1;
+      const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+      const nextNum = (resNum.values?.[0]?.maxNum || 0) + 1;
 
       const reverseAmount = -Number(tx.amount);
       const originalVoucherNotes = tx.notes || '';

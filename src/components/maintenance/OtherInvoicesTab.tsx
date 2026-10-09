@@ -34,7 +34,7 @@ export default function OtherInvoicesTab() {
   const [progressPercent, setProgressPercent] = useState(0);
   const [executionResult, setExecutionResult] = useState<{ tool: number; type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
-  const [customStartNumber, setCustomStartNumber] = useState<number>(1001);
+  const [customStartNumber, setCustomStartNumber] = useState<number>(1);
   const [prefix, setPrefix] = useState<string>('O-');
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
 
@@ -61,7 +61,7 @@ export default function OtherInvoicesTab() {
 
       let numbered = 0;
       let unnumbered = 0;
-      let maxNum = 1000;
+      let maxNum = 0;
       let minNum = Infinity;
       const numFreq: Record<string, string[]> = {};
       const unnumberedList: any[] = [];
@@ -113,14 +113,18 @@ export default function OtherInvoicesTab() {
         total,
         numbered,
         unnumbered,
-        maxNumber: maxNum > 1000 ? maxNum : 1000,
+        maxNumber: maxNum > 0 ? maxNum : 0,
         minNumber: minNum === Infinity ? 0 : minNum,
         duplicatesCount: totalDuplicateRows,
         duplicateNumbers,
         unnumberedSamples: unnumberedList
       });
 
-      if (maxNum > 1000) setCustomStartNumber(maxNum + 1);
+      if (maxNum > 0) {
+        setCustomStartNumber(maxNum + 1);
+      } else {
+        setCustomStartNumber(1);
+      }
 
     } catch (err: any) {
       console.error("[OtherAudit] error:", err);
@@ -143,7 +147,7 @@ export default function OtherInvoicesTab() {
       const res = await localDb.query("SELECT id, invoiceNumber, createdAt, invoiceType, templateType, type, isPurchase, notes FROM invoices ORDER BY createdAt ASC, rowid ASC");
       const rows = (res.values || []).filter(isOtherInvoice);
 
-      let currentMax = 1000;
+      let currentMax = 0;
       rows.forEach((inv: any) => {
         const n = parseNum(inv.invoiceNumber);
         if (n > currentMax) currentMax = n;
@@ -220,7 +224,7 @@ export default function OtherInvoicesTab() {
       const res = await localDb.query("SELECT id, invoiceNumber, createdAt, invoiceType, templateType, type, isPurchase, notes FROM invoices ORDER BY createdAt ASC, rowid ASC");
       const rows = (res.values || []).filter(isOtherInvoice);
 
-      let currentMax = 1000;
+      let currentMax = 0;
       const seen = new Set<string>();
       const duplicates: any[] = [];
 
@@ -309,7 +313,7 @@ export default function OtherInvoicesTab() {
         return;
       }
 
-      const start = Number(customStartNumber) || 1001;
+      const start = Number(customStartNumber) || 1;
       const total = rows.length;
 
       for (let i = 0; i < total; i++) {
@@ -541,7 +545,7 @@ export default function OtherInvoicesTab() {
               <input
                 type="number"
                 value={customStartNumber}
-                onChange={(e) => setCustomStartNumber(Math.max(1, parseInt(e.target.value) || 1001))}
+                onChange={(e) => setCustomStartNumber(Math.max(1, parseInt(e.target.value) || 1))}
                 disabled={activeRunningTool !== null}
                 className="w-20 bg-slate-100 dark:bg-black/60 border border-slate-300 dark:border-white/20 rounded-lg px-2 py-1 text-xs font-mono font-bold text-center text-purple-600 dark:text-purple-400"
               />

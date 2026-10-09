@@ -178,6 +178,7 @@ export interface VaultTransaction {
   amount: number;
   customerName: string;
   invoiceNumber: string;
+  invoiceId?: string;
   userName: string;
   userNumber?: number;
   userId: string;

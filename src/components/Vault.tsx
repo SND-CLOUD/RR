@@ -80,6 +80,7 @@ interface VaultTransaction {
   amount: number;
   customerName: string;
   invoiceNumber: string;
+  invoiceId?: string;
   userName: string;
   userNumber?: number;
   userId?: string;
@@ -897,7 +898,7 @@ export default function Vault({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   // VOUCHER FORM STATES (Shared structure)
-  const [nextVoucherNum, setNextVoucherNum] = useState<number>(1001);
+  const [nextVoucherNum, setNextVoucherNum] = useState<number>(1);
   const [selectedCategory, setSelectedCategory] = useState<string>('');
   const [customerSearch, setCustomerSearch] = useState<string>('');
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>('');
@@ -1145,11 +1146,11 @@ export default function Vault({
       return;
     }
     try {
-      const res = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
-      const max = res.values?.[0]?.maxNum || 1000;
+      const res = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+      const max = res.values?.[0]?.maxNum || 0;
       setNextVoucherNum(Number(max) + 1);
     } catch (err) {
-      setNextVoucherNum(1001);
+      setNextVoucherNum(1);
     }
   };
 
@@ -1620,8 +1621,8 @@ export default function Vault({
       }
 
       // Get next voucher number
-      const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
-      let currentNextNum = (resNum.values?.[0]?.maxNum || 1000);
+      const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+      let currentNextNum = Number(resNum.values?.[0]?.maxNum || 0);
 
       for (const t of txsToReverse) {
           if (t.isReversed || t.isReversal) continue;

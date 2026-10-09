@@ -869,11 +869,11 @@ export default function App() {
         updatedAt: serverTimestamp()
       });
 
-      let nextVoucherNum = 1001;
+      let nextVoucherNum = 1;
       try {
         const { localDb } = await import('./lib/local-db');
-        const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
-        nextVoucherNum = (resNum.values?.[0]?.maxNum || 1000) + 1;
+        const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+        nextVoucherNum = (resNum.values?.[0]?.maxNum || 0) + 1;
       } catch (e) {}
 
       const timestampIso = new Date().toISOString();

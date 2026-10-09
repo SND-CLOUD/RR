@@ -79,7 +79,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
   const [progressPercent, setProgressPercent] = useState(0);
   const [executionResult, setExecutionResult] = useState<{ tool: number; type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
-  const [customStartNumber, setCustomStartNumber] = useState<number>(1001);
+  const [customStartNumber, setCustomStartNumber] = useState<number>(1);
   const [showRenumberConfirm, setShowRenumberConfirm] = useState(false);
   const [fundRepairDetails, setFundRepairDetails] = useState<Array<{ fundName: string; currency: string; oldBalance: number; newBalance: number }>>([]);
 
@@ -94,7 +94,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
   const [custProgressPercent, setCustProgressPercent] = useState(0);
   const [custExecutionResult, setCustExecutionResult] = useState<{ tool: number; type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
-  const [customCustStartNumber, setCustomCustStartNumber] = useState<number>(1001);
+  const [customCustStartNumber, setCustomCustStartNumber] = useState<number>(1);
   const [showCustRenumberConfirm, setShowCustRenumberConfirm] = useState(false);
 
   // =========================================================================
@@ -115,7 +115,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
 
       let numbered = 0;
       let unnumbered = 0;
-      let maxNum = 1000;
+      let maxNum = 0;
       let minNum = Infinity;
       const numberFreq: Record<number, number> = {};
       const unnumberedList: any[] = [];
@@ -155,15 +155,17 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
         total,
         numbered,
         unnumbered,
-        maxNumber: maxNum > 1000 ? maxNum : 1000,
+        maxNumber: maxNum,
         minNumber: minNum === Infinity ? 0 : minNum,
         duplicatesCount: totalDuplicateRows,
         duplicateNumbers,
         unnumberedSamples: unnumberedList
       });
 
-      if (maxNum > 1000) {
+      if (maxNum > 0) {
         setCustomStartNumber(maxNum + 1);
+      } else {
+        setCustomStartNumber(1);
       }
 
     } catch (err: any) {
@@ -193,7 +195,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
       );
       const rows = res.values || [];
 
-      let currentMax = 1000;
+      let currentMax = 0;
       rows.forEach((r: any) => {
         const v = Number(r.voucherNumber);
         if (v && !isNaN(v) && v > currentMax) {
@@ -278,7 +280,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
       );
       const rows = res.values || [];
 
-      let currentMax = 1000;
+      let currentMax = 0;
       const seenNumbers = new Set<number>();
       const duplicateRows: any[] = [];
 
@@ -375,7 +377,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
         return;
       }
 
-      const start = Number(customStartNumber) || 1001;
+      const start = Number(customStartNumber) || 1;
       const total = rows.length;
 
       for (let i = 0; i < total; i++) {
@@ -567,7 +569,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
 
       let numbered = 0;
       let unnumbered = 0;
-      let maxNum = 1000;
+      let maxNum = 0;
       let minNum = Infinity;
 
       const numberMap: Record<number, string[]> = {};
@@ -637,7 +639,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
         total,
         numbered,
         unnumbered,
-        maxNumber: maxNum > 1000 ? maxNum : 1000,
+        maxNumber: maxNum > 0 ? maxNum : 0,
         minNumber: minNum === Infinity ? 0 : minNum,
         duplicateNumbersCount: totalDuplicateNumRows,
         duplicateNumbers,
@@ -646,8 +648,10 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
         unnumberedSamples: unnumberedList
       });
 
-      if (maxNum > 1000) {
+      if (maxNum > 0) {
         setCustomCustStartNumber(maxNum + 1);
+      } else {
+        setCustomCustStartNumber(1);
       }
 
     } catch (err: any) {
@@ -677,7 +681,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
       );
       const rows = res.values || [];
 
-      let currentMax = 1000;
+      let currentMax = 0;
       rows.forEach((c: any) => {
         const n = Number(c.customerNumber);
         if (n && !isNaN(n) && n > currentMax) {
@@ -781,7 +785,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
       );
       const rows = res.values || [];
 
-      let currentMax = 1000;
+      let currentMax = 0;
       const seenNumbers = new Set<number>();
       const duplicateRows: any[] = [];
 
@@ -897,7 +901,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
         return;
       }
 
-      const start = Number(customCustStartNumber) || 1001;
+      const start = Number(customCustStartNumber) || 1;
       const total = rows.length;
 
       for (let i = 0; i < total; i++) {
@@ -1242,7 +1246,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
                   <input
                     type="number"
                     value={customStartNumber}
-                    onChange={(e) => setCustomStartNumber(Math.max(1, parseInt(e.target.value) || 1001))}
+                    onChange={(e) => setCustomStartNumber(Math.max(1, parseInt(e.target.value) || 1))}
                     disabled={activeRunningTool !== null}
                     className="w-24 bg-slate-100 dark:bg-black/60 border border-slate-300 dark:border-white/20 rounded-lg px-2.5 py-1 text-xs font-mono font-bold text-purple-600 dark:text-purple-400 text-center"
                   />
@@ -1496,7 +1500,7 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
                   <input
                     type="number"
                     value={customCustStartNumber}
-                    onChange={(e) => setCustomCustStartNumber(Math.max(1, parseInt(e.target.value) || 1001))}
+                    onChange={(e) => setCustomCustStartNumber(Math.max(1, parseInt(e.target.value) || 1))}
                     disabled={activeRunningCustTool !== null}
                     className="w-24 bg-slate-100 dark:bg-black/60 border border-slate-300 dark:border-white/20 rounded-lg px-2.5 py-1 text-xs font-mono font-bold text-purple-600 dark:text-purple-400 text-center"
                   />

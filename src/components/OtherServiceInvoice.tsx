@@ -623,13 +623,13 @@ export default function OtherServiceInvoice({
       // 5. Disburse Funds from Vault
       const chosenFund = funds.find(f => f.id === selectedFundId) || funds[0];
       if (chosenFund && paidAmount > 0) {
-        let nextVoucherNum = 1000;
+        let nextVoucherNum = 0;
         try {
           const { localDb } = await import('../lib/local-db');
-          const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
-          nextVoucherNum = (resNum.values?.[0]?.maxNum || 1000) + 1;
+          const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+          nextVoucherNum = (resNum.values?.[0]?.maxNum || 0) + 1;
         } catch (e) {
-          nextVoucherNum = 1001;
+          nextVoucherNum = 1;
         }
 
         const txRef = doc(collection(db, 'vault_transactions'));
@@ -1144,13 +1144,13 @@ export default function OtherServiceInvoice({
 
       // Record Deposit in Vault
       if (paidSales > 0) {
-        let nextNum = 1000;
+        let nextNum = 0;
         try {
           const { localDb } = await import('../lib/local-db');
-          const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 1000) as maxNum FROM vault_transactions");
-          nextNum = (resNum.values?.[0]?.maxNum || 1000) + 1;
+          const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+          nextNum = (resNum.values?.[0]?.maxNum || 0) + 1;
         } catch (e) {
-          nextNum = 1001;
+          nextNum = 1;
         }
 
         const chosenFund = funds.find(f => f.id === selectedFundId) || funds[0];
