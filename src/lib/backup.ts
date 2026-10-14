@@ -126,6 +126,22 @@ export async function restoreBackupData(jsonString: string): Promise<boolean> {
       targetProvider = ProviderFactory.getProvider();
     }
 
+    // 0. Clean tombstones (deleted_records) so past deletions do not conflict with or suppress restored backup data
+    try {
+      if (dbMode === 'LOCAL' || dbMode === 'AUTO') {
+        await localDb.run("DELETE FROM deleted_records").catch(() => {});
+      }
+      if (dbMode === 'CLOUD' || dbMode === 'AUTO') {
+        const FirebaseProvider = (await import('../data/FirebaseProvider')).FirebaseProviderInstance;
+        const delSnap = await FirebaseProvider.getDocs('deleted_records').catch(() => ({ docs: [] }));
+        for (const d of delSnap.docs) {
+          await FirebaseProvider.deleteDoc('deleted_records', d.id, 'BYPASS_OUTBOX').catch(() => {});
+        }
+      }
+    } catch (delErr) {
+      console.warn('Could not reset deleted_records during backup restore:', delErr);
+    }
+
     for (const table of allTables) {
       if (data[table] && Array.isArray(data[table])) {
         // Clear existing data from target provider

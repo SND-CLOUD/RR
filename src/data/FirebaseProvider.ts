@@ -106,6 +106,15 @@ export class FirebaseProvider implements IDataProvider {
       cleaned.id = id;
     }
     await fsSetDoc(docRef, cleaned, options || {});
+
+    // Clear any past tombstone for this revived or newly created document
+    if (collectionName !== 'deleted_records' && txGroupId !== 'BYPASS_OUTBOX') {
+      try {
+        const tombstoneId = `del_${collectionName}_${id}`;
+        const tombstoneRef = doc(this.getDb(), 'deleted_records', tombstoneId);
+        await fsDeleteDoc(tombstoneRef).catch(() => {});
+      } catch (e) {}
+    }
   }
 
   async addDoc(collectionName: string, data: any): Promise<{ id: string }> {
@@ -131,6 +140,22 @@ export class FirebaseProvider implements IDataProvider {
   async deleteDoc(collectionName: string, id: string, txGroupId?: string): Promise<void> {
     const docRef = doc(this.getDb(), collectionName, id);
     await fsDeleteDoc(docRef);
+
+    // If deleting a business record, create a tombstone in Firestore
+    if (collectionName !== 'deleted_records' && txGroupId !== 'BYPASS_OUTBOX') {
+      try {
+        const tombstoneId = `del_${collectionName}_${id}`;
+        const tombstoneRef = doc(this.getDb(), 'deleted_records', tombstoneId);
+        await fsSetDoc(tombstoneRef, {
+          id: tombstoneId,
+          tableName: collectionName,
+          recordId: id,
+          deletedAt: new Date().toISOString()
+        });
+      } catch (e) {
+        console.warn('FirebaseProvider: Failed to record deleted_records tombstone in Firestore:', e);
+      }
+    }
   }
 
   onSnapshot(
