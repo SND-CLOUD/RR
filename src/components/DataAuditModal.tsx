@@ -957,6 +957,40 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
           try {
             await LocalProviderInstance.setDoc('vault_transactions', txId, txData, undefined, 'BYPASS_OUTBOX');
           } catch (e) {}
+        } else if (item.amountInLedger > 0 && item.amountPaidOnInvoice !== item.amountInLedger) {
+          // The voucher already exists in the treasury/vault, but the invoice amountPaid was not updated!
+          const newAmountPaid = Number(item.amountInLedger);
+          let newStatus = item.status;
+          if (!item.isPurchase && newAmountPaid >= Number(item.totalCost || 0) && item.status !== 'delivered' && item.status !== '70') {
+            newStatus = 'delivered';
+          }
+          const nowIso = new Date().toISOString();
+          const updateData: any = {
+            amountPaid: newAmountPaid,
+            updatedAt: nowIso
+          };
+          if (newStatus && newStatus !== item.status) {
+            updateData.status = newStatus;
+          }
+
+          try {
+            await FirebaseProviderInstance.updateDoc('invoices', item.id, updateData);
+          } catch (e) {
+            try {
+              await updateDoc(doc(db, 'invoices', item.id), updateData);
+            } catch (e2) {}
+          }
+
+          try {
+            const sql = updateData.status 
+              ? "UPDATE invoices SET amountPaid = ?, status = ?, updatedAt = ? WHERE id = ?"
+              : "UPDATE invoices SET amountPaid = ?, updatedAt = ? WHERE id = ?";
+            const params = updateData.status 
+              ? [newAmountPaid, updateData.status, nowIso, item.id]
+              : [newAmountPaid, nowIso, item.id];
+            await localDb.run(sql, params);
+            await LocalProviderInstance.updateDoc('invoices', item.id, updateData);
+          } catch (e) {}
         }
       }
 
@@ -1767,8 +1801,9 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
                               onClick={() => repairPaymentImbalances(d.invoiceNumber)}
                               disabled={repairProgress.status === 'running'}
                               className="px-2 py-0.5 bg-green-700 hover:bg-green-600 text-white rounded text-[9px] font-sans font-bold cursor-pointer disabled:opacity-50"
+                              title={d.amountInLedger === 0 ? 'تسجيل سند في الصندوق' : 'مطابقة وتحديث مدفوع الفاتورة بالسند المسجل'}
                             >
-                              تسجيل السند
+                              {d.amountInLedger === 0 ? 'تسجيل السند' : 'مطابقة الفاتورة'}
                             </button>
                           </div>
                         ))}

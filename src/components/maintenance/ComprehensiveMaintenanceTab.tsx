@@ -261,8 +261,8 @@ export default function ComprehensiveMaintenanceTab() {
     SyncEngine.pauseSync();
 
     try {
-      const invsRes = await localDb.query("SELECT id, invoiceNumber, customerId FROM invoices");
-      const txsRes = await localDb.query("SELECT id, voucherNumber, invoiceNumber, invoiceId, customerId FROM vault_transactions");
+      const invsRes = await localDb.query("SELECT id, invoiceNumber, customerId, totalCost, amountPaid, status FROM invoices");
+      const txsRes = await localDb.query("SELECT id, voucherNumber, invoiceNumber, invoiceId, customerId, amount, liabilityAmount, type, isReversed FROM vault_transactions");
 
       const invoices = invsRes.values || [];
       const txs = txsRes.values || [];
@@ -270,6 +270,7 @@ export default function ComprehensiveMaintenanceTab() {
       let boundCount = 0;
       const total = txs.length;
       const nowIso = new Date().toISOString();
+      const affectedInvoiceIds = new Set<string>();
 
       for (let i = 0; i < total; i++) {
         const tx = txs[i];
@@ -325,12 +326,52 @@ export default function ComprehensiveMaintenanceTab() {
             } catch (e) {}
             boundCount++;
           }
+          if (match.id) {
+            affectedInvoiceIds.add(match.id);
+          }
         }
 
         if (i % 15 === 0 || i === total - 1) {
           const pct = Math.round(10 + ((i + 1) / total) * 80);
           setProgressPercent(pct);
           setProgressText(`صيانة ربط السندات (${i + 1} من ${total})...`);
+        }
+      }
+
+      // Synchronize amountPaid on invoices that were bound
+      if (affectedInvoiceIds.size > 0) {
+        const allTxs = (await localDb.query("SELECT * FROM vault_transactions")).values || [];
+        for (const invId of Array.from(affectedInvoiceIds)) {
+          const inv = invoices.find((x: any) => x.id === invId);
+          if (!inv) continue;
+          const linkedTxs = allTxs.filter((t: any) => 
+            (t.invoiceId === invId || (t.invoiceNumber && String(t.invoiceNumber).replace('#', '').trim() === String(inv.invoiceNumber).replace('#', '').trim())) &&
+            t.type !== 'reversal' && !t.isReversed
+          );
+          const totalPaid = linkedTxs.reduce((sum: number, t: any) => {
+            const val = (t.liabilityAmount !== undefined && t.liabilityAmount !== null && !isNaN(Number(t.liabilityAmount)))
+              ? Number(t.liabilityAmount)
+              : Math.abs(Number(t.amount || 0));
+            return sum + val;
+          }, 0);
+
+          if (Math.abs(Number(inv.amountPaid || 0) - totalPaid) > 0.01) {
+            const upd: any = { amountPaid: totalPaid, updatedAt: nowIso };
+            if (totalPaid >= Number(inv.totalCost || 0) && inv.status !== 'delivered' && inv.status !== '70') {
+              upd.status = 'delivered';
+            }
+            try {
+              const sql = upd.status
+                ? "UPDATE invoices SET amountPaid = ?, status = ?, updatedAt = ? WHERE id = ?"
+                : "UPDATE invoices SET amountPaid = ?, updatedAt = ? WHERE id = ?";
+              const params = upd.status
+                ? [totalPaid, upd.status, nowIso, invId]
+                : [totalPaid, nowIso, invId];
+              await localDb.run(sql, params);
+              await LocalProviderInstance.updateDoc('invoices', invId, upd);
+              await FirebaseProviderInstance.updateDoc('invoices', invId, upd);
+            } catch (e) {}
+          }
         }
       }
 
