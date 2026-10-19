@@ -13,7 +13,6 @@ import {
 } from 'lucide-react';
 import { localDb } from '../../lib/local-db';
 import { LocalProviderInstance } from '../../data/LocalProvider';
-import { FirebaseProviderInstance } from '../../data/FirebaseProvider';
 import { SyncEngine } from '../../data/SyncEngine';
 import { db, doc, updateDoc } from '../../firebase';
 import { isItemRefusedOrFailed, getItemBillableCost } from '../../lib/billableService';

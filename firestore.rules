@@ -130,9 +130,6 @@ service cloud.firestore {
     match /system_restore_points/{id} {
       allow read, write: if true;
     }
-    match /deleted_records/{id} {
-      allow read, write: if true;
-    }
     match /test/{docId} {
       allow get: if true;
     }

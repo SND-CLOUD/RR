@@ -648,26 +648,7 @@ class LocalDatabase {
         console.error('Failed to create outbox table', err);
       }
 
-      // Ensure deleted_records tombstone table is created
-      try {
-        await this.db.run(`
-          CREATE TABLE IF NOT EXISTS deleted_records (
-            id TEXT PRIMARY KEY,
-            tableName TEXT NOT NULL,
-            recordId TEXT NOT NULL,
-            recordNumber TEXT,
-            deletedAt TEXT NOT NULL,
-            deletedBy TEXT,
-            reason TEXT
-          );
-        `);
-        await this.db.run(`
-          CREATE INDEX IF NOT EXISTS idx_del_rec_tbl_id ON deleted_records(tableName, recordId);
-        `);
-      } catch (err) {
-        console.error('Failed to create deleted_records table', err);
-      }
-
+      
       // Ensure financial tables are created for existing databases
       try {
         await this.db.run(`

@@ -194,10 +194,6 @@ export class LocalProvider implements IDataProvider {
       }
     }
 
-    if (collectionName !== 'deleted_records') {
-      await localDb.run(`DELETE FROM deleted_records WHERE tableName = ? AND recordId = ?`, [collectionName, id]).catch(() => {});
-    }
-
     // Queue in Outbox
     await this.queueInOutbox(collectionName, id, 'SET', { data, options }, transactionGroupId);
 
@@ -262,63 +258,12 @@ export class LocalProvider implements IDataProvider {
   }
 
   async deleteDoc(collectionName: string, id: string, transactionGroupId?: string): Promise<void> {
-    if (collectionName !== 'deleted_records' && transactionGroupId !== 'BYPASS_OUTBOX') {
-      let recordNumber: string | null = null;
-      try {
-        const existing = await localDb.query(`SELECT * FROM ${collectionName} WHERE id = ?`, [id]);
-        if (existing.values && existing.values.length > 0) {
-          const rec = existing.values[0];
-          recordNumber = rec.invoiceNumber || rec.customerNumber || rec.voucherNumber || rec.deviceNumber || null;
-        }
-      } catch (e) {}
+    await localDb.run(`DELETE FROM ${collectionName} WHERE id = ?`, [id]);
 
-      // 1. Delete from local table
-      await localDb.run(`DELETE FROM ${collectionName} WHERE id = ?`, [id]);
+    // Queue in Outbox
+    await this.queueInOutbox(collectionName, id, 'DELETE', null, transactionGroupId);
 
-      // 2. Purge pending outbox operations for this record to prevent resurrection
-      await localDb.run(
-        `DELETE FROM outbox WHERE tableName = ? AND recordId = ? AND action != 'DELETE'`,
-        [collectionName, id]
-      ).catch(() => {});
-
-      // 3. Record tombstone in local deleted_records table
-      const tombstoneId = `del_${collectionName}_${id}`;
-      const now = new Date().toISOString();
-      let currentUserId: string | null = null;
-      try {
-        const userStr = sessionStorage.getItem('snd_user');
-        if (userStr) {
-          const u = JSON.parse(userStr);
-          currentUserId = u.id || u.username || null;
-        }
-      } catch (e) {}
-
-      await localDb.run(
-        `INSERT OR REPLACE INTO deleted_records (id, tableName, recordId, recordNumber, deletedAt, deletedBy) VALUES (?, ?, ?, ?, ?, ?)`,
-        [tombstoneId, collectionName, id, recordNumber ? String(recordNumber) : null, now, currentUserId]
-      ).catch(e => console.warn('LocalProvider: Failed to record deleted_records tombstone:', e));
-
-      // 4. Queue in Outbox: both DELETE on table and SET on deleted_records
-      await this.queueInOutbox(collectionName, id, 'DELETE', { recordNumber, deletedAt: now }, transactionGroupId);
-      await this.queueInOutbox('deleted_records', tombstoneId, 'SET', {
-        data: {
-          id: tombstoneId,
-          tableName: collectionName,
-          recordId: id,
-          recordNumber: recordNumber ? String(recordNumber) : null,
-          deletedAt: now,
-          deletedBy: currentUserId
-        }
-      }, transactionGroupId);
-    } else {
-      // BYPASS_OUTBOX or direct tombstone deletion
-      await localDb.run(`DELETE FROM ${collectionName} WHERE id = ?`, [id]);
-      if (transactionGroupId !== 'BYPASS_OUTBOX') {
-        await this.queueInOutbox(collectionName, id, 'DELETE', null, transactionGroupId);
-      }
-    }
-
-    const res = await localDb.query(`SELECT * FROM ${collectionName}`).catch(() => ({ values: [] }));
+    const res = await localDb.query(`SELECT * FROM ${collectionName}`);
     localDb.notify(collectionName, res.values || []);
   }
 

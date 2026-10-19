@@ -193,8 +193,7 @@ export class SyncEngine {
       'document_outputs',
       'job_titles',
       'user_devices',
-      'saved_pdfs',
-      'deleted_records'
+      'saved_pdfs'
     ];
 
     for (const table of tables) {
@@ -221,48 +220,9 @@ export class SyncEngine {
             const cloudItem = { ...(rawData || {}), id: docId };
             if (pendingIds.has(docId)) continue; // Skip pulling if there is a pending local write
 
-            if (table === 'deleted_records') {
-              if (type === 'removed') {
-                await LocalProviderInstance.deleteDoc('deleted_records', docId, 'BYPASS_OUTBOX');
-              } else {
-                const tombstone = cloudItem;
-                if (tombstone && tombstone.tableName && tombstone.recordId) {
-                  const localCheck = await localDb.query(
-                    `SELECT id FROM ${tombstone.tableName} WHERE id = ?`,
-                    [tombstone.recordId]
-                  ).catch(() => ({ values: [] }));
-
-                  if (localCheck.values && localCheck.values.length > 0) {
-                    const pendingOutbox = await localDb.query(
-                      "SELECT * FROM outbox WHERE tableName = ? AND recordId = ? AND status IN ('PENDING', 'FAILED')",
-                      [tombstone.tableName, tombstone.recordId]
-                    ).catch(() => ({ values: [] }));
-
-                    let shouldDelete = true;
-                    if (pendingOutbox.values && pendingOutbox.values.length > 0) {
-                      const tombstoneTime = new Date(tombstone.deletedAt || 0).getTime();
-                      const outboxTime = new Date(pendingOutbox.values[0].timestamp || 0).getTime();
-                      if (outboxTime > tombstoneTime && pendingOutbox.values[0].action === 'SET') {
-                        shouldDelete = false;
-                      }
-                    }
-
-                    if (shouldDelete) {
-                      console.log(`SyncEngine [Tombstone]: Deleting local ${tombstone.tableName}/${tombstone.recordId} from remote tombstone.`);
-                      await LocalProviderInstance.deleteDoc(tombstone.tableName, tombstone.recordId, 'BYPASS_OUTBOX');
-                      await localDb.run("DELETE FROM outbox WHERE tableName = ? AND recordId = ?", [tombstone.tableName, tombstone.recordId]).catch(() => {});
-                    }
-                  }
-                  await LocalProviderInstance.setDoc('deleted_records', tombstone.id, tombstone, undefined, 'BYPASS_OUTBOX').catch(() => {});
-                }
-              }
-              continue;
-            }
-
             if (type === 'removed') {
               console.log(`SyncEngine [Realtime]: Deleting ${table}/${docId} locally due to cloud removal.`);
-              await LocalProviderInstance.deleteDoc(table, docId, 'BYPASS_OUTBOX');
-              await localDb.run("DELETE FROM outbox WHERE tableName = ? AND recordId = ?", [table, docId]).catch(() => {});
+              await LocalProviderInstance.deleteDoc(table, docId);
               continue;
             }
 
@@ -530,50 +490,6 @@ export class SyncEngine {
 
       // 2. Fetch updates from cloud (Cloud -> Local) - Only if forced, as real-time listener handles it
       if (force) {
-        // 2.a Process deleted_records tombstones from Cloud -> Local
-        try {
-          const deletedSnap = await FirebaseProviderInstance.getDocs('deleted_records');
-          for (const delDoc of deletedSnap.docs) {
-            const tombstone = delDoc.data ? (typeof delDoc.data === 'function' ? delDoc.data() : delDoc.data) : delDoc;
-            if (!tombstone || !tombstone.tableName || !tombstone.recordId) continue;
-
-            const localCheck = await localDb.query(
-              `SELECT id FROM ${tombstone.tableName} WHERE id = ?`,
-              [tombstone.recordId]
-            ).catch(() => ({ values: [] }));
-
-            if (localCheck.values && localCheck.values.length > 0) {
-              const pendingOutbox = await localDb.query(
-                "SELECT * FROM outbox WHERE tableName = ? AND recordId = ? AND status IN ('PENDING', 'FAILED')",
-                [tombstone.tableName, tombstone.recordId]
-              ).catch(() => ({ values: [] }));
-
-              let shouldDelete = true;
-              if (pendingOutbox.values && pendingOutbox.values.length > 0) {
-                const tombstoneTime = new Date(tombstone.deletedAt || 0).getTime();
-                const outboxTime = new Date(pendingOutbox.values[0].timestamp || 0).getTime();
-                if (outboxTime > tombstoneTime && pendingOutbox.values[0].action === 'SET') {
-                  shouldDelete = false;
-                }
-              }
-
-              if (shouldDelete) {
-                console.log(`SyncEngine [Pull]: Removing local record ${tombstone.tableName}/${tombstone.recordId} matched with remote tombstone`);
-                await LocalProviderInstance.deleteDoc(tombstone.tableName, tombstone.recordId, 'BYPASS_OUTBOX');
-                await localDb.run("DELETE FROM outbox WHERE tableName = ? AND recordId = ?", [tombstone.tableName, tombstone.recordId]).catch(() => {});
-                syncedCount++;
-              }
-            }
-            await LocalProviderInstance.setDoc('deleted_records', tombstone.id, tombstone, undefined, 'BYPASS_OUTBOX').catch(() => {});
-          }
-        } catch (e: any) {
-          if (isUnavailableError(e)) {
-            console.log('SyncEngine: Cloud Firestore is unreachable (offline mode). Skipping remote pull.');
-            return { success: true, message: 'الخادم السحابي غير متاح حالياً (وضع عدم الاتصال).', syncedCount: 0 };
-          }
-          console.warn('SyncEngine: Could not fetch deleted_records from cloud:', e);
-        }
-
         const tables = [
           'company_details',
           'customers',
@@ -701,36 +617,6 @@ export class SyncEngine {
               } catch (docErr) {
                 console.error(`SyncEngine: Failed down-syncing ${table}/${cloudItem.id}:`, docErr);
               }
-            }
-          }
-
-          // Safe differential reconciliation for authoritative tables:
-          // Removes local records that were hard-deleted from cloud while this client was offline,
-          // while strictly protecting uncommitted offline local creations in the outbox.
-          const authoritativeTables = ['customers', 'invoices', 'invoice_items', 'vault_transactions', 'maintenance_actions'];
-          if (authoritativeTables.includes(table) && cloudItems.length > 0) {
-            const cloudIdSet = new Set(cloudItems.map(c => c.id));
-            for (const localItem of localItems) {
-              if (!localItem || !localItem.id) continue;
-              if (cloudIdSet.has(localItem.id)) continue;
-
-              // Safeguard 1: Do NOT delete if pending in outbox (created/modified locally offline)
-              if (pendingIds.has(localItem.id)) continue;
-
-              const hasPending = await localDb.query(
-                "SELECT count(*) as count FROM outbox WHERE tableName = ? AND recordId = ? AND status IN ('PENDING', 'FAILED')",
-                [table, localItem.id]
-              ).catch(() => ({ values: [] }));
-              if (hasPending.values && hasPending.values[0]?.count > 0) continue;
-
-              // Safeguard 2: Grace period for items created within the last 5 minutes
-              const itemTime = getItemTimestamp(localItem);
-              if (itemTime > 0 && (Date.now() - itemTime) < 5 * 60 * 1000) continue;
-
-              // Local record was removed from cloud: Delete locally with BYPASS_OUTBOX
-              console.log(`SyncEngine [Differential]: Purging deleted record ${table}/${localItem.id} locally`);
-              await LocalProviderInstance.deleteDoc(table, localItem.id, 'BYPASS_OUTBOX');
-              syncedCount++;
             }
           }
         }
