@@ -98,6 +98,9 @@ export function isItemBillable(item: any): boolean {
  */
 export function getItemBillableCost(item: any): number {
   if (!item) return 0;
+  if (item.isWarrantyReturn === true || item.isWarrantyReturn === 1 || item.isWarrantyReturn === '1') {
+    return 0;
+  }
   if (isItemRefusedOrFailed(item)) {
     return 0;
   }

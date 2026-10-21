@@ -608,8 +608,9 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
       }
       
       // 2. Otherwise apply date filter to invoice creation time
-      if (!inv.createdAt) return false;
-      const createdAtDate = parseFirestoreDate(inv.createdAt);
+      const dateVal = inv.createdAt || inv.date || inv.entryDate;
+      if (!dateVal) return false;
+      const createdAtDate = parseFirestoreDate(dateVal);
       if (!createdAtDate) return false;
       
       const now = new Date();
@@ -639,7 +640,14 @@ export default function DeviceManagement({ user, onBack, shopConfig }: { user: U
         return true; // if dates are empty in custom view, show all
       }
       return true;
-    }).sort((a, b) => Number(b.invoiceNumber || 0) - Number(a.invoiceNumber || 0));
+    }).sort((a, b) => {
+      const timeA = parseFirestoreDate(a.createdAt || a.date || a.entryDate)?.getTime() || 0;
+      const timeB = parseFirestoreDate(b.createdAt || b.date || b.entryDate)?.getTime() || 0;
+      if (timeB !== timeA) {
+        return timeB - timeA;
+      }
+      return Number(b.invoiceNumber || 0) - Number(a.invoiceNumber || 0);
+    });
   };
 
   const handleAdminSaveDevice = async () => {

@@ -781,6 +781,7 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                         <td className="py-3 px-3 border-l border-black text-xs">{index + 1}</td>
                         <td className="py-3 px-3 border-l border-black text-right text-sm font-black whitespace-nowrap">
                           {dbItem?.deviceType || '-'} - {dbItem?.deviceName || '-'}
+                          {(dbItem?.isWarrantyReturn === true || dbItem?.isWarrantyReturn === 1 || dbItem?.isWarrantyReturn === '1' || dbItem?.isWarrantyReturn === 'true') && <span className="mr-1.5 px-1.5 py-0.5 rounded text-[10px] bg-amber-100 text-amber-800 border border-amber-300">مرتجع ضمان</span>}
                         </td>
                         <td className="py-3 px-3 border-l border-black text-right text-xs text-gray-700 min-w-[120px]">{dbItem?.customerProblem || '-'}</td>
                         <td className="py-3 px-3 border-l border-black text-right text-xs text-gray-700 min-w-[120px]">
@@ -1135,7 +1136,10 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                             {it?.deviceType || '-'}
                           </td>
                           <td className="py-2 px-3 whitespace-nowrap text-[11px]">
-                            {it?.deviceName || '-'}
+                            <div className="flex items-center gap-1.5">
+                              <span>{it?.deviceName || '-'}</span>
+                              {(it?.isWarrantyReturn === true || it?.isWarrantyReturn === 1 || it?.isWarrantyReturn === '1' || it?.isWarrantyReturn === 'true') && <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">مرتجع ضمان</span>}
+                            </div>
                           </td>
                           <td className="py-2 px-3 font-mono font-bold text-[11px] whitespace-nowrap">{row.count}</td>
                           <td className="py-2 px-3 whitespace-nowrap text-[11px]">

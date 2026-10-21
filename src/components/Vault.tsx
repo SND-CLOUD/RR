@@ -1386,7 +1386,8 @@ export default function Vault({
       
       const statementKeyword = isReceipt ? 'لكم' : 'عليكم';
       const currencyNameText = currencies.find(c => c.name === liabilityCurrency)?.name || liabilityCurrency || '';
-      customerStatementNote = `${voucherNotes.trim()} ${statementKeyword} مبلغ ${tafqeet(computedLiabilityAmount)} ${currencyNameText} مقابل ${selectedCategory}`;
+      const baseStatement = `${statementKeyword} مبلغ ${tafqeet(computedLiabilityAmount)} ${currencyNameText} مقابل ${selectedCategory}`.trim();
+      customerStatementNote = voucherNotes.trim() ? `${baseStatement} - ${voucherNotes.trim()}` : baseStatement;
 
       const finalLiabilityCurrency = liabilityCurrency || selectedCurrency;
       const finalLiabilityAmount = computedLiabilityAmount;
@@ -3196,9 +3197,9 @@ export default function Vault({
                              </button>
                            </div>
 
-                           {/* Combobox Dropdown */}
+                           {/* Combobox Dropdown (يفتح للأعلى لتفادي تغطية لوحة المفاتيح) */}
                            {showCustomerDropdown && (
-                              <div className="absolute top-full right-0 w-full mt-1 bg-[#1a1a1a] border border-white/10 rounded-xl overflow-hidden z-30 shadow-2xl max-h-40 overflow-y-auto">
+                              <div className="absolute bottom-full right-0 w-full mb-1 bg-[#1a1a1a] border border-white/10 rounded-xl overflow-hidden z-40 shadow-2xl max-h-48 overflow-y-auto">
                                 {customers
                                   .filter(c => 
                                     !customerSearch || 

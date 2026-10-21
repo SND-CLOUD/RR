@@ -1742,9 +1742,10 @@ export default function PrintPreviewOverlay({
                             const qty = Number(it.quantity || 1);
                             const statusLabel = getItemStatusLabel(it);
                             const isReady = statusLabel === 'جاهز';
-                            const originalUnitCost = qty > 0 ? Number(it.cost || 0) / qty : Number(it.cost || 0);
-                            const unitCost = isReady ? originalUnitCost : 0;
-                            const totalCost = isReady ? Number(it.cost || 0) : 0;
+                            const isWarranty = it.isWarrantyReturn === true || it.isWarrantyReturn === 1 || it.isWarrantyReturn === '1' || it.isWarrantyReturn === 'true';
+                            const originalUnitCost = isWarranty ? 0 : (qty > 0 ? Number(it.cost || 0) / qty : Number(it.cost || 0));
+                            const unitCost = (isReady && !isWarranty) ? originalUnitCost : 0;
+                            const totalCost = (isReady && !isWarranty) ? Number(it.cost || 0) : 0;
 
                             let statusColor = 'text-amber-700';
                             if (statusLabel === 'جاهز') statusColor = 'text-emerald-700';
@@ -1759,6 +1760,7 @@ export default function PrintPreviewOverlay({
                                 <td className="py-1 px-2 border-l border-black text-right whitespace-nowrap overflow-hidden text-ellipsis truncate">
                                   <div className="truncate max-w-[180px]" dir="rtl" title={`${it.deviceType} ${it.deviceName ? `- ${it.deviceName}` : ''}`}>
                                     {it.deviceType} <span className="text-gray-500 text-[10px] font-normal">- {it.deviceName}</span>
+                                    {isWarranty && <span className="mr-1 text-[9px] font-black text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">(مرتجع ضمان)</span>}
                                   </div>
                                 </td>
                                 <td className={`py-1 px-2 border-l border-black text-center font-bold ${statusColor}`}>
@@ -2023,6 +2025,7 @@ export default function PrintPreviewOverlay({
                               <td className="py-1 px-2 border-l border-black text-right">
                                 <div className="truncate max-w-[170px] whitespace-nowrap overflow-hidden text-ellipsis" dir="rtl">
                                   {it.deviceType} <span className="text-gray-500 text-[10px] font-normal">- {it.deviceName}</span>
+                                  {(it.isWarrantyReturn === true || it.isWarrantyReturn === 1 || it.isWarrantyReturn === '1' || it.isWarrantyReturn === 'true') && <span className="mr-1 text-[9px] font-black text-amber-700 bg-amber-50 px-1 py-0.5 rounded border border-amber-200">(مرتجع ضمان)</span>}
                                 </div>
                               </td>
                               <td className="py-1 px-2 border-l border-black text-right">

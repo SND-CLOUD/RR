@@ -96,8 +96,9 @@ export function resolveVoucherDynamicStatement(
 
   // Extract user-entered custom notes if separated by hyphen/dash (e.g. "سداد في الفاتورة رقم 130 - دفعة أولى")
   let customExtraNote = '';
-  if (rawNotes) {
-    const cleanedNote = rawNotes.replace(/\[سعر الصرف:[^\]]+\]/g, '').trim();
+  const candidateNotes = rawNotes || rawDetails || '';
+  if (candidateNotes) {
+    const cleanedNote = candidateNotes.replace(/\[سعر الصرف:[^\]]+\]/g, '').trim();
     // Strip standard header with any invoice number pattern
     const strippedHeader = cleanedNote.replace(INVOICE_HEADER_CLEANUP_REGEX, '').trim();
     if (strippedHeader && strippedHeader !== 'لا يوجد' && strippedHeader !== 'null' && strippedHeader !== 'undefined') {
@@ -128,26 +129,32 @@ export function resolveVoucherDynamicStatement(
 
   // 2. If an explicit manual statementNote is provided (not invoice-based)
   if (rawStatementNote && rawStatementNote !== 'null' && rawStatementNote !== 'undefined') {
+    // If the saved statementNote has user notes placed before (لكم / عليكم مبلغ ...)
+    // Re-order it so user notes are cleanly at the end
+    const match = rawStatementNote.match(/^(.*?)\s*(لكم|عليكم)\s+(مبلغ\s+.*)$/);
+    if (match && match[1].trim()) {
+      const userText = match[1].trim();
+      const keyword = match[2];
+      const rest = match[3].trim();
+      return `${keyword} ${rest} - ${userText}`;
+    }
     return rawStatementNote;
   }
 
-  // 3. If explicit details are provided
-  if (rawDetails && rawDetails !== 'null' && rawDetails !== 'undefined') {
-    return rawDetails;
-  }
-
-  // 4. If notes are provided
-  if (rawNotes && rawNotes !== 'null' && rawNotes !== 'undefined') {
-    return rawNotes;
-  }
-
-  // 5. Default fallback based on category or type
+  // 3. Fallback based on category or type with user notes placed at the end
   const cat = voucher.category || voucher.transactionCategory;
-  if (cat && cat !== 'عام') {
-    return `${voucher.type === 'payment' ? 'سند صرف' : 'سند قبض'} - ${cat}`;
+  const baseType = voucher.type === 'payment' ? 'سند صرف' : 'سند قبض';
+  const baseLabel = (cat && cat !== 'عام') ? `${baseType} - ${cat}` : `${baseType} مالي`;
+
+  const userNote = (rawNotes || rawDetails || '').trim();
+  if (userNote && userNote !== 'لا يوجد' && userNote !== 'لا توجد تفاصيل.' && userNote !== 'null' && userNote !== 'undefined') {
+    if (!userNote.startsWith(baseType) && !userNote.startsWith('سداد') && !userNote.startsWith('لكم') && !userNote.startsWith('عليكم')) {
+      return `${baseLabel} - ${userNote}`;
+    }
+    return userNote;
   }
 
-  return voucher.type === 'payment' ? 'سند صرف مالي' : 'سند قبض مالي';
+  return baseLabel;
 }
 
 /**

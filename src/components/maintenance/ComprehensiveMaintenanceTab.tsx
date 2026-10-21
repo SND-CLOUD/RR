@@ -369,7 +369,7 @@ export default function ComprehensiveMaintenanceTab() {
                 : [totalPaid, nowIso, invId];
               await localDb.run(sql, params);
               await LocalProviderInstance.updateDoc('invoices', invId, upd);
-              await FirebaseProviderInstance.updateDoc('invoices', invId, upd);
+              await updateDoc(doc(db, 'invoices', invId), upd);
             } catch (e) {}
           }
         }

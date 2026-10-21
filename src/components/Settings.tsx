@@ -1327,7 +1327,8 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
             'inventory_items', 'document_outputs', 'saved_pdfs', 'parts_catalog',
             'shop_parts_inventory', 'disassembly_batches', 'fin_transaction_types',
             'fin_funds', 'fin_currencies', 'fin_payment_methods', 'user_devices',
-            'job_titles', 'device_categories', 'device_models', 'engineers'
+            'job_titles', 'device_categories', 'device_models', 'engineers',
+            'deleted_records'
           ];
           
           let colIdx = 0;
@@ -1391,7 +1392,8 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
           'inventory_items', 'document_outputs', 'saved_pdfs', 'parts_catalog',
           'shop_parts_inventory', 'disassembly_batches', 'fin_transaction_types',
           'fin_funds', 'fin_currencies', 'fin_payment_methods', 'user_devices',
-          'job_titles', 'device_categories', 'device_models', 'engineers'
+          'job_titles', 'device_categories', 'device_models', 'engineers',
+          'deleted_records'
         ];
         
         let tableIdx = 0;

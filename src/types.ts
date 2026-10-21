@@ -107,6 +107,8 @@ export interface InvoiceItem {
   updatedBy?: string; 
   customerName?: string;
   customerId?: string;
+  isWarrantyReturn?: boolean | number;
+  previousInvoiceNumber?: string;
 }
 
 export interface Currency {
