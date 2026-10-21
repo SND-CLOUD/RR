@@ -79,7 +79,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
     if (catId === 'general' || catId === 'security') return true;
     if (catId === 'accounting-inputs') return hasPermission('settings_main_data', 'view');
     if (catId === 'categories-engineers') return hasPermission('settings_devices_engineers', 'view');
-    
+    if (catId === 'advanced-management') return user.role === 'admin' || user.isPrimary || hasPermission('settings_advanced_management', 'view');
     if (catId === 'users') return true;
     return true;
   };

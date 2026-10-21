@@ -127,6 +127,7 @@ export interface DeviceType {
 export interface AppPermissions {
   inventory: { view: boolean; add: boolean; edit: boolean; delete: boolean; print: boolean; advancedView?: boolean };
   vault: { view: boolean; add: boolean; edit: boolean; delete: boolean; print: boolean; advancedView?: boolean };
+  vouchers?: { view: boolean; add: boolean; edit: boolean; delete: boolean; print: boolean; advancedView?: boolean };
   customers: { view: boolean; add: boolean; edit: boolean; delete: boolean; print: boolean; advancedView?: boolean };
   invoices: { view: boolean; add: boolean; edit: boolean; delete: boolean; print: boolean; advancedView?: boolean };
   reports: { view: boolean; print: boolean; advancedView?: boolean };
@@ -137,6 +138,7 @@ export interface AppPermissions {
   settings_devices_engineers: { view: boolean; add: boolean; edit: boolean; delete: boolean; print: boolean; advancedView?: boolean };
   settings_device_management: { view: boolean; add: boolean; edit: boolean; delete: boolean; print: boolean; advancedView?: boolean };
   settings_users: { view: boolean; add: boolean; edit: boolean; delete: boolean; print: boolean; advancedView?: boolean };
+  settings_advanced_management?: { view: boolean };
   settings_hybrid_db?: { view: boolean; edit: boolean; advancedView?: boolean };
 }
 

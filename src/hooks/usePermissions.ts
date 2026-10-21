@@ -2,13 +2,13 @@ import { User, AppPermissions } from '../types';
 
 export function usePermissions(currentUser: User | null, section?: keyof AppPermissions) {
   const hasPermission = (
-    targetSectionOrAction: keyof AppPermissions | 'view' | 'add' | 'edit' | 'delete' | 'print', 
-    maybeAction?: 'view' | 'add' | 'edit' | 'delete' | 'print'
+    targetSectionOrAction: keyof AppPermissions | 'view' | 'add' | 'edit' | 'delete' | 'print' | 'advancedView', 
+    maybeAction?: 'view' | 'add' | 'edit' | 'delete' | 'print' | 'advancedView'
   ): boolean => {
     if (!currentUser) return false;
 
     let targetSection: keyof AppPermissions | undefined = section;
-    let action: 'view' | 'add' | 'edit' | 'delete' | 'print';
+    let action: 'view' | 'add' | 'edit' | 'delete' | 'print' | 'advancedView';
 
     if (maybeAction) {
       targetSection = targetSectionOrAction as keyof AppPermissions;
@@ -31,11 +31,17 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
     }
 
     // Admins have all permissions by default
-    if (currentUser.role === 'admin') return true;
+    if (currentUser.role === 'admin' || currentUser.isPrimary) return true;
 
     // Managers have permissions by default unless restricted
     if (currentUser.role === 'manager') {
-      if (targetSection === 'settings_hybrid_db' || targetSection === 'reports_comprehensive' || targetSection === 'reports_financial') {
+      if (
+        targetSection === 'settings_hybrid_db' || 
+        targetSection === 'settings_advanced_management' ||
+        targetSection === 'reports_comprehensive' || 
+        targetSection === 'reports_financial' ||
+        (targetSection === 'vault' && action === 'advancedView' && currentUser.permissions?.vault?.advancedView !== undefined)
+      ) {
         return !!currentUser.permissions?.[targetSection]?.[action];
       }
       return true;
@@ -44,10 +50,11 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
     // If no permissions object exists, default based on role
     if (!currentUser.permissions) {
       if (currentUser.role === 'data_entry') {
-        if (action === 'delete' || action === 'edit') return false;
+        if (action === 'delete' || action === 'edit' || action === 'advancedView') return false;
         if (
           targetSection === 'settings' || 
           targetSection === 'settings_users' || 
+          targetSection === 'settings_advanced_management' ||
           targetSection === 'reports' ||
           (typeof targetSection === 'string' && targetSection.startsWith('settings_'))
         ) return false;
@@ -58,6 +65,9 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
     
     const sectionPerms = currentUser.permissions[targetSection] as any;
     if (!sectionPerms) {
+      if (targetSection === 'settings_advanced_management' || targetSection === 'settings_hybrid_db') {
+        return false;
+      }
       if (typeof targetSection === 'string' && targetSection.startsWith('settings_')) {
         return !!currentUser.permissions.settings?.view;
       }
@@ -73,6 +83,7 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
     canEdit: hasPermission(section, 'edit'),
     canDelete: hasPermission(section, 'delete'),
     canPrint: hasPermission(section, 'print'),
+    canAdvanced: hasPermission(section, 'advancedView'),
   } : {};
 
   return { hasPermission, ...helpers } as any;

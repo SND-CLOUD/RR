@@ -65,7 +65,8 @@ import {
   RefreshCw,
   CloudDownload,
   Download,
-  Share2
+  Share2,
+  Lock
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
@@ -292,7 +293,9 @@ export default function Vault({
   onClearInitialProps?: () => void;
 }) {
   const { t, i18n } = useTranslation();
-  const { hasPermission, canAdd, canEdit, canDelete, canPrint } = usePermissions(user, 'vault');
+  const { hasPermission, canAdd, canEdit, canDelete, canPrint, canAdvanced } = usePermissions(user, 'vault');
+  const canUseAdvanced = canAdvanced || user.isPrimary || user.role === 'admin';
+  const [isAdvancedMode, setIsAdvancedMode] = useState<boolean>(false);
 
   if (!hasPermission('view')) {
     return (
@@ -314,6 +317,13 @@ export default function Vault({
   }
   // Navigation
   const [activeSegment, setActiveSegment] = useState<'dashboard' | 'receipt' | 'payment' | 'discounts' | 'transfer' | 'funds' | 'customer-ledger' | 'reports'>(initialSegment || 'dashboard');
+
+  // Guard advanced segments: if user lacks advanced permission, redirect to dashboard
+  useEffect(() => {
+    if (!canUseAdvanced && ['transfer', 'funds', 'customer-ledger', 'reports'].includes(activeSegment)) {
+      setActiveSegment('dashboard');
+    }
+  }, [activeSegment, canUseAdvanced]);
   const [reportSubSegment, setReportSubSegment] = useState<'revenues' | 'expenses' | 'profits' | 'fund-balances' | 'outstanding-debts'>('revenues');
   const [showAddModal, setShowAddModal] = useState(initialShowAddModal || false);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
@@ -2544,14 +2554,50 @@ export default function Vault({
           {activeSegment === 'dashboard' && (
             <div className="w-full bg-[#101010] border border-white/5 rounded-[2rem] p-6 sm:p-8 my-auto shadow-2xl">
               <div>
-                <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest mb-4 font-cairo text-right pr-1">{t('vault.treeTitle', 'شجرة النظام المالي')}</h3>
-                
+                <div className="flex items-center justify-between mb-4 flex-wrap gap-2 pb-2 border-b border-white/5" dir="rtl">
+                  <h3 className="text-[11px] font-bold text-gray-400 uppercase tracking-widest font-cairo text-right pr-1 m-0">
+                    {t('vault.treeTitle', 'شجرة النظام المالي')}
+                  </h3>
 
+                  {/* Advanced Mode Checkbox */}
+                  <label 
+                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all select-none font-cairo text-xs font-bold ${
+                      !canUseAdvanced 
+                        ? 'opacity-50 cursor-not-allowed bg-white/5 border-white/5 text-gray-400' 
+                        : isAdvancedMode 
+                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-400 cursor-pointer shadow-sm' 
+                          : 'bg-white/5 hover:bg-white/10 border-white/10 text-gray-300 cursor-pointer'
+                    }`}
+                    title={!canUseAdvanced ? 'يتطلب صلاحية (متقدم) في جدول صلاحيات الخزينة' : 'تفعيل / إخفاء العناصر المتقدمة في شجرة الحسابات'}
+                    onClick={(e) => {
+                      if (!canUseAdvanced) {
+                        e.preventDefault();
+                        setErrorMsg('عفواً، لا تملك صلاحية (متقدم) في الخزينة لإظهار بقية عناصر شجرة الحسابات.');
+                      }
+                    }}
+                  >
+                    <input 
+                      type="checkbox"
+                      checked={isAdvancedMode}
+                      disabled={!canUseAdvanced}
+                      onChange={(e) => {
+                        if (canUseAdvanced) {
+                          setIsAdvancedMode(e.target.checked);
+                        }
+                      }}
+                      className="w-4 h-4 rounded border-gray-600 text-amber-500 focus:ring-amber-500 focus:ring-offset-0 bg-[#1c1c1c] accent-amber-500 cursor-pointer disabled:cursor-not-allowed"
+                    />
+                    <span>وضع متقدم</span>
+                    {!canUseAdvanced && (
+                      <Lock size={12} className="text-amber-500/70 mr-0.5" />
+                    )}
+                  </label>
+                </div>
 
                 <div className="space-y-3">
                    <div className="px-1 text-[11px] font-bold text-[#e5e7eb]/40 uppercase tracking-wider font-cairo text-right mb-2">{t('vault.transferSection', 'سندات التحويل المالي')}</div>
                    
-                   {/* Receipt Row */}
+                   {/* 1. Receipt Row - ALWAYS VISIBLE */}
                    <button 
                      onClick={() => { setActiveSegment('receipt'); setGlobalSearch(''); }}
                      className="w-full flex items-center justify-between p-3.5 px-5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-2xl shadow-lg shadow-emerald-950/20 transition-all active:scale-[0.98] group"
@@ -2563,7 +2609,7 @@ export default function Vault({
                      <span className="px-2.5 py-1 rounded-lg bg-[#000000]/20 text-[9px] font-bold text-white font-cairo">{t('vault.incoming', 'وارد')}</span>
                    </button>
 
-                   {/* Payment Row */}
+                   {/* 2. Payment Row - ALWAYS VISIBLE */}
                    <button 
                      onClick={() => { setActiveSegment('payment'); setGlobalSearch(''); }}
                      className="w-full flex items-center justify-between p-3.5 px-5 bg-[#181818] hover:bg-[#202020] border border-white/5 rounded-2xl transition-all active:scale-[0.98] group"
@@ -2575,7 +2621,7 @@ export default function Vault({
                      <span className="px-2.5 py-1 rounded-lg bg-white/5 text-[9px] font-bold text-gray-500 font-cairo">{t('vault.outgoing', 'صادر')}</span>
                    </button>
 
-                   {/* Discounts Row */}
+                   {/* 3. Discounts Row - ALWAYS VISIBLE */}
                    <button 
                      onClick={() => { setActiveSegment('discounts'); setGlobalSearch(''); }}
                      className="w-full flex items-center justify-between p-3.5 px-5 bg-[#181818] hover:bg-[#202020] border border-white/5 rounded-2xl transition-all active:scale-[0.98] group cursor-pointer"
@@ -2589,64 +2635,71 @@ export default function Vault({
                      </span>
                    </button>
 
-                   {/* Transfer Row */}
-                   <button 
-                     onClick={() => { setActiveSegment('transfer'); setGlobalSearch(''); }}
-                     className="w-full flex items-center justify-between p-3.5 px-5 bg-[#181818] hover:bg-[#202020] border border-white/5 rounded-2xl transition-all active:scale-[0.98] group"
-                   >
-                     <div className="flex items-center gap-3">
-                        <ArrowRightLeft size={18} className="text-blue-400" />
-                        <span className="text-xs font-bold text-gray-300 font-cairo leading-none">التحويل بين الصناديق</span>
+                   {/* Advanced Mode Items */}
+                   {isAdvancedMode && (
+                     <>
+                       {/* Transfer Row */}
+                       <button 
+                         onClick={() => { setActiveSegment('transfer'); setGlobalSearch(''); }}
+                         className="w-full flex items-center justify-between p-3.5 px-5 bg-[#181818] hover:bg-[#202020] border border-white/5 rounded-2xl transition-all active:scale-[0.98] group"
+                       >
+                         <div className="flex items-center gap-3">
+                            <ArrowRightLeft size={18} className="text-blue-400" />
+                            <span className="text-xs font-bold text-gray-300 font-cairo leading-none">التحويل بين الصناديق</span>
+                         </div>
+                         <span className="px-2.5 py-1 rounded-lg bg-white/5 text-[9px] font-bold text-gray-500 font-cairo">داخلي</span>
+                       </button>
+
+                       <div className="pt-1 space-y-1">
+                         <button 
+                           onClick={() => setActiveSegment('funds')}
+                           className="w-full flex items-center justify-between p-3 px-5 bg-transparent hover:bg-white/5 rounded-xl transition-all"
+                         >
+                           <div className="flex items-center gap-3">
+                              <Wallet size={18} className="text-blue-500" />
+                              <span className="text-xs font-bold text-gray-300 font-cairo leading-none">{t('vault.fundBalances', 'رصيد وحركات الصناديق المال')}</span>
+                           </div>
+                         </button>
+
+                         <button 
+                           onClick={() => setActiveSegment('customer-ledger')}
+                           className="w-full flex items-center justify-between p-3 px-5 bg-transparent hover:bg-white/5 rounded-xl transition-all"
+                         >
+                           <div className="flex items-center gap-3">
+                              <Users size={18} className="text-purple-500" />
+                              <span className="text-xs font-bold text-gray-300 font-cairo leading-none">{t('vault.customersLedger', 'كشف حساب العملاء')}</span>
+                           </div>
+                         </button>
+                       </div>
+                     </>
+                   )}
+                </div>
+
+                {/* Reports Section - ONLY IN ADVANCED MODE */}
+                {isAdvancedMode && (
+                  <div className="mt-8 pt-6 border-t border-white/5 space-y-4">
+                     <div className="px-1 text-[11px] font-bold text-[#e5e7eb]/40 uppercase tracking-wider font-cairo text-right mb-2">{t('vault.reportsSection', 'التقارير والمؤشرات المالية')}</div>
+                     
+                     <div className="space-y-0.5">
+                        {[
+                          { name: t('vault.reportRevenues', 'الإيرادات والمداخيل'), key: 'revenues' },
+                          { name: t('vault.reportExpenses', 'المصروفات والمدفوعات'), key: 'expenses' },
+                          { name: t('vault.reportProfits', 'الأرباح والصافي'), key: 'profits' },
+                          { name: t('vault.reportFundBalances', 'أرصدة كتل الصناديق'), key: 'fund-balances' },
+                          { name: t('vault.reportOutstandingDebts', 'مديونيات وحقوق معلقة'), key: 'outstanding-debts' }
+                        ].map((report, idx) => (
+                          <div 
+                            key={idx} 
+                            onClick={() => { setActiveSegment('reports'); setReportSubSegment(report.key); setErrorMsg(null); }}
+                            className="flex items-center justify-between p-2.5 px-4 text-gray-400 hover:text-white hover:bg-white/5 rounded-xl transition-all cursor-pointer group text-right"
+                          >
+                            <span className="text-xs font-bold font-cairo">{report.name}</span>
+                            <div className="w-1.5 h-1.5 bg-gray-700 rounded-sm group-hover:bg-amber-500 transition-all ml-1" />
+                          </div>
+                        ))}
                      </div>
-                     <span className="px-2.5 py-1 rounded-lg bg-white/5 text-[9px] font-bold text-gray-500 font-cairo">داخلي</span>
-                   </button>
-
-                   <div className="pt-1 space-y-1">
-                     <button 
-                       onClick={() => setActiveSegment('funds')}
-                       className="w-full flex items-center justify-between p-3 px-5 bg-transparent hover:bg-white/5 rounded-xl transition-all"
-                     >
-                       <div className="flex items-center gap-3">
-                          <Wallet size={18} className="text-blue-500" />
-                          <span className="text-xs font-bold text-gray-300 font-cairo leading-none">{t('vault.fundBalances', 'رصيد وحركات الصناديق المال')}</span>
-                       </div>
-                     </button>
-
-                     <button 
-                       onClick={() => setActiveSegment('customer-ledger')}
-                       className="w-full flex items-center justify-between p-3 px-5 bg-transparent hover:bg-white/5 rounded-xl transition-all"
-                     >
-                       <div className="flex items-center gap-3">
-                          <Users size={18} className="text-purple-500" />
-                          <span className="text-xs font-bold text-gray-300 font-cairo leading-none">{t('vault.customersLedger', 'كشف حساب العملاء')}</span>
-                       </div>
-                     </button>
-                   </div>
-                </div>
-
-                {/* Reports Section */}
-                <div className="mt-8 pt-6 border-t border-white/5 space-y-4">
-                   <div className="px-1 text-[11px] font-bold text-[#e5e7eb]/40 uppercase tracking-wider font-cairo text-right mb-2">{t('vault.reportsSection', 'التقارير والمؤشرات المالية')}</div>
-                   
-                   <div className="space-y-0.5">
-                      {[
-                        { name: t('vault.reportRevenues', 'الإيرادات والمداخيل'), key: 'revenues' },
-                        { name: t('vault.reportExpenses', 'المصروفات والمدفوعات'), key: 'expenses' },
-                        { name: t('vault.reportProfits', 'الأرباح والصافي'), key: 'profits' },
-                        { name: t('vault.reportFundBalances', 'أرصدة كتل الصناديق'), key: 'fund-balances' },
-                        { name: t('vault.reportOutstandingDebts', 'مديونيات وحقوق معلقة'), key: 'outstanding-debts' }
-                      ].map((report, idx) => (
-                        <div 
-                          key={idx} 
-                          onClick={() => { setActiveSegment('reports'); setReportSubSegment(report.key); setErrorMsg(null); }}
-                          className="flex items-center justify-between p-2.5 px-4 text-gray-400 hover:text-white hover:bg-white/5 rounded-xl transition-all cursor-pointer group text-right"
-                        >
-                          <span className="text-xs font-bold font-cairo">{report.name}</span>
-                          <div className="w-1.5 h-1.5 bg-gray-700 rounded-sm group-hover:bg-amber-500 transition-all ml-1" />
-                        </div>
-                      ))}
-                   </div>
-                </div>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -2804,14 +2857,16 @@ export default function Vault({
                               </td>
                               <td className="px-4 py-3 text-center">
                                 <div className="flex items-center justify-center gap-1.5">
-                                  <button
-                                    onClick={() => setPreviewData({ type: 'voucher', data: { voucher: tx } })}
-                                    className="p-1.5 rounded-lg text-blue-400 hover:text-white hover:bg-blue-600/80 transition-all cursor-pointer bg-blue-500/10 border border-blue-500/20"
-                                    title="معاينة وطباعة السند"
-                                  >
-                                    <Printer size={13} />
-                                  </button>
-                                  {(user.role === 'admin' || user.role === 'manager' || canDelete || hasPermission('delete')) && (
+                                  {canPrint && (
+                                    <button
+                                      onClick={() => setPreviewData({ type: 'voucher', data: { voucher: tx } })}
+                                      className="p-1.5 rounded-lg text-blue-400 hover:text-white hover:bg-blue-600/80 transition-all cursor-pointer bg-blue-500/10 border border-blue-500/20"
+                                      title="معاينة وطباعة السند"
+                                    >
+                                      <Printer size={13} />
+                                    </button>
+                                  )}
+                                  {canDelete && (
                                     <button
                                       onClick={() => setTxToDelete(tx)}
                                       className="p-1.5 rounded-lg text-rose-400 hover:text-white hover:bg-rose-600/80 transition-all cursor-pointer bg-rose-500/10 border border-rose-500/20"
@@ -2819,6 +2874,9 @@ export default function Vault({
                                     >
                                       <Trash2 size={13} />
                                     </button>
+                                  )}
+                                  {!canPrint && !canDelete && (
+                                    <span className="text-gray-600 font-mono text-xs">-</span>
                                   )}
                                 </div>
                               </td>
@@ -3013,7 +3071,7 @@ export default function Vault({
                                   {inv.createdAt ? new Date(inv.createdAt).toLocaleDateString('ar-YE') : '-'}
                                 </td>
                                 <td className="px-4 py-3 text-center">
-                                  {(user.role === 'admin' || user.role === 'manager' || canDelete || hasPermission('delete')) && (
+                                  {canDelete ? (
                                     <button
                                       onClick={() => setDiscountToDelete(inv)}
                                       className="p-1.5 px-2.5 rounded-lg text-rose-400 hover:text-white hover:bg-rose-600 transition-all cursor-pointer bg-rose-500/10 border border-rose-500/20 flex items-center gap-1 mx-auto"
@@ -3022,6 +3080,8 @@ export default function Vault({
                                       <Trash2 size={13} />
                                       <span className="text-[10px] font-bold">حذف الخصم</span>
                                     </button>
+                                  ) : (
+                                    <span className="text-gray-600 font-mono text-xs">-</span>
                                   )}
                                 </td>
                               </tr>

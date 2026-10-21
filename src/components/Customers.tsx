@@ -312,6 +312,11 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
   };
 
   const performDeleteCustomer = async (targetCustomer?: Customer | null) => {
+    if (!canDelete) {
+      alert("عذراً، ليس لديك صلاحية حذف العملاء.");
+      setCustomerToDelete(null);
+      return;
+    }
     const cust = targetCustomer || selectedCustomer;
     if (!cust || !cust.id) return;
     
@@ -1225,15 +1230,17 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                   <div className="text-[10px] font-black tracking-wider text-orange-500 uppercase font-cairo">بيانات الاتصال والتفاصيل (قابلة للتعديل والتحرير)</div>
                   {!isEditingMode ? (
                     <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setCustomerToDelete(selectedCustomer)}
-                        className="px-2.5 py-1 bg-rose-600/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/25 rounded-md text-[10px] font-bold font-cairo transition-all flex items-center gap-1.5 cursor-pointer"
-                        title="حذف العميل وكافة بياناته"
-                      >
-                        <Trash2 size={10} />
-                        <span>حذف</span>
-                      </button>
+                      {canDelete && (
+                        <button
+                          type="button"
+                          onClick={() => setCustomerToDelete(selectedCustomer)}
+                          className="px-2.5 py-1 bg-rose-600/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/25 rounded-md text-[10px] font-bold font-cairo transition-all flex items-center gap-1.5 cursor-pointer"
+                          title="حذف العميل وكافة بياناته"
+                        >
+                          <Trash2 size={10} />
+                          <span>حذف</span>
+                        </button>
+                      )}
                       {canEdit && (
                         <button
                           type="button"
@@ -2043,15 +2050,17 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                     <div className="text-[10px] font-black tracking-wider text-orange-500 uppercase font-cairo">بيانات الاتصال والتفاصيل (قابلة للتعديل والتحرير)</div>
                     {!isEditingMode ? (
                       <div className="flex items-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setCustomerToDelete(selectedCustomer)}
-                          className="px-2.5 py-1 bg-rose-600/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/25 rounded-md text-[10px] font-bold font-cairo transition-all flex items-center gap-1.5 cursor-pointer"
-                          title="حذف العميل وكافة بياناته وفواتيره"
-                        >
-                          <Trash2 size={10} />
-                          <span>حذف</span>
-                        </button>
+                        {canDelete && (
+                          <button
+                            type="button"
+                            onClick={() => setCustomerToDelete(selectedCustomer)}
+                            className="px-2.5 py-1 bg-rose-600/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/25 rounded-md text-[10px] font-bold font-cairo transition-all flex items-center gap-1.5 cursor-pointer"
+                            title="حذف العميل وكافة بياناته وفواتيره"
+                          >
+                            <Trash2 size={10} />
+                            <span>حذف</span>
+                          </button>
+                        )}
                         {canEdit && (
                           <button
                             type="button"
@@ -2867,7 +2876,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
       )}
 
       {/* Delete Confirmation Modal */}
-      {customerToDelete && (
+      {customerToDelete && canDelete && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}

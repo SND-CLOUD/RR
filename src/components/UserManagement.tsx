@@ -40,6 +40,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
     settings_devices_engineers: { view: false, add: false, edit: false, delete: false, print: false, advancedView: false },
     settings_device_management: { view: false, add: false, edit: false, delete: false, print: false, advancedView: false },
     settings_users: { view: false, add: false, edit: false, delete: false, print: false, advancedView: false },
+    settings_advanced_management: { view: false },
     settings_hybrid_db: { view: false, edit: false, advancedView: false }
   };
 
@@ -117,6 +118,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
       'settings_devices_engineers',
       'settings_device_management',
       'settings_users',
+      'settings_advanced_management',
       'settings_hybrid_db'
     ];
     
@@ -172,6 +174,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
     settings_devices_engineers: { label: 'اعداد أجهزة ومهندسين', icon: Cpu },
     settings_device_management: { label: 'اعداد إدارة أجهزة', icon: Settings },
     settings_users: { label: 'اعداد مستخدمون', icon: Users },
+    settings_advanced_management: { label: 'إدارة متقدمة', icon: Database },
     settings_hybrid_db: { label: 'التحكم المتقدم بالوضع الهجين', icon: Database }
   };
 
@@ -183,7 +186,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
     edit: 'تعديل',
     delete: 'حذف',
     print: 'طباعة',
-    advancedView: 'عرض متقدم'
+    advancedView: 'متقدم'
   };
 
   const renderPermissionsTable = (isEditing: boolean = false, targetUser?: User | null) => {
@@ -200,6 +203,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
       'settings_devices_engineers',
       'settings_device_management',
       'settings_users',
+      'settings_advanced_management',
       'settings_hybrid_db'
     ];
     
