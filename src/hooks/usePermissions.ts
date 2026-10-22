@@ -38,6 +38,8 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
       if (
         targetSection === 'settings_hybrid_db' || 
         targetSection === 'settings_advanced_management' ||
+        targetSection === 'settings_backup_sync' ||
+        targetSection === 'settings_advanced_maintenance' ||
         targetSection === 'reports_comprehensive' || 
         targetSection === 'reports_financial' ||
         (targetSection === 'vault' && action === 'advancedView' && currentUser.permissions?.vault?.advancedView !== undefined)
@@ -55,6 +57,8 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
           targetSection === 'settings' || 
           targetSection === 'settings_users' || 
           targetSection === 'settings_advanced_management' ||
+          targetSection === 'settings_backup_sync' ||
+          targetSection === 'settings_advanced_maintenance' ||
           targetSection === 'reports' ||
           (typeof targetSection === 'string' && targetSection.startsWith('settings_'))
         ) return false;
@@ -65,7 +69,12 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
     
     const sectionPerms = currentUser.permissions[targetSection] as any;
     if (!sectionPerms) {
-      if (targetSection === 'settings_advanced_management' || targetSection === 'settings_hybrid_db') {
+      if (
+        targetSection === 'settings_advanced_management' || 
+        targetSection === 'settings_backup_sync' || 
+        targetSection === 'settings_advanced_maintenance' || 
+        targetSection === 'settings_hybrid_db'
+      ) {
         return false;
       }
       if (typeof targetSection === 'string' && targetSection.startsWith('settings_')) {

@@ -1,5 +1,6 @@
 import { db, doc, getDoc, getDocs, collection, deleteDoc, updateDoc, setDoc, query, where, serverTimestamp } from '../firebase';
 import { ProviderFactory } from '../data/ProviderFactory';
+import { FirebaseProviderInstance } from '../data/FirebaseProvider';
 import { localDb } from './local-db';
 import { Invoice, InvoiceItem, isPurchaseInvoice } from '../types';
 
@@ -345,15 +346,37 @@ export async function deleteInvoiceWithCascade(
     }
 
     // ----------------------------------------------------
-    // 4. DELETE ALL INVOICE ITEMS
+    // 4. DELETE ALL INVOICE ITEMS & LINKED ACTIONS
     // ----------------------------------------------------
     for (const item of invItems) {
       if (item.id) {
+        // Cascade delete maintenance actions for this item
+        try {
+          const mRes = await localDb.query(`SELECT id FROM maintenance_actions WHERE itemId = ?`, [item.id]);
+          for (const m of (mRes?.values || [])) {
+            if (m.id) {
+              try { await provider.deleteDoc('maintenance_actions', m.id); } catch (e) {}
+              try { await FirebaseProviderInstance.deleteDoc('maintenance_actions', m.id); } catch (e) {}
+            }
+          }
+        } catch (e) {}
+
+        // Cascade delete approval actions for this item
+        try {
+          const aRes = await localDb.query(`SELECT id FROM approval_actions WHERE itemId = ?`, [item.id]);
+          for (const a of (aRes?.values || [])) {
+            if (a.id) {
+              try { await provider.deleteDoc('approval_actions', a.id); } catch (e) {}
+              try { await FirebaseProviderInstance.deleteDoc('approval_actions', a.id); } catch (e) {}
+            }
+          }
+        } catch (e) {}
+
         try {
           await provider.deleteDoc('invoice_items', item.id);
         } catch (e) {}
         try {
-          await deleteDoc(doc(db, 'invoice_items', item.id));
+          await FirebaseProviderInstance.deleteDoc('invoice_items', item.id);
         } catch (e) {}
         deletedItemsCount++;
       }
@@ -367,7 +390,7 @@ export async function deleteInvoiceWithCascade(
         await provider.deleteDoc('invoices', invId);
       } catch (e) {}
       try {
-        await deleteDoc(doc(db, 'invoices', invId));
+        await FirebaseProviderInstance.deleteDoc('invoices', invId);
       } catch (e) {}
     }
 
@@ -396,7 +419,7 @@ export async function deleteInvoiceWithCascade(
             await provider.deleteDoc('vault_transactions', tx.id);
           } catch (e) {}
           try {
-            await deleteDoc(doc(db, 'vault_transactions', tx.id));
+            await FirebaseProviderInstance.deleteDoc('vault_transactions', tx.id);
           } catch (e) {}
         }
       }
@@ -855,3 +878,179 @@ export async function recalculateDisassemblyBatchesRecovery(): Promise<{
     return { updatedCount: 0, batches: [] };
   }
 }
+
+/**
+ * Permanently deletes a customer and cleanly cascades all related data:
+ * 1. All invoices belonging to this customer (including items, inventory rollback/deductions, batches, and vouchers).
+ * 2. Any lingering items belonging to this customer (including maintenance_actions & approval_actions).
+ * 3. Any lingering customer vault_transactions (receipts, payments).
+ * 4. Any customer saved PDFs.
+ * 5. Primary customer document in both Local SQLite and Cloud Firestore.
+ */
+export async function deleteCustomerWithCascade(
+  customer: { id: string; name?: string; customerNumber?: any },
+  options?: {
+    deletePastTransactions?: boolean;
+    invoices?: Invoice[];
+    items?: InvoiceItem[];
+    transactions?: any[];
+  }
+): Promise<{ success: boolean; error?: string }> {
+  if (!customer || !customer.id) {
+    return { success: false, error: 'معرف العميل غير صالح' };
+  }
+
+  const custId = customer.id;
+  const custName = (customer.name || '').trim();
+  const provider = ProviderFactory.getProvider();
+
+  try {
+    if (options?.deletePastTransactions) {
+      // 1. Collect all invoices for this customer
+      let custInvoices: Invoice[] = [];
+      if (options.invoices && options.invoices.length > 0) {
+        custInvoices = options.invoices.filter(inv => 
+          inv.customerId === custId || (custName && (inv.customerName || '').trim() === custName)
+        );
+      } else {
+        try {
+          const invRes = await localDb.query(
+            `SELECT * FROM invoices WHERE customerId = ? OR (customerName IS NOT NULL AND TRIM(customerName) = ?)`,
+            [custId, custName]
+          );
+          if (invRes?.values) custInvoices = invRes.values;
+        } catch (e) {}
+      }
+
+      // Collect customer invoice IDs & invoice numbers
+      const custInvIds = new Set<string>(custInvoices.map(i => i.id).filter(Boolean) as string[]);
+      const custInvNumbers = new Set<string>(custInvoices.map(i => normalizeInvoiceNum(i.invoiceNumber)).filter(Boolean));
+
+      // 2. Cascade delete every invoice
+      for (const inv of custInvoices) {
+        try {
+          await deleteInvoiceWithCascade(inv, { items: options?.items });
+        } catch (invErr) {
+          console.warn('Error cascading invoice deletion for customer:', invErr);
+          if (inv.id) {
+            try { await provider.deleteDoc('invoices', inv.id); } catch (e) {}
+            try { await FirebaseProviderInstance.deleteDoc('invoices', inv.id); } catch (e) {}
+          }
+        }
+      }
+
+      // 3. Find any remaining/orphan items belonging to this customer
+      let remainingItems: any[] = [];
+      try {
+        const itemRes = await localDb.query(
+          `SELECT * FROM invoice_items WHERE customerId = ? OR (customerName IS NOT NULL AND TRIM(customerName) = ?)`,
+          [custId, custName]
+        );
+        if (itemRes?.values) remainingItems = itemRes.values;
+      } catch (e) {}
+
+      if (options?.items) {
+        options.items.forEach(it => {
+          if (it.customerId === custId || (custName && (it.customerName || '').trim() === custName)) {
+            if (!remainingItems.some(r => r.id === it.id)) remainingItems.push(it);
+          }
+        });
+      }
+
+      for (const it of remainingItems) {
+        if (!it.id) continue;
+        // Clean related actions
+        try {
+          const mRes = await localDb.query(`SELECT id FROM maintenance_actions WHERE itemId = ?`, [it.id]);
+          for (const m of (mRes?.values || [])) {
+            if (m.id) {
+              try { await provider.deleteDoc('maintenance_actions', m.id); } catch (e) {}
+              try { await FirebaseProviderInstance.deleteDoc('maintenance_actions', m.id); } catch (e) {}
+            }
+          }
+        } catch (e) {}
+
+        try {
+          const aRes = await localDb.query(`SELECT id FROM approval_actions WHERE itemId = ?`, [it.id]);
+          for (const a of (aRes?.values || [])) {
+            if (a.id) {
+              try { await provider.deleteDoc('approval_actions', a.id); } catch (e) {}
+              try { await FirebaseProviderInstance.deleteDoc('approval_actions', a.id); } catch (e) {}
+            }
+          }
+        } catch (e) {}
+
+        try { await provider.deleteDoc('invoice_items', it.id); } catch (e) {}
+        try { await FirebaseProviderInstance.deleteDoc('invoice_items', it.id); } catch (e) {}
+      }
+
+      // 4. Find any customer transactions (receipts, payments, or linked vouchers)
+      let remainingTxs: any[] = [];
+      try {
+        const txRes = await localDb.query(
+          `SELECT * FROM vault_transactions WHERE customerId = ? OR (customerName IS NOT NULL AND TRIM(customerName) = ?)`,
+          [custId, custName]
+        );
+        if (txRes?.values) remainingTxs = txRes.values;
+      } catch (e) {}
+
+      if (options?.transactions) {
+        options.transactions.forEach(tx => {
+          const cleanInv = normalizeInvoiceNum(tx.invoiceNumber);
+          if (
+            tx.customerId === custId || 
+            (custName && (tx.customerName || '').trim() === custName) ||
+            (tx.invoiceId && custInvIds.has(tx.invoiceId)) ||
+            (cleanInv && custInvNumbers.has(cleanInv))
+          ) {
+            if (!remainingTxs.some(r => r.id === tx.id)) remainingTxs.push(tx);
+          }
+        });
+      }
+
+      for (const tx of remainingTxs) {
+        if (!tx.id) continue;
+        try { await provider.deleteDoc('vault_transactions', tx.id); } catch (e) {}
+        try { await FirebaseProviderInstance.deleteDoc('vault_transactions', tx.id); } catch (e) {}
+      }
+
+      // 5. Clean saved PDFs for this customer
+      try {
+        const pdfRes = await localDb.query(
+          `SELECT id FROM saved_pdfs WHERE customerId = ? OR (customerName IS NOT NULL AND TRIM(customerName) = ?)`,
+          [custId, custName]
+        );
+        for (const pdf of (pdfRes?.values || [])) {
+          if (pdf.id) {
+            try { await provider.deleteDoc('saved_pdfs', pdf.id); } catch (e) {}
+            try { await FirebaseProviderInstance.deleteDoc('saved_pdfs', pdf.id); } catch (e) {}
+          }
+        }
+      } catch (e) {}
+    }
+
+    // 6. Delete the primary customer document in Local SQLite and Cloud Firestore
+    try {
+      await provider.deleteDoc('customers', custId);
+    } catch (e) {
+      console.warn('Local customer delete error:', e);
+    }
+
+    try {
+      await FirebaseProviderInstance.deleteDoc('customers', custId);
+    } catch (e) {
+      console.warn('Firebase customer delete error:', e);
+    }
+
+    // 7. Flush outbox sync in background to propagate all tombstones immediately
+    import('../data/SyncEngine').then(({ SyncEngine }) => {
+      SyncEngine.syncAll().catch(() => {});
+    }).catch(() => {});
+
+    return { success: true };
+  } catch (err: any) {
+    console.error('Error during deleteCustomerWithCascade:', err);
+    return { success: false, error: err?.message || 'فشل في حذف العميل وعملياته المرتبطة' };
+  }
+}
+

@@ -38,19 +38,7 @@ function parseEngineerReport(reportStr: string, isEditing: boolean = false) {
   };
 }
 
-export function isWarrantyReturnItem(item: any): boolean {
-  if (!item) return false;
-  if (item.isWarrantyReturn === true || item.isWarrantyReturn === 1 || item.isWarrantyReturn === '1' || item.isWarrantyReturn === 'true') {
-    return true;
-  }
-  if (item.previousInvoiceNumber && String(item.previousInvoiceNumber).trim() !== '') {
-    return true;
-  }
-  const problem = String(item.customerProblem || item.faultType || '').toLowerCase();
-  const notes = String(item.deviceNotes || '').toLowerCase();
-  if (problem.includes('مرتجع') || problem.includes('ضمان') || notes.includes('مرتجع') || notes.includes('ضمان')) {
-    return true;
-  }
+export function isWarrantyReturnItem(_item?: any): boolean {
   return false;
 }
 
@@ -502,21 +490,8 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         item.cost = 0;
       }
     }
-    if (field === 'isWarrantyReturn') {
-      const foundOriginal = items.find(i => String(i.id) === String(item.id)) || invoiceItems.find(i => String(i.id) === String(item.id));
-      const wasMarked = isWarrantyReturnItem(foundOriginal);
-      if (!wasMarked && value) {
-        item.isWarrantyReturn = false;
-      } else {
-        item.isWarrantyReturn = !!value;
-        if (value) {
-          item.unitCost = 0;
-          item.cost = 0;
-        }
-      }
-    }
     if (field === 'decision') {
-      if (value !== 'repairing' || item.isWarrantyReturn) {
+      if (value !== 'repairing') {
          item.unitCost = 0;
          item.cost = 0;
       }
@@ -536,10 +511,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         item.report = 'لا يصلح | ';
       }
     } else if (field === 'count' || field === 'unitCost') {
-      if (item.isWarrantyReturn) {
-        item.unitCost = 0;
-        item.cost = 0;
-      } else if (selectedInvoice && selectedInvoice.status !== '21') {
+      if (selectedInvoice && selectedInvoice.status !== '21') {
         item.cost = Number(item.count || 0) * Number(item.unitCost || 0);
       } else {
         item.cost = 0;
@@ -978,7 +950,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
     
     // Validation: if repairing, cost must be > 0.
     const isPhase1 = selectedInvoice.status === '21';
-    const hasInvalidCost = !isPhase1 && actionItems.some(row => row.decision === 'repairing' && !row.isWarrantyReturn && (Number(row.cost) <= 0 || isNaN(Number(row.cost))));
+    const hasInvalidCost = !isPhase1 && actionItems.some(row => row.decision === 'repairing' && (Number(row.cost) <= 0 || isNaN(Number(row.cost))));
     if (hasInvalidCost) {
       alert('يجب إدخال تكلفة صيانة أكبر من الصفر للأجهزة التي تحتاج إلى صيانة.');
       return;
@@ -997,8 +969,8 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         const oItem = items.find(i => i.id === row.id) || invoiceItems.find(i => i.id === row.id);
         if (!oItem) continue;
         if (!itemRemaining.has(oItem.id!)) {
-           itemRemaining.set(oItem.id!, Number(oItem.quantity) || 0);
-         }
+            itemRemaining.set(oItem.id!, Number(oItem.quantity) || 0);
+          }
       }
 
       for (const row of actionItems) {
@@ -1006,8 +978,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         const originalItem = items.find(i => i.id === row.id) || invoiceItems.find(i => i.id === row.id);
         if (!originalItem) continue;
 
-        const isWarrantyReturn = !!row.isWarrantyReturn;
-        const resolvedCost = isWarrantyReturn ? 0 : (row.decision === 'repairing' ? (Number(row.cost) || 0) : 0);
+        const resolvedCost = row.decision === 'repairing' ? (Number(row.cost) || 0) : 0;
 
         const updatedStatus = isPhase1 
           ? '22' 
@@ -1033,7 +1004,6 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
             status: updatedStatus,
             subStatus: itemSubStatus,
             source: 'inspection',
-            isWarrantyReturn: isWarrantyReturn,
             engineerReport: row.report,
             cost: resolvedCost,
             technician: engineerName,
@@ -1049,14 +1019,13 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
             entryDate: resolvedEntryDate,
             updatedAt: serverTimestamp()
           });
-          if (row.decision === 'repairing' && !isWarrantyReturn) totalCostAdjustment += Number(row.cost) || 0;
+          if (row.decision === 'repairing') totalCostAdjustment += Number(row.cost) || 0;
         } else {
           // update fully
           batch.update(doc(db, 'invoice_items', originalItem.id!), {
             status: updatedStatus,
             subStatus: itemSubStatus,
             source: 'inspection',
-            isWarrantyReturn: isWarrantyReturn,
             quantity: rem,
             engineerReport: row.report,
             cost: resolvedCost,
@@ -1064,7 +1033,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
             entryDate: resolvedEntryDate,
             updatedAt: serverTimestamp()
           });
-          if (row.decision === 'repairing' && !isWarrantyReturn) totalCostAdjustment += Number(row.cost) || 0;
+          if (row.decision === 'repairing') totalCostAdjustment += Number(row.cost) || 0;
         }
       }
 
@@ -1516,7 +1485,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
     const isSaveDisabled = !currentActionItem.id || 
                            isQuantityInvalid || 
                            !String(currentActionItem.report || '').trim() || 
-                           (selectedInvoice.status !== '21' && currentActionItem.decision === 'repairing' && !currentActionItem.isWarrantyReturn && (Number(currentActionItem.unitCost) <= 0 || isNaN(Number(currentActionItem.unitCost))));
+                           (selectedInvoice.status !== '21' && currentActionItem.decision === 'repairing' && (Number(currentActionItem.unitCost) <= 0 || isNaN(Number(currentActionItem.unitCost))));
 
     return (
       <div className="w-full max-w-full overflow-x-hidden space-y-0 pb-32 md:pb-8" dir="rtl">
@@ -1586,10 +1555,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                     {invoiceItems.map((it, itIdx) => {
                       const availableForThisRow = getAvailableQuantity(it.id!, -1);
                       if (availableForThisRow <= 0 && currentActionItem.id !== it.id) return null;
-                      const isReturn = isWarrantyReturnItem(it);
                       return (
                         <option key={it.id ? `insp-opt-${it.id}-${itIdx}` : `insp-opt-idx-${itIdx}`} value={it.id}>
-                          {it.deviceType} - {it.deviceName} {isReturn ? '⭐ (مرتجع ضمان)' : ''} - متوفر: {availableForThisRow}
+                          {it.deviceType} - {it.deviceName} - متوفر: {availableForThisRow}
                         </option>
                       );
                     })}
@@ -1667,54 +1635,6 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                  );
               })()}
 
-              {currentActionItem.id && (() => {
-                 const selectedItem = items.find(i => i.id === currentActionItem.id) || invoiceItems.find(i => i.id === currentActionItem.id);
-                 const wasMarkedAtEntry = isWarrantyReturnItem(selectedItem);
-                 return (
-                   <div className={`flex flex-col sm:flex-row sm:items-center justify-between p-3 rounded-xl border transition-all my-1.5 gap-2 ${
-                     currentActionItem.isWarrantyReturn 
-                       ? 'bg-amber-500/10 border-amber-500/30' 
-                       : 'bg-black/30 border-white/5'
-                   }`}>
-                     <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                       <input 
-                         type="checkbox"
-                         checked={!!currentActionItem.isWarrantyReturn}
-                         onChange={(e) => {
-                           handleUpdateCurrentField('isWarrantyReturn', e.target.checked);
-                         }}
-                         className="w-4 h-4 rounded text-orange-500 focus:ring-0 focus:ring-offset-0 bg-black border-white/20 accent-orange-500 cursor-pointer"
-                       />
-                       <div className="flex flex-col">
-                         <span className="text-xs font-bold text-white flex items-center gap-2">
-                           مرتجع صيانة وضمان (تجاهل التكلفة على العميل)
-                           {wasMarkedAtEntry && (
-                             <span className="text-[10px] px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 font-normal border border-amber-500/30">
-                               محدد كمرتجع من فاتورة الدخول
-                             </span>
-                           )}
-                         </span>
-                         <span className="text-[10px] text-gray-400">
-                           {currentActionItem.isWarrantyReturn 
-                             ? 'مفعل: سيتم تصفير التكلفة على العميل مع إمكانية اختيار أي قرار فني' 
-                             : 'غير مفعل: سيتم احتساب تكلفة الصيانة على العميل'}
-                         </span>
-                       </div>
-                     </label>
-
-                     {currentActionItem.isWarrantyReturn ? (
-                       <span className="px-2.5 py-1 rounded-lg text-[10px] font-black bg-amber-500/20 text-amber-300 border border-amber-500/30 self-start sm:self-auto shrink-0">
-                         تحت الضمان (التكلفة = 0)
-                       </span>
-                     ) : (
-                       <span className="text-[10px] text-gray-500 self-start sm:self-auto shrink-0">
-                         {wasMarkedAtEntry ? '(تم إلغاء التحديد - خاضع للتكلفة)' : 'تكلفة عادية'}
-                       </span>
-                     )}
-                   </div>
-                 );
-              })()}
-
               <div className="flex flex-col md:flex-row items-start md:items-center gap-2 md:gap-4">
                  <div className="flex items-center gap-3 flex-1 w-full">
                    <label className="text-xs text-gray-500 whitespace-nowrap w-20">القرار الفني</label>
@@ -1741,45 +1661,37 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                  </div>
 
                  <div className={`flex-row items-center gap-4 transition-opacity ${currentActionItem.decision !== 'repairing' ? 'opacity-50 pointer-events-none' : ''} w-full ${selectedInvoice?.status === '21' ? 'hidden' : 'flex'} md:w-auto`}>
-                   {currentActionItem.isWarrantyReturn ? (
-                     <div className="flex items-center gap-2 px-3 py-2 bg-amber-500/10 border border-amber-500/20 rounded-xl text-amber-400 text-xs font-bold">
-                       <span>التكلفة على العميل: 0 (مشمول بالضمان)</span>
-                     </div>
-                   ) : (
-                     <>
-                       <div className="flex items-center gap-2 flex-1 md:flex-none">
-                         <label className="text-xs text-gray-500 whitespace-nowrap">التكلفة للوحدة</label>
-                          <input 
-                            type="text"
-                            inputMode="decimal"
-                            dir="ltr"
-                            lang="en"
-                            value={Number.isNaN(Number(currentActionItem.unitCost)) ? '' : currentActionItem.unitCost} 
-                            onFocus={e => e.target.select()}
-                            onChange={e => {
-                              const val = e.target.value.replace(/[^0-9.]/g, '');
-                              const parts = val.split('.');
-                              const sanitized = parts[0] + (parts.length > 1 ? '.' + parts.slice(1).join('') : '');
-                              handleUpdateCurrentField('unitCost', sanitized === '' ? '' : parseFloat(sanitized));
-                            }}
-                            className="w-full md:w-24 bg-black/40 border border-white/10 px-3 py-2 focus:border-purple-500 outline-none transition-all rounded-xl font-mono text-center"
-                          />
-                        </div>
-                        
-                        <div className="flex items-center gap-2 flex-1 md:flex-none">
-                          <label className="text-xs text-gray-500 whitespace-nowrap">الإجمالي</label>
-                          <input 
-                            type="text"
-                            disabled
-                            readOnly
-                            dir="ltr"
-                            lang="en"
-                            value={currentActionItem.cost || 0}
-                            className="w-full md:w-24 bg-black/20 border border-white/5 px-3 py-2 text-purple-400 font-bold outline-none cursor-not-allowed rounded-xl font-mono text-center"
-                          />
-                        </div>
-                     </>
-                   )}
+                   <div className="flex items-center gap-2 flex-1 md:flex-none">
+                     <label className="text-xs text-gray-500 whitespace-nowrap">التكلفة للوحدة</label>
+                      <input 
+                        type="text"
+                        inputMode="decimal"
+                        dir="ltr"
+                        lang="en"
+                        value={Number.isNaN(Number(currentActionItem.unitCost)) ? '' : currentActionItem.unitCost} 
+                        onFocus={e => e.target.select()}
+                        onChange={e => {
+                          const val = e.target.value.replace(/[^0-9.]/g, '');
+                          const parts = val.split('.');
+                          const sanitized = parts[0] + (parts.length > 1 ? '.' + parts.slice(1).join('') : '');
+                          handleUpdateCurrentField('unitCost', sanitized === '' ? '' : parseFloat(sanitized));
+                        }}
+                        className="w-full md:w-24 bg-black/40 border border-white/10 px-3 py-2 focus:border-purple-500 outline-none transition-all rounded-xl font-mono text-center"
+                      />
+                    </div>
+                    
+                    <div className="flex items-center gap-2 flex-1 md:flex-none">
+                      <label className="text-xs text-gray-500 whitespace-nowrap">الإجمالي</label>
+                      <input 
+                        type="text"
+                        disabled
+                        readOnly
+                        dir="ltr"
+                        lang="en"
+                        value={currentActionItem.cost || 0}
+                        className="w-full md:w-24 bg-black/20 border border-white/5 px-3 py-2 text-purple-400 font-bold outline-none cursor-not-allowed rounded-xl font-mono text-center"
+                      />
+                    </div>
                  </div>
                </div>
                 <div className="space-y-4 w-full">
@@ -1910,11 +1822,6 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                          <td className="px-4 py-3 font-medium whitespace-nowrap">
                            <div className="flex items-center gap-1.5">
                              <span>{original?.deviceName || '---'}</span>
-                             {item.isWarrantyReturn && (
-                               <span className="px-1.5 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                                 مرتجع ضمان
-                               </span>
-                             )}
                            </div>
                          </td>
                          <td className="px-4 py-3 text-gray-300 text-center whitespace-nowrap">{item.count}</td>
@@ -1936,9 +1843,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                           </td>
                          {selectedInvoice?.status !== '21' && (
                            <td className="px-4 py-3 text-purple-400 font-bold text-center whitespace-nowrap font-mono">
-                             {item.isWarrantyReturn ? (
-                               <span className="text-amber-400 text-xs font-bold">0 (تحت الضمان)</span>
-                             ) : (item.cost > 0 ? `${item.cost.toLocaleString('en-US')} ${selectedInvoice.currency || 'USD'}` : '-')}
+                             {item.cost > 0 ? `${item.cost.toLocaleString('en-US')} ${selectedInvoice.currency || 'USD'}` : '-'}
                            </td>
                          )}
                          <td className="px-4 py-3 pl-6 flex items-center justify-center gap-2 whitespace-nowrap">

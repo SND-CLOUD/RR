@@ -1264,6 +1264,18 @@ export default function App() {
           />
         );
       case 'advanced-database-maintenance':
+        const canViewAdvMaintenance = user?.isPrimary || user?.role === 'admin' || !!user?.permissions?.settings_advanced_maintenance?.view;
+        if (!canViewAdvMaintenance) {
+          return (
+            <Settings 
+              user={user} 
+              shopConfig={shopConfig} 
+              onShopConfigUpdate={setShopConfig} 
+              onSignOut={() => setShowSignOutModal(true)} 
+              onNavigateToAdvancedMaintenance={() => setActiveTab('advanced-database-maintenance')}
+            />
+          );
+        }
         return <AdvancedDatabaseMaintenance onBack={() => setActiveTab('settings')} />;
       case 'search':
         return <SearchInvoice onBack={goToDashboard} user={user} />;

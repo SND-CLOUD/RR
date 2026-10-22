@@ -65,8 +65,7 @@ import {
   RefreshCw,
   CloudDownload,
   Download,
-  Share2,
-  Lock
+  Share2
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
@@ -318,12 +317,17 @@ export default function Vault({
   // Navigation
   const [activeSegment, setActiveSegment] = useState<'dashboard' | 'receipt' | 'payment' | 'discounts' | 'transfer' | 'funds' | 'customer-ledger' | 'reports'>(initialSegment || 'dashboard');
 
-  // Guard advanced segments: if user lacks advanced permission, redirect to dashboard
+  // Guard advanced segments: if user lacks advanced permission, redirect to dashboard and reset advanced mode
   useEffect(() => {
-    if (!canUseAdvanced && ['transfer', 'funds', 'customer-ledger', 'reports'].includes(activeSegment)) {
-      setActiveSegment('dashboard');
+    if (!canUseAdvanced) {
+      if (isAdvancedMode) {
+        setIsAdvancedMode(false);
+      }
+      if (['transfer', 'funds', 'customer-ledger', 'reports'].includes(activeSegment)) {
+        setActiveSegment('dashboard');
+      }
     }
-  }, [activeSegment, canUseAdvanced]);
+  }, [activeSegment, canUseAdvanced, isAdvancedMode]);
   const [reportSubSegment, setReportSubSegment] = useState<'revenues' | 'expenses' | 'profits' | 'fund-balances' | 'outstanding-debts'>('revenues');
   const [showAddModal, setShowAddModal] = useState(initialShowAddModal || false);
   const [showPrintPreview, setShowPrintPreview] = useState(false);
@@ -2559,39 +2563,25 @@ export default function Vault({
                     {t('vault.treeTitle', 'شجرة النظام المالي')}
                   </h3>
 
-                  {/* Advanced Mode Checkbox */}
-                  <label 
-                    className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all select-none font-cairo text-xs font-bold ${
-                      !canUseAdvanced 
-                        ? 'opacity-50 cursor-not-allowed bg-white/5 border-white/5 text-gray-400' 
-                        : isAdvancedMode 
-                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-400 cursor-pointer shadow-sm' 
-                          : 'bg-white/5 hover:bg-white/10 border-white/10 text-gray-300 cursor-pointer'
-                    }`}
-                    title={!canUseAdvanced ? 'يتطلب صلاحية (متقدم) في جدول صلاحيات الخزينة' : 'تفعيل / إخفاء العناصر المتقدمة في شجرة الحسابات'}
-                    onClick={(e) => {
-                      if (!canUseAdvanced) {
-                        e.preventDefault();
-                        setErrorMsg('عفواً، لا تملك صلاحية (متقدم) في الخزينة لإظهار بقية عناصر شجرة الحسابات.');
-                      }
-                    }}
-                  >
-                    <input 
-                      type="checkbox"
-                      checked={isAdvancedMode}
-                      disabled={!canUseAdvanced}
-                      onChange={(e) => {
-                        if (canUseAdvanced) {
-                          setIsAdvancedMode(e.target.checked);
-                        }
-                      }}
-                      className="w-4 h-4 rounded border-gray-600 text-amber-500 focus:ring-amber-500 focus:ring-offset-0 bg-[#1c1c1c] accent-amber-500 cursor-pointer disabled:cursor-not-allowed"
-                    />
-                    <span>وضع متقدم</span>
-                    {!canUseAdvanced && (
-                      <Lock size={12} className="text-amber-500/70 mr-0.5" />
-                    )}
-                  </label>
+                  {/* Advanced Mode Checkbox - Only rendered if user has canUseAdvanced */}
+                  {canUseAdvanced && (
+                    <label 
+                      className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-xl border transition-all select-none font-cairo text-xs font-bold cursor-pointer ${
+                        isAdvancedMode 
+                          ? 'bg-amber-500/15 border-amber-500/40 text-amber-400 shadow-sm' 
+                          : 'bg-white/5 hover:bg-white/10 border-white/10 text-gray-300'
+                      }`}
+                      title={t('vault.toggleAdvancedElements', 'تفعيل / إخفاء العناصر المتقدمة في شجرة الحسابات')}
+                    >
+                      <input 
+                        type="checkbox"
+                        checked={isAdvancedMode}
+                        onChange={(e) => setIsAdvancedMode(e.target.checked)}
+                        className="w-4 h-4 rounded border-gray-600 text-amber-500 focus:ring-amber-500 focus:ring-offset-0 bg-[#1c1c1c] accent-amber-500 cursor-pointer"
+                      />
+                      <span>وضع متقدم</span>
+                    </label>
+                  )}
                 </div>
 
                 <div className="space-y-3">

@@ -12,7 +12,7 @@ import { db } from '../firebase';
 import { User, Phone, Smartphone, AlertTriangle, CheckCircle, Package, ArrowLeft, ArrowUpRight, ArrowRight, LogOut, Search, FileText, ChevronLeft, Eye, Clock, DollarSign, X, Users, ArrowUpDown, Plus, Edit2, Check, Building, Mail, Printer, UserPlus, MessageCircle, MapPin, Facebook, Trash2, Contact } from 'lucide-react';
 import { pickCustomerContact } from '../lib/contactPicker';
 import { Customer, Invoice, InvoiceItem, User as SystemUser, ShopConfig, isPurchaseInvoice, isShopMaintenanceItem, isSaleInvoice } from '../types';
-import { deleteInvoiceWithCascade } from '../lib/invoiceCascadeService';
+import { deleteInvoiceWithCascade, deleteCustomerWithCascade } from '../lib/invoiceCascadeService';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { usePermissions } from '../hooks/usePermissions';
 import BankAccountsFooter from './BankAccountsFooter';
@@ -322,68 +322,16 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
     
     setIsSavingInProcess(true);
     try {
-      const customerInvs = invoices.filter(inv => inv.customerId === cust.id || (cust.name && inv.customerName === cust.name));
-      const customerInvIds = customerInvs.map(inv => inv.id).filter(Boolean);
-      const customerInvNumbers = customerInvs.map(inv => String(inv.invoiceNumber)).filter(Boolean);
+      const res = await deleteCustomerWithCascade(cust, {
+        deletePastTransactions,
+        invoices,
+        items,
+        transactions
+      });
 
-      const customerItems = items.filter(it => 
-        it.customerId === cust.id || 
-        (it.invoiceId && customerInvIds.includes(it.invoiceId)) ||
-        (it.invoiceNumber && customerInvNumbers.includes(String(it.invoiceNumber))) ||
-        (cust.name && it.customerName === cust.name)
-      );
-
-      const customerTxs = transactions.filter(tx => 
-        tx.customerId === cust.id || 
-        (cust.name && tx.customerName === cust.name) ||
-        (tx.invoiceId && customerInvIds.includes(tx.invoiceId)) ||
-        (tx.invoiceNumber && customerInvNumbers.includes(String(tx.invoiceNumber)))
-      );
-
-      const batch = writeBatch(db);
-      batch.delete(doc(db, 'customers', cust.id));
-
-      if (deletePastTransactions) {
-        for (const inv of customerInvs) {
-          try {
-            await deleteInvoiceWithCascade(inv, { items: customerItems });
-          } catch (e) {
-            if (inv.id) batch.delete(doc(db, 'invoices', inv.id));
-          }
-        }
-        
-        for (const it of customerItems) {
-          if (it.id) batch.delete(doc(db, 'invoice_items', it.id));
-        }
-        
-        for (const tx of customerTxs) {
-          if (tx.id) batch.delete(doc(db, 'vault_transactions', tx.id));
-        }
-        
-        try {
-          const custItemIds = customerItems.map(it => it.id).filter(Boolean);
-          if (custItemIds.length > 0) {
-            const { localDb } = await import('../lib/local-db');
-            const maintRes = await localDb.query(`SELECT id, itemId FROM maintenance_actions`);
-            const apprRes = await localDb.query(`SELECT id, itemId FROM approval_actions`);
-            
-            (maintRes.values || []).forEach((m: any) => {
-              if (custItemIds.includes(m.itemId)) {
-                batch.delete(doc(db, 'maintenance_actions', m.id));
-              }
-            });
-            (apprRes.values || []).forEach((a: any) => {
-              if (custItemIds.includes(a.itemId)) {
-                batch.delete(doc(db, 'approval_actions', a.id));
-              }
-            });
-          }
-        } catch (err) {
-          console.warn('Error queuing related actions deletion:', err);
-        }
+      if (!res.success) {
+        throw new Error(res.error || 'فشل في حذف العميل');
       }
-
-      await batch.commit();
       
       setCustomerToDelete(null);
       setSelectedCustomer(null);

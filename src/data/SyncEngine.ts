@@ -280,6 +280,20 @@ export class SyncEngine {
 
             let needsDownload = false;
             if (!localItem) {
+              // Tombstone Defense: Check if this record was deleted locally
+              const tombstoneRes = await localDb.query(
+                "SELECT deletedAt FROM deleted_records WHERE tableName = ? AND recordId = ?",
+                [table, docId]
+              ).catch(() => ({ values: [] }));
+
+              if (tombstoneRes.values && tombstoneRes.values.length > 0) {
+                const tombstoneTime = new Date(tombstoneRes.values[0].deletedAt || 0).getTime();
+                if (cloudUpdatedMs <= tombstoneTime) {
+                  console.log(`SyncEngine [Tombstone Defense]: Blocking resurrection of deleted ${table}/${docId}. Purging from cloud.`);
+                  FirebaseProviderInstance.deleteDoc(table, docId, 'BYPASS_OUTBOX').catch(() => {});
+                  continue;
+                }
+              }
               needsDownload = true;
             } else if (table === 'fin_funds') {
               const localBal = parseFundBalance(localItem.balance);
@@ -410,13 +424,14 @@ export class SyncEngine {
                   if (parsedPayload.logo) parsedPayload.logo = "";
 
                 }
+                if (!recordId || !tableName) continue;
                 const docRef = { name: tableName, id: recordId };
 
                 if (action === 'SET') {
                   const { data, options } = parsedPayload || {};
-                  batch.set(docRef, data, options);
+                  if (data) batch.set(docRef, data, options);
                 } else if (action === 'UPDATE') {
-                  batch.update(docRef, parsedPayload);
+                  if (parsedPayload) batch.update(docRef, parsedPayload);
                 } else if (action === 'DELETE') {
                   batch.delete(docRef);
                 }
@@ -451,16 +466,41 @@ export class SyncEngine {
                 }
                 continue;
               }
-              console.error(`SyncEngine: Failed to sync group ${txGroupId}:`, err);
-              // Mark group as FAILED and pause queue processing to preserve FIFO order
+              console.warn(`SyncEngine: Batch commit failed for group ${txGroupId}. Falling back to individual operations:`, err);
+              // Fallback: Attempt individual operations so valid operations (like customer/invoice deletion) succeed
+              let fallbackFailed = false;
               for (const gItem of groupItems) {
-                await localDb.run(
-                  "UPDATE outbox SET status = 'FAILED', retryCount = retryCount + 1 WHERE id = ?",
-                  [gItem.id]
-                );
+                try {
+                  const { id: gId, tableName, recordId, action, payload } = gItem;
+                  if (!tableName || !recordId) {
+                    await localDb.run("DELETE FROM outbox WHERE id = ?", [gId]);
+                    continue;
+                  }
+                  const parsedPayload = payload ? JSON.parse(payload) : null;
+                  if (action === 'SET') {
+                    const { data, options } = parsedPayload || {};
+                    if (data) await FirebaseProviderInstance.setDoc(tableName, recordId, data, options);
+                  } else if (action === 'UPDATE') {
+                    if (parsedPayload) await FirebaseProviderInstance.updateDoc(tableName, recordId, parsedPayload);
+                  } else if (action === 'DELETE') {
+                    await FirebaseProviderInstance.deleteDoc(tableName, recordId);
+                  }
+                  await localDb.run("DELETE FROM outbox WHERE id = ?", [gId]);
+                  syncedCount++;
+                } catch (singleErr) {
+                  console.warn(`SyncEngine: Fallback item ${gItem.id} failed:`, singleErr);
+                  fallbackFailed = true;
+                  await localDb.run(
+                    "UPDATE outbox SET status = 'FAILED', retryCount = retryCount + 1 WHERE id = ?",
+                    [gItem.id]
+                  );
+                }
               }
-              this.syncing = false;
-              return { success: false, message: `فشلت مزامنة العمليات المترابطة: ${err.message || err}` };
+
+              if (fallbackFailed) {
+                this.syncing = false;
+                return { success: false, message: `فشلت مزامنة بعض العمليات المترابطة: ${err.message || err}` };
+              }
             }
 
           } else {
@@ -651,6 +691,20 @@ export class SyncEngine {
 
             let needsDownload = false;
             if (!localItem) {
+              // Tombstone Defense: Check if this record was deleted locally
+              const tombstoneRes = await localDb.query(
+                "SELECT deletedAt FROM deleted_records WHERE tableName = ? AND recordId = ?",
+                [table, cloudItem.id]
+              ).catch(() => ({ values: [] }));
+
+              if (tombstoneRes.values && tombstoneRes.values.length > 0) {
+                const tombstoneTime = new Date(tombstoneRes.values[0].deletedAt || 0).getTime();
+                if (cloudUpdatedMs <= tombstoneTime) {
+                  console.log(`SyncEngine [Pull Tombstone Defense]: Blocking resurrection of deleted ${table}/${cloudItem.id}. Purging from cloud.`);
+                  FirebaseProviderInstance.deleteDoc(table, cloudItem.id, 'BYPASS_OUTBOX').catch(() => {});
+                  continue;
+                }
+              }
               needsDownload = true;
             } else if (table === 'fin_funds') {
               const localBal = parseFundBalance(localItem.balance);

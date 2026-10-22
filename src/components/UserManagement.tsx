@@ -3,7 +3,7 @@ import { parseDate } from '../lib/dateUtils';
 import { collection, query, onSnapshot, doc, updateDoc, deleteDoc, addDoc, setDoc, where, getDocs, serverTimestamp } from '../firebase';
 import { db } from '../firebase';
 import { User, AppPermissions } from '../types';
-import { Smartphone, Wifi, WifiOff, CheckCircle2, PauseCircle, XCircle, ShieldCheck, UserPlus, Trash2, Edit2, ShieldAlert, Loader2, Save, X, ArrowLeft, Check, Lock, Package, Wallet, Users, FileText, BarChart, BarChart3, Coins, Settings, UserCircle, Cpu, UserCheck, UserX, Eye, EyeOff, Power, Database } from 'lucide-react';
+import { Smartphone, Wifi, WifiOff, CheckCircle2, PauseCircle, XCircle, ShieldCheck, UserPlus, Trash2, Edit2, ShieldAlert, Loader2, Save, X, ArrowLeft, Check, Lock, Package, Wallet, Users, FileText, BarChart, BarChart3, Coins, Settings, UserCircle, Cpu, UserCheck, UserX, Eye, EyeOff, Power, Database, RefreshCw, Wrench } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 
@@ -41,6 +41,8 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
     settings_device_management: { view: false, add: false, edit: false, delete: false, print: false, advancedView: false },
     settings_users: { view: false, add: false, edit: false, delete: false, print: false, advancedView: false },
     settings_advanced_management: { view: false },
+    settings_backup_sync: { view: false },
+    settings_advanced_maintenance: { view: false },
     settings_hybrid_db: { view: false, edit: false, advancedView: false }
   };
 
@@ -119,6 +121,8 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
       'settings_device_management',
       'settings_users',
       'settings_advanced_management',
+      'settings_backup_sync',
+      'settings_advanced_maintenance',
       'settings_hybrid_db'
     ];
     
@@ -175,6 +179,8 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
     settings_device_management: { label: 'اعداد إدارة أجهزة', icon: Settings },
     settings_users: { label: 'اعداد مستخدمون', icon: Users },
     settings_advanced_management: { label: 'إدارة متقدمة', icon: Database },
+    settings_backup_sync: { label: 'نسخ البيانات والمزامنة', icon: RefreshCw },
+    settings_advanced_maintenance: { label: 'صيانة متقدمة لقاعدة البيانات', icon: Wrench },
     settings_hybrid_db: { label: 'التحكم المتقدم بالوضع الهجين', icon: Database }
   };
 
@@ -204,6 +210,8 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
       'settings_device_management',
       'settings_users',
       'settings_advanced_management',
+      'settings_backup_sync',
+      'settings_advanced_maintenance',
       'settings_hybrid_db'
     ];
     

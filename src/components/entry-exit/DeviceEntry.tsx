@@ -79,7 +79,7 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
   const [currency, setCurrency] = useState<'USD' | 'SAR' | 'YER'>('USD');
   const [items, setItems] = useState<(Partial<InvoiceItem> & { unitCost?: number | '' })[]>([]);
   
-  const initialDeviceState = { deviceType: '', deviceName: '', quantity: 1, faultType: 'صيانة', deviceNotes: 'بدون ملحقات', technicalNotes: '', status: '10', cost: 0, technician: '', isWarrantyReturn: false, previousInvoiceNumber: '' };
+  const initialDeviceState = { deviceType: '', deviceName: '', quantity: 1, faultType: 'صيانة', deviceNotes: 'بدون ملحقات', technicalNotes: '', status: '10', cost: 0, technician: '' };
   const [currentDevice, setCurrentDevice] = useState<Partial<InvoiceItem> & { unitCost?: number | '' }>(initialDeviceState);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [showColumnSettings, setShowColumnSettings] = useState(false);
@@ -418,8 +418,6 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
           faultType: item.faultType || 'صيانة',
           customerProblem: item.faultType || 'صيانة',
           deviceNotes: item.deviceNotes || 'بدون ملحقات',
-          isWarrantyReturn: !!item.isWarrantyReturn,
-          previousInvoiceNumber: item.previousInvoiceNumber || '',
           cost: 0,
           status: '10',
           technician: '',
@@ -1086,30 +1084,7 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
                          className="w-full bg-black border border-white/10 rounded-xl px-3 py-2 focus:border-orange-500 outline-none text-sm text-white text-right flex-1"
                          placeholder="مثال: ريموت كنترول، كابل طاقة، خدوش في الشاشة"
                        />
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-3 lg:col-span-3 bg-amber-500/[0.03] border border-amber-500/20 p-2.5 rounded-xl">
-                      <label className="flex items-center gap-2 cursor-pointer select-none">
-                        <input 
-                          type="checkbox"
-                          checked={!!currentDevice.isWarrantyReturn}
-                          onChange={(e) => setCurrentDevice({ ...currentDevice, isWarrantyReturn: e.target.checked })}
-                          className="w-4 h-4 rounded text-orange-500 focus:ring-0 focus:ring-offset-0 bg-black border-white/20 cursor-pointer accent-amber-500"
-                        />
-                        <span className="text-xs font-bold text-amber-400">جهاز مرتجع (صيانة سابقة / ضمان)</span>
-                      </label>
-                      {currentDevice.isWarrantyReturn && (
-                        <div className="flex items-center gap-2 mr-auto">
-                          <label className="text-[11px] text-gray-400">رقم الفاتورة السابقة:</label>
-                          <input 
-                            value={currentDevice.previousInvoiceNumber || ''}
-                            onChange={(e) => setCurrentDevice({ ...currentDevice, previousInvoiceNumber: e.target.value })}
-                            className="bg-black border border-white/10 rounded-lg px-2.5 py-1 text-xs text-white placeholder-gray-500 outline-none w-36 font-mono text-center focus:border-amber-500"
-                            placeholder="اختياري..."
-                          />
-                        </div>
-                      )}
-                    </div>
+                     </div>
 
                     <div className="col-span-1 md:col-span-2 lg:col-span-3 flex flex-row justify-end gap-3 mt-2 border-t border-white/5 pt-3">
                        <button
@@ -1243,11 +1218,6 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
                                   <td className="py-3 px-4 text-sm text-gray-300 whitespace-nowrap">
                                     <div className="flex items-center gap-1.5">
                                       <div className="px-2 py-1 bg-white/5 rounded-lg border border-white/5 inline-block">{item.deviceName || '-'}</div>
-                                      {item.isWarrantyReturn && (
-                                        <span className="px-2 py-0.5 rounded-lg text-[10px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                                          مرتجع ضمان
-                                        </span>
-                                      )}
                                     </div>
                                   </td>
                                 )}

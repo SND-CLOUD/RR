@@ -109,6 +109,16 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
   const canViewFinancial = user?.role === 'admin' 
     ? (user.permissions?.reports_financial?.view !== false)
     : !!user?.permissions?.reports_financial?.view;
+  const canViewComprehensive = user?.isPrimary 
+    ? true 
+    : (user?.permissions?.reports_comprehensive?.view !== undefined 
+        ? !!user.permissions.reports_comprehensive.view 
+        : hasPermission('reports_comprehensive', 'view'));
+  const canPrintComprehensive = user?.isPrimary 
+    ? true 
+    : (user?.permissions?.reports_comprehensive?.print !== undefined 
+        ? !!user.permissions.reports_comprehensive.print 
+        : hasPermission('reports_comprehensive', 'print'));
   const [shopConfig, setShopConfig] = useState<any>(null);
 
   useEffect(() => {
@@ -1588,27 +1598,29 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
               )}
 
               {/* Comprehensive System Reports Box Button (صندوق تقارير النظام والمهام الشاملة) */}
-              <div className="mt-2">
-                <button
-                  type="button"
-                  onClick={() => setShowComprehensiveModal(true)}
-                  className="w-full flex items-center justify-between p-4 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/25 hover:border-purple-500/40 rounded-2xl transition-all font-cairo cursor-pointer group text-right shadow-lg"
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="p-2.5 bg-purple-500 text-white rounded-xl shadow-[0_0_12px_rgba(168,85,247,0.3)] group-hover:scale-105 transition-transform">
-                      <FileText size={20} />
+              {canViewComprehensive && (
+                <div className="mt-2">
+                  <button
+                    type="button"
+                    onClick={() => setShowComprehensiveModal(true)}
+                    className="w-full flex items-center justify-between p-4 bg-purple-500/10 hover:bg-purple-500/20 border border-purple-500/25 hover:border-purple-500/40 rounded-2xl transition-all font-cairo cursor-pointer group text-right shadow-lg"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="p-2.5 bg-purple-500 text-white rounded-xl shadow-[0_0_12px_rgba(168,85,247,0.3)] group-hover:scale-105 transition-transform">
+                        <FileText size={20} />
+                      </div>
+                      <div className="text-right">
+                        <span className="block text-sm font-bold text-white">صندوق تقارير النظام والمهام الشاملة</span>
+                        <span className="block text-[10px] text-gray-400 mt-0.5">طباعة تقارير الإنجاز اليومي، الأجهزة المتأخرة، كفاءة المهندسين، ومسيرات الحركة</span>
+                      </div>
                     </div>
-                    <div className="text-right">
-                      <span className="block text-sm font-bold text-white">صندوق تقارير النظام والمهام الشاملة</span>
-                      <span className="block text-[10px] text-gray-400 mt-0.5">طباعة تقارير الإنجاز اليومي، الأجهزة المتأخرة، كفاءة المهندسين، ومسيرات الحركة</span>
-                    </div>
-                  </div>
-                  <ChevronLeft size={18} className="text-purple-500 group-hover:-translate-x-1 transition-transform" />
-                </button>
-              </div>
+                    <ChevronLeft size={18} className="text-purple-500 group-hover:-translate-x-1 transition-transform" />
+                  </button>
+                </div>
+              )}
 
               {/* Comprehensive System Reports Modal Popup */}
-              {showComprehensiveModal && (
+              {showComprehensiveModal && canViewComprehensive && (
                 <div className="fixed inset-0 z-[120] bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in" dir="rtl">
                   <div className="bg-[#161616] border border-purple-500/25 rounded-[2.5rem] shadow-2xl w-full max-w-4xl max-h-[90vh] flex flex-col overflow-hidden font-cairo">
                     

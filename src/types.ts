@@ -139,6 +139,8 @@ export interface AppPermissions {
   settings_device_management: { view: boolean; add: boolean; edit: boolean; delete: boolean; print: boolean; advancedView?: boolean };
   settings_users: { view: boolean; add: boolean; edit: boolean; delete: boolean; print: boolean; advancedView?: boolean };
   settings_advanced_management?: { view: boolean };
+  settings_backup_sync?: { view: boolean };
+  settings_advanced_maintenance?: { view: boolean };
   settings_hybrid_db?: { view: boolean; edit: boolean; advancedView?: boolean };
 }
 

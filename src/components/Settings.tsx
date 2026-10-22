@@ -75,6 +75,9 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
   const { hasPermission } = usePermissions(user);
   const hasHybridDbPermission = user.role === 'admin' || user.role === 'manager' || !!user.permissions?.settings_hybrid_db?.view;
 
+  const canViewBackupSync = user.role === 'admin' || user.isPrimary || hasPermission('settings_backup_sync', 'view');
+  const canViewAdvancedMaintenance = user.role === 'admin' || user.isPrimary || hasPermission('settings_advanced_maintenance', 'view');
+
   const canShowCategory = (catId: string) => {
     if (catId === 'general' || catId === 'security') return true;
     if (catId === 'accounting-inputs') return hasPermission('settings_main_data', 'view');
@@ -3569,27 +3572,29 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
       </button>
 
       {/* 2. Backup Option */}
-      <button
-        type="button"
-        onClick={() => {
-          setAdvancedTab('database');
-          setAdvancedDbSubTab('backup');
-          setActiveAdvancedManagementModal('database-backup');
-          setAdvancedDbView('list');
-        }}
-        className="w-full flex items-center justify-between p-6 bg-white/5 hover:bg-white/[0.08] border border-white/5 hover:border-indigo-500/30 rounded-2xl transition-all group text-right shadow-lg cursor-pointer mx-4 md:mx-0"
-      >
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-indigo-600/10 text-indigo-500 flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-all">
-            <Database size={22} />
+      {canViewBackupSync && (
+        <button
+          type="button"
+          onClick={() => {
+            setAdvancedTab('database');
+            setAdvancedDbSubTab('backup');
+            setActiveAdvancedManagementModal('database-backup');
+            setAdvancedDbView('list');
+          }}
+          className="w-full flex items-center justify-between p-6 bg-white/5 hover:bg-white/[0.08] border border-white/5 hover:border-indigo-500/30 rounded-2xl transition-all group text-right shadow-lg cursor-pointer mx-4 md:mx-0"
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-indigo-600/10 text-indigo-500 flex items-center justify-center group-hover:bg-indigo-600 group-hover:text-white transition-all">
+              <Database size={22} />
+            </div>
+            <div>
+              <h3 className="font-bold text-white text-base">نسخ البيانات والمزامنة</h3>
+              <p className="text-xs text-gray-400 mt-1">النسخ الاحتياطي اليدوي والتلقائي والأرشفة واستعادة البيانات</p>
+            </div>
           </div>
-          <div>
-            <h3 className="font-bold text-white text-base">نسخ البيانات والمزامنة</h3>
-            <p className="text-xs text-gray-400 mt-1">النسخ الاحتياطي اليدوي والتلقائي والأرشفة واستعادة البيانات</p>
-          </div>
-        </div>
-        <ChevronLeft size={20} className="text-gray-500 group-hover:text-white group-hover:translate-x-[-4px] transition-all" />
-      </button>
+          <ChevronLeft size={20} className="text-gray-500 group-hover:text-white group-hover:translate-x-[-4px] transition-all" />
+        </button>
+      )}
 
       {/* 3. Devices Management Option */}
       <button
@@ -3613,28 +3618,30 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
       </button>
 
       {/* 4. Advanced Database Maintenance Option */}
-      <button
-        type="button"
-        onClick={() => {
-          if (onNavigateToAdvancedMaintenance) {
-            onNavigateToAdvancedMaintenance();
-          } else {
-            setActiveAdvancedManagementModal('advanced-maintenance');
-          }
-        }}
-        className="w-full flex items-center justify-between p-6 bg-white/5 hover:bg-white/[0.08] border border-white/5 hover:border-amber-500/30 rounded-2xl transition-all group text-right shadow-lg cursor-pointer mx-4 md:mx-0"
-      >
-        <div className="flex items-center gap-4">
-          <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center group-hover:bg-amber-500 group-hover:text-white transition-all">
-            <Wrench size={22} />
+      {canViewAdvancedMaintenance && (
+        <button
+          type="button"
+          onClick={() => {
+            if (onNavigateToAdvancedMaintenance) {
+              onNavigateToAdvancedMaintenance();
+            } else {
+              setActiveAdvancedManagementModal('advanced-maintenance');
+            }
+          }}
+          className="w-full flex items-center justify-between p-6 bg-white/5 hover:bg-white/[0.08] border border-white/5 hover:border-amber-500/30 rounded-2xl transition-all group text-right shadow-lg cursor-pointer mx-4 md:mx-0"
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-500 flex items-center justify-center group-hover:bg-amber-500 group-hover:text-white transition-all">
+              <Wrench size={22} />
+            </div>
+            <div>
+              <h3 className="font-bold text-white text-base">صيانة متقدمة لقاعدة البيانات</h3>
+              <p className="text-xs text-gray-400 mt-1">صيانة وترقيم السندات وفواتير الصيانة والعملاء وفواتير أخرى</p>
+            </div>
           </div>
-          <div>
-            <h3 className="font-bold text-white text-base">صيانة متقدمة لقاعدة البيانات</h3>
-            <p className="text-xs text-gray-400 mt-1">صيانة وترقيم السندات وفواتير الصيانة والعملاء وفواتير أخرى</p>
-          </div>
-        </div>
-        <ChevronLeft size={20} className="text-gray-500 group-hover:text-white group-hover:translate-x-[-4px] transition-all" />
-      </button>
+          <ChevronLeft size={20} className="text-gray-500 group-hover:text-white group-hover:translate-x-[-4px] transition-all" />
+        </button>
+      )}
     </div>
 
     {/* Modals for advanced-management options */}

@@ -310,6 +310,13 @@ export class LocalProvider implements IDataProvider {
           deletedBy: currentUserId
         }
       }, transactionGroupId);
+
+      // Proactively purge from Cloud Firestore if online to avoid resurrection windows
+      if (typeof window !== 'undefined' && navigator.onLine) {
+        import('./FirebaseProvider').then(({ FirebaseProviderInstance }) => {
+          FirebaseProviderInstance.deleteDoc(collectionName, id, 'BYPASS_OUTBOX').catch(() => {});
+        }).catch(() => {});
+      }
     } else {
       // BYPASS_OUTBOX or direct tombstone deletion
       await localDb.run(`DELETE FROM ${collectionName} WHERE id = ?`, [id]);
