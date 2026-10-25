@@ -2294,22 +2294,9 @@ export default function AccountingInputs() {
                               <div className="flex items-center justify-center gap-2">
                                 <button
                                   type="button"
-                                  onClick={() => {
-                                    const safeDev: UserDevice = {
-                                      ...device,
-                                      serialImei: device.serialImei || '',
-                                      deviceName: device.deviceName || '',
-                                      linkedUserName: device.linkedUserName || '',
-                                      linkedUserId: device.linkedUserId || '',
-                                      status: device.status || 'نشط',
-                                      networkStatus: device.networkStatus || 'متصل',
-                                      notes: device.notes || '',
-                                    };
-                                    setSelectedDeviceForDetail(safeDev);
-                                    setDetailForm(safeDev);
-                                    setIsEditingDetailModal(false);
-                                  }}
-                                  className="px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500 text-amber-400 hover:text-black border border-amber-500/30 rounded-xl text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1.5"
+                                  disabled
+                                  className="px-3 py-1.5 bg-gray-500/10 text-gray-400 border border-white/10 rounded-xl text-xs font-bold opacity-50 cursor-not-allowed inline-flex items-center gap-1.5"
+                                  title="الزر غير مفعل للتجربة"
                                 >
                                   <Eye size={13} />
                                   <span>عرض</span>

@@ -38,7 +38,7 @@ import {
 import { collection, query, where, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, onSnapshot, writeBatch, deleteDoc, serverTimestamp } from './firebase';
 import { db } from './firebase';
 import { User, ShopConfig, isPurchaseInvoice } from './types';
-import { getItemBillableCost, isItemRefusedOrFailed, runRetroactiveNonBillableCleanup } from './lib/billableService';
+import { getItemBillableCost, isItemRefusedOrFailed } from './lib/billableService';
 import { openWhatsApp, sendUniversalReminder } from './lib/shareHelper';
 import { ProviderFactory } from './data/ProviderFactory';
 import { localDb } from './lib/local-db';
@@ -368,21 +368,7 @@ export default function App() {
     };
   }, [user]);
 
-  // One-time retroactive cleanup of non-billable items & discount recalculations
-  useEffect(() => {
-    if (!user) return;
-    const cleanupKey = 'snd_discount_cleanup_v2';
-    if (!localStorage.getItem(cleanupKey)) {
-      runRetroactiveNonBillableCleanup().then(res => {
-        if (res.updatedItemsCount > 0 || res.updatedInvoicesCount > 0) {
-          console.log(`[Cleanup & Discount Reconcile] Zeroed ${res.updatedItemsCount} non-billable items and reconciled ${res.updatedInvoicesCount} invoices.`);
-        }
-        localStorage.setItem(cleanupKey, 'done');
-      }).catch(err => {
-        console.warn('[Cleanup & Discount Reconcile] Error running cleanup:', err);
-      });
-    }
-  }, [user]);
+
 
   // Helper function to calculate actual invoice cost according to items status and discounts/taxes
   const getInvoiceActualCost = (invoiceItems: any[], invoice?: any) => {
