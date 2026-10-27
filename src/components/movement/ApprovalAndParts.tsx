@@ -12,6 +12,7 @@ import BankAccountsFooter from '../BankAccountsFooter';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
 import { sanitizeDocumentStyles, sanitizeElementInlineStyles, cleanOklchInStyleText } from '../../lib/html2canvasHelper';
+import { ProviderFactory } from '../../data/ProviderFactory';
 
 const WhatsAppIcon = (props: React.SVGProps<SVGSVGElement>) => (
   <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" {...props}>
@@ -173,11 +174,11 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
     return c ? (c.companyName || '---') : '---';
   };
 
-  const incrementPrintCount = async (inv: Invoice) => {
+  const incrementPrintCount = async (inv: Invoice, outputType: 'PRINT' | 'SHARE' = 'PRINT') => {
     if (!inv || !inv.id) return;
+    const currentCount = Number(inv.printCount || 0);
+    const newCount = currentCount + 1;
     try {
-      const currentCount = Number(inv.printCount || 0);
-      const newCount = currentCount + 1;
       const docRef = doc(db, 'invoices', inv.id);
       await updateDoc(docRef, { printCount: newCount });
       
@@ -192,8 +193,6 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
     } catch (e) {
       console.error("Error updating print count in Firestore:", e);
       // Fallback: update local state only
-      const currentCount = Number(inv.printCount || 0);
-      const newCount = currentCount + 1;
       setInvoices(prev => prev.map(i => i.id === inv.id ? { ...i, printCount: newCount } : i));
       if (selectedInvoice && selectedInvoice.id === inv.id) {
         setSelectedInvoice(prev => prev ? { ...prev, printCount: newCount } : null);
@@ -202,12 +201,30 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
         setActivePrintReportInvoice(prev => prev ? { ...prev, printCount: newCount } : null);
       }
     }
+
+    // Record in document_outputs (both SQLite and Cloud via ProviderFactory)
+    try {
+      const docName = activePrintReportInvoice ? 'عرض سعر' : 'تقرير الحالة والإسناد';
+      const resolvedUserId = String(user?.userNumber || user?.name || user?.username || (inv as any).userNumber || (inv as any).createdBy || '1');
+      const outputRecord = {
+        id: 'out_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now(),
+        document_id: inv.id,
+        document_number: String(inv.invoiceNumber || '').replace('#', '').trim(),
+        document_name: docName,
+        output_type: outputType,
+        output_datetime: new Date().toISOString(),
+        user_id: resolvedUserId
+      };
+      await ProviderFactory.getProvider().setDoc('document_outputs', outputRecord.id, outputRecord);
+    } catch (err) {
+      console.warn("Failed recording document_outputs in ApprovalAndParts:", err);
+    }
   };
 
   const handlePrintDirect = async () => {
     const inv = activePrintReportInvoice || selectedInvoice;
     if (inv) {
-      await incrementPrintCount(inv);
+      await incrementPrintCount(inv, 'PRINT');
     }
     
     setTimeout(() => {
@@ -240,7 +257,7 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
   };
 
   const handleExportPDFAndWhatsApp = async (invoice: Invoice) => {
-    await incrementPrintCount(invoice);
+    await incrementPrintCount(invoice, 'SHARE');
     const getConditionRank = (item: any) => {
       const statusLabel = getItemStatus(item);
       if (statusLabel === 'لا يصلح') return 3;

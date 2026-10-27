@@ -10,6 +10,7 @@ import { sharePdfFile, openWhatsApp } from '../lib/shareHelper';
 import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../lib/pdfHelper';
 import { tafqeet } from '../lib/tafqeet';
 import { resolveVoucherDynamicStatement, resolveVoucherExtraNotes, resolveLiveInvoiceNumber, formatCustomerReference } from '../lib/voucherDisplayService';
+import { ProviderFactory } from '../data/ProviderFactory';
 
 function getCurrencyFullName(curr?: string) {
   if (!curr) return '';
@@ -80,6 +81,26 @@ export default function PrintPreviewOverlay({
   const [contentHeight, setContentHeight] = useState(1123);
   const [customersMap, setCustomersMap] = useState<Map<string, any>>(new Map());
   const [invoicesMap, setInvoicesMap] = useState<Map<string, any>>(new Map());
+
+  const [currentPrintCount, setCurrentPrintCount] = useState<number>(() => {
+    if (type === 'invoice' && data?.invoice?.printCount !== undefined) {
+      return Number(data.invoice.printCount) || 0;
+    }
+    if (type === 'voucher' && data?.voucher?.printCount !== undefined) {
+      return Number(data.voucher.printCount) || 0;
+    }
+    return Number(data?.printCount || 0);
+  });
+
+  useEffect(() => {
+    if (type === 'invoice' && data?.invoice?.printCount !== undefined) {
+      setCurrentPrintCount(Number(data.invoice.printCount) || 0);
+    } else if (type === 'voucher' && data?.voucher?.printCount !== undefined) {
+      setCurrentPrintCount(Number(data.voucher.printCount) || 0);
+    } else if (data?.printCount !== undefined) {
+      setCurrentPrintCount(Number(data.printCount) || 0);
+    }
+  }, [data, type]);
 
   useEffect(() => {
     const fetchEntities = async () => {
@@ -233,11 +254,9 @@ export default function PrintPreviewOverlay({
     <>
       <div className="absolute left-8 top-1.5 text-[8px] text-gray-400 font-normal select-none opacity-45 font-mono pointer-events-none flex items-center gap-1.5" dir="rtl">
         <span>تاريخ ووقت الطباعة: {new Date().toLocaleDateString('ar-YE')} {new Date().toLocaleTimeString('ar-YE', { hour12: true, hour: '2-digit', minute: '2-digit' })}</span>
-        {type === 'invoice' && invoice?.printCount !== undefined && (
-          <span className="border border-gray-400 px-1 rounded font-bold text-[9px] text-gray-500 bg-transparent inline-block font-sans ml-1">
-            {invoice.printCount}
-          </span>
-        )}
+        <span className="border border-gray-400 px-1 rounded font-bold text-[9px] text-gray-500 bg-transparent inline-block font-sans ml-1" title="رقم الطباعة والإخراج">
+          {(currentPrintCount || 0) > 0 ? currentPrintCount : 1}
+        </span>
       </div>
     
       {/* Universal Header Layout */}
@@ -1016,17 +1035,101 @@ export default function PrintPreviewOverlay({
     });
   };
 
-  const handlePrint = async () => {
-    // Increment print count if it's an invoice
-    if (type === 'invoice' && invoice?.id) {
-      try {
-        await updateDoc(doc(db, 'invoices', invoice.id), {
-          printCount: increment(1)
-        });
-      } catch (e) {
-        console.warn("Failed to increment print count", e);
+  const recordDocumentOutput = async (outputType: 'PRINT' | 'PDF' | 'SHARE') => {
+    try {
+      const nextCount = (currentPrintCount || 0) + 1;
+      setCurrentPrintCount(nextCount);
+
+      let docId = '';
+      let docNumber = '';
+
+      if (type === 'invoice' && invoice) {
+        docId = invoice.id || data?.invoice?.id || (invoice.invoiceNumber ? 'inv_' + String(invoice.invoiceNumber).replace('#', '').trim() : '');
+        docNumber = String(invoice.invoiceNumber || data?.invoice?.invoiceNumber || '').replace('#', '').trim();
+        const targetInvId = invoice.id || data?.invoice?.id;
+        if (targetInvId) {
+          try {
+            await ProviderFactory.getProvider().updateDoc('invoices', targetInvId, {
+              printCount: nextCount
+            });
+            invoice.printCount = nextCount;
+            if (data?.invoice) data.invoice.printCount = nextCount;
+          } catch (e) {
+            console.warn("Failed updating invoice printCount:", e);
+          }
+        }
+      } else if (type === 'voucher' && voucher) {
+        docId = voucher.id || '';
+        docNumber = String(voucher.voucherNumber || voucher.number || '').trim();
+        if (voucher.id) {
+          try {
+            await ProviderFactory.getProvider().updateDoc('vault_transactions', voucher.id, {
+              printCount: nextCount
+            });
+            voucher.printCount = nextCount;
+          } catch (e) {
+            console.warn("Failed updating voucher printCount:", e);
+          }
+        }
+      } else if (type === 'statement' && statement) {
+        docId = statement.customerId || statement.id || '';
+        docNumber = `STMT-${String(statement.customerName || 'CUST').trim()}`;
+      } else if (type === 'table' && tableData) {
+        docId = tableData.id || '';
+        docNumber = `REP-${String(tableData.title || 'TABLE').trim()}`;
       }
+
+      // Resolve exact document name in Arabic
+      let docName = 'مستند';
+      if (type === 'invoice') {
+        const tmpl = String(templateType || data?.templateType || '').toLowerCase();
+        if (tmpl === 'entry') docName = 'سند استلام أجهزة';
+        else if (tmpl === 'inspection') docName = 'تقرير فحص فني';
+        else if (tmpl === 'quotation') docName = 'عرض سعر';
+        else if (tmpl === 'assignment') docName = 'تقرير الحالة والإسناد';
+        else if (tmpl === 'maintenance') docName = 'تقرير صيانة أجهزة';
+        else if (tmpl === 'exit') docName = 'فاتورة خروج أجهزة';
+        else if (tmpl.startsWith('sale')) docName = 'فاتورة مبيعات';
+        else if (tmpl.startsWith('purchase')) docName = 'فاتورة مشتريات';
+        else docName = 'فاتورة أجهزة';
+      } else if (type === 'voucher') {
+        const vType = String(voucher?.type || '').toLowerCase();
+        if (vType === 'receipt') docName = 'سند قبض مالي';
+        else if (vType === 'payment') docName = 'سند صرف مالي';
+        else docName = 'سند مالي';
+      } else if (type === 'statement') {
+        docName = 'كشف حساب عميل';
+      } else if (type === 'table') {
+        docName = String(tableData?.title || 'تقرير جدول');
+      }
+
+      // Resolve user number/name to match what is printed on document
+      const resolvedUserId = String(user?.userNumber || user?.name || user?.username || invoice?.userNumber || invoice?.createdBy || '1');
+
+      // Record light entry in document_outputs (both SQLite and Cloud via ProviderFactory)
+      const outputRecord = {
+        id: 'out_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now(),
+        document_id: docId || 'UNKNOWN',
+        document_number: docNumber || '---',
+        document_name: docName,
+        output_type: outputType,
+        output_datetime: new Date().toISOString(),
+        user_id: resolvedUserId
+      };
+
+      try {
+        await ProviderFactory.getProvider().setDoc('document_outputs', outputRecord.id, outputRecord);
+      } catch (err) {
+        console.warn("Failed saving document_outputs record:", err);
+      }
+    } catch (err) {
+      console.warn("recordDocumentOutput error:", err);
     }
+  };
+
+  const handlePrint = async () => {
+    // Record output and increment counter
+    await recordDocumentOutput('PRINT');
 
     const printArea = document.getElementById('print-preview-area');
     if (!printArea) return;
@@ -1146,6 +1249,7 @@ export default function PrintPreviewOverlay({
 
   const handleDownloadPdf = async () => {
     setIsGeneratingPDF(true);
+    await recordDocumentOutput('PDF');
     try {
       const printArea = document.getElementById('print-preview-area');
       if (!printArea) {
@@ -1183,16 +1287,8 @@ export default function PrintPreviewOverlay({
 
     setIsGeneratingPDF(true);
 
-    // Increment print count if it's an invoice
-    if (type === 'invoice' && invoice?.id) {
-      try {
-        await updateDoc(doc(db, 'invoices', invoice.id), {
-          printCount: increment(1)
-        });
-      } catch (e) {
-        console.warn("Failed to increment print count", e);
-      }
-    }
+    // Record output and increment counter
+    await recordDocumentOutput('SHARE');
 
     try {
       const printArea = document.getElementById('print-preview-area');
@@ -1351,8 +1447,12 @@ export default function PrintPreviewOverlay({
           {(handleWhatsApp || onWhatsApp) && (
             <button 
               onClick={async () => {
-                if (onWhatsApp) await onWhatsApp();
-                else if (handleWhatsApp) await handleWhatsApp();
+                if (onWhatsApp) {
+                  await onWhatsApp();
+                  await recordDocumentOutput('SHARE');
+                } else if (handleWhatsApp) {
+                  await handleWhatsApp();
+                }
               }}
               disabled={isGeneratingPDF || isSaving}
               className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-50 active:scale-95 cursor-pointer shrink-0 font-cairo"
@@ -1367,12 +1467,32 @@ export default function PrintPreviewOverlay({
             </button>
           )}
 
+          {/* Export PDF Button */}
+          <button 
+            type="button"
+            onClick={handleDownloadPdf}
+            disabled={isGeneratingPDF || isSaving}
+            className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0 font-cairo"
+            title="تصدير ملف PDF"
+          >
+            {isGeneratingPDF ? (
+              <Loader2 size={18} className="animate-spin" />
+            ) : (
+              <FileDown size={18} />
+            )}
+            <span className="text-xs md:text-sm font-bold">تصدير PDF</span>
+          </button>
+
           {/* Print Button */}
           {(handlePrint || onPrint) && (
             <button 
               onClick={async () => {
-                if (onPrint) await onPrint();
-                else if (handlePrint) await handlePrint();
+                if (onPrint) {
+                  await onPrint();
+                  await recordDocumentOutput('PRINT');
+                } else if (handlePrint) {
+                  await handlePrint();
+                }
               }}
               disabled={isSaving}
               className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0 font-cairo"

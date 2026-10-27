@@ -107,8 +107,23 @@ export function openWhatsApp(message: string, phone?: string, countryCode?: stri
       ? `whatsapp://send?phone=${cleanPhone}&text=${encodedText}`
       : `whatsapp://send?text=${encodedText}`;
       
-    // Using a hidden iframe or direct location change to avoid page refresh
-    window.location.href = protocolUrl;
+    // Use an invisible link click to launch WhatsApp without navigating away from the current SPA page
+    // This prevents mobile browsers from reloading the page when switching back from WhatsApp
+    try {
+      const link = document.createElement('a');
+      link.href = protocolUrl;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      document.body.appendChild(link);
+      link.click();
+      setTimeout(() => {
+        if (document.body.contains(link)) {
+          document.body.removeChild(link);
+        }
+      }, 500);
+    } catch (err) {
+      window.open(protocolUrl, '_blank');
+    }
     
     // Fallback to wa.me after a short delay if the protocol didn't work 
     // (e.g., app not installed or protocol blocked)

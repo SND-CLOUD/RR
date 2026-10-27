@@ -14,6 +14,7 @@ import CategoriesTable from './CategoriesTable';
 import DeviceManagement from './DeviceManagement';
 import AccountingInputs from './AccountingInputs';
 import AdvancedDatabaseMaintenance from './AdvancedDatabaseMaintenance';
+import DocumentOutputsManager from './DocumentOutputsManager';
 import { AnimatePresence, motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { Filesystem, Directory } from '@capacitor/filesystem';
@@ -77,12 +78,13 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
 
   const canViewBackupSync = user.role === 'admin' || user.isPrimary || hasPermission('settings_backup_sync', 'view');
   const canViewAdvancedMaintenance = user.role === 'admin' || user.isPrimary || hasPermission('settings_advanced_maintenance', 'view');
+  const canViewPrintManagement = user.role === 'admin' || user.isPrimary || hasPermission('print_management', 'view');
 
   const canShowCategory = (catId: string) => {
     if (catId === 'general' || catId === 'security') return true;
     if (catId === 'accounting-inputs') return hasPermission('settings_main_data', 'view');
     if (catId === 'categories-engineers') return hasPermission('settings_devices_engineers', 'view');
-    if (catId === 'advanced-management') return user.role === 'admin' || user.isPrimary || hasPermission('settings_advanced_management', 'view');
+    if (catId === 'advanced-management') return user.role === 'admin' || user.isPrimary || hasPermission('settings_advanced_management', 'view') || canViewPrintManagement;
     if (catId === 'users') return true;
     return true;
   };
@@ -103,7 +105,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
   // Shop details states
   const [activeCategoriesEngineersModal, setActiveCategoriesEngineersModal] = useState<'categories' | 'engineers' | null>(null);
   const [activeAccountingInputsModal, setActiveAccountingInputsModal] = useState<'accounting' | 'details' | 'backup' | null>(null);
-  const [activeAdvancedManagementModal, setActiveAdvancedManagementModal] = useState<'database-sync' | 'database-backup' | 'devices' | 'advanced-maintenance' | null>(null);
+  const [activeAdvancedManagementModal, setActiveAdvancedManagementModal] = useState<'database-sync' | 'database-backup' | 'devices' | 'advanced-maintenance' | 'print-management' | null>(null);
   const [generalSubTab, setGeneralSubTab] = useState<'language' | 'details' | 'advanced' | 'database'>('language');
   const [activeGeneralModal, setActiveGeneralModal] = useState<'language' | 'details' | 'advanced' | 'database' | null>(null);
   
@@ -3642,11 +3644,31 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
           <ChevronLeft size={20} className="text-gray-500 group-hover:text-white group-hover:translate-x-[-4px] transition-all" />
         </button>
       )}
+
+      {/* 5. Print Management Option */}
+      {canViewPrintManagement && (
+        <button
+          type="button"
+          onClick={() => setActiveAdvancedManagementModal('print-management')}
+          className="w-full flex items-center justify-between p-6 bg-white/5 hover:bg-white/[0.08] border border-white/5 hover:border-emerald-500/30 rounded-2xl transition-all group text-right shadow-lg cursor-pointer mx-4 md:mx-0"
+        >
+          <div className="flex items-center gap-4">
+            <div className="w-12 h-12 rounded-xl bg-emerald-500/10 text-emerald-500 flex items-center justify-center group-hover:bg-emerald-500 group-hover:text-white transition-all">
+              <Printer size={22} />
+            </div>
+            <div>
+              <h3 className="font-bold text-white text-base">إدارة المطبوعات</h3>
+              <p className="text-xs text-gray-400 mt-1">سجل المطبوعات والتصدير والمشاركات، متابعة تحركات المستندات والمستخدمين</p>
+            </div>
+          </div>
+          <ChevronLeft size={20} className="text-gray-500 group-hover:text-white group-hover:translate-x-[-4px] transition-all" />
+        </button>
+      )}
     </div>
 
     {/* Modals for advanced-management options */}
     <AnimatePresence>
-      {activeAdvancedManagementModal !== null && (
+      {activeAdvancedManagementModal !== null && activeAdvancedManagementModal !== 'print-management' && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-0 sm:p-6 bg-black/80 backdrop-blur-sm">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
@@ -4179,6 +4201,12 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
             </div>
           </motion.div>
         </div>
+      )}
+      {activeAdvancedManagementModal === 'print-management' && (
+        <DocumentOutputsManager
+          currentUser={user}
+          onClose={() => setActiveAdvancedManagementModal(null)}
+        />
       )}
     </AnimatePresence>
   </div>

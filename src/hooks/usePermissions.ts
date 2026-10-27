@@ -40,6 +40,7 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
         targetSection === 'settings_advanced_management' ||
         targetSection === 'settings_backup_sync' ||
         targetSection === 'settings_advanced_maintenance' ||
+        targetSection === 'print_management' ||
         targetSection === 'reports_comprehensive' || 
         targetSection === 'reports_financial' ||
         (targetSection === 'vault' && action === 'advancedView' && currentUser.permissions?.vault?.advancedView !== undefined)
@@ -59,6 +60,7 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
           targetSection === 'settings_advanced_management' ||
           targetSection === 'settings_backup_sync' ||
           targetSection === 'settings_advanced_maintenance' ||
+          targetSection === 'print_management' ||
           targetSection === 'reports' ||
           (typeof targetSection === 'string' && targetSection.startsWith('settings_'))
         ) return false;

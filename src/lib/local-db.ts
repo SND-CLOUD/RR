@@ -334,7 +334,8 @@ class LocalDatabase {
           receiptCurrency TEXT,
           receiptAmount REAL,
           statementNote TEXT,
-          bankDetails TEXT
+          bankDetails TEXT,
+          printCount INTEGER DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS maintenance_actions (
@@ -455,6 +456,7 @@ class LocalDatabase {
           id TEXT PRIMARY KEY,
           document_id TEXT,
           document_number TEXT,
+          document_name TEXT,
           output_type TEXT,
           output_datetime TEXT,
           user_id TEXT
@@ -607,6 +609,7 @@ class LocalDatabase {
             id TEXT PRIMARY KEY,
             document_id TEXT,
             document_number TEXT,
+            document_name TEXT,
             output_type TEXT,
             output_datetime TEXT,
             user_id TEXT
@@ -1157,6 +1160,18 @@ class LocalDatabase {
         await this.db.run('ALTER TABLE vault_transactions ADD COLUMN statementNote TEXT');
       } catch (err) {
         // console.warn("Column statementNote might already exist", err);
+      }
+
+      try {
+        await this.db.run('ALTER TABLE vault_transactions ADD COLUMN printCount INTEGER DEFAULT 0');
+      } catch (err) {
+        // Column probably already exists
+      }
+
+      try {
+        await this.db.run('ALTER TABLE document_outputs ADD COLUMN document_name TEXT');
+      } catch (err) {
+        // Column probably already exists
       }
 
 

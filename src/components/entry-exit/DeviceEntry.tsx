@@ -62,6 +62,7 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
   const [showPreview, setShowPreview] = useState(false);
   const [shopConfig, setShopConfig] = useState<any>(null);
   const [currentOutput, setCurrentOutput] = useState<any>(null);
+  const previewInvoiceObj = useRef<any>({});
 
   // Form State
   const [customer, setCustomer] = useState({ name: '', phone1: '', phone2: '', notes: '' });
@@ -381,6 +382,8 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
       // 2. Handle Invoice
       const invoiceTotal = 0;
       const invoiceRef = doc(collection(db, 'invoices'));
+      previewInvoiceObj.current.id = invoiceRef.id;
+      previewInvoiceObj.current.invoiceNumber = finalAssignedInvoiceNumber;
       const nowIso = new Date().toISOString();
       batch.set(invoiceRef, {
         id: invoiceRef.id,
@@ -461,23 +464,6 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
       await new Promise(resolve => setTimeout(resolve, 0));
 
       if (action === 'print' || action === 'whatsapp') {
-        const outputRef = await addDoc(collection(db, 'document_outputs'), {
-          document_id: invoiceRef.id,
-          document_number: finalAssignedInvoiceNumber,
-          output_type: action === 'print' ? 'PRINT' : 'Share',
-          output_datetime: serverTimestamp(),
-          user_id: user?.id || 'System' // Assumes user has an id or use name if id is not robust
-        });
-
-        setCurrentOutput({
-          id: outputRef.id,
-          user_id: (user as any)?.uid || user?.id || user?.name || 'System',
-          output_datetime: new Date()
-        });
-
-        // Wait a moment for React to render the output block
-        await new Promise(resolve => setTimeout(resolve, 100));
-
         const originalStyle = document.createElement('style');
         originalStyle.innerHTML = `
           @media print {
@@ -725,13 +711,15 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
           type="invoice"
           data={{
             invoice: {
+              id: previewInvoiceObj.current?.id || undefined,
               invoiceNumber: invoiceNumber,
               createdAt: new Date(),
               customerName: customer.name,
               customerPhone: customer.phone1,
               printCount: 0,
               notes: notes,
-              status: 'entry'
+              status: 'entry',
+              ...previewInvoiceObj.current
             },
             items: items.map(item => ({
               ...item,
