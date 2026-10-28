@@ -44,7 +44,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
     settings_backup_sync: { view: false },
     settings_advanced_maintenance: { view: false },
     settings_hybrid_db: { view: false, edit: false, advancedView: false },
-    print_management: { view: false }
+    print_management: { view: false, delete: false }
   };
 
   const [formData, setFormData] = useState<Partial<User>>({ 

@@ -142,7 +142,7 @@ export interface AppPermissions {
   settings_backup_sync?: { view: boolean };
   settings_advanced_maintenance?: { view: boolean };
   settings_hybrid_db?: { view: boolean; edit: boolean; advancedView?: boolean };
-  print_management?: { view: boolean };
+  print_management?: { view: boolean; delete: boolean };
 }
 
 export interface User {

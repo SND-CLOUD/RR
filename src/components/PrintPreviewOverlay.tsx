@@ -1045,16 +1045,13 @@ export default function PrintPreviewOverlay({
 
       if (type === 'invoice' && invoice) {
         docId = invoice.id || data?.invoice?.id || (invoice.invoiceNumber ? 'inv_' + String(invoice.invoiceNumber).replace('#', '').trim() : '');
-        const tmpl = String(templateType || data?.templateType || '').toLowerCase();
-        // If it's a report (inspection, quotation, assignment, maintenance) use #REP
-        if (['inspection', 'quotation', 'assignment', 'maintenance'].includes(tmpl)) {
+        docNumber = String(invoice.invoiceNumber || data?.invoice?.invoiceNumber || '').replace('#', '').trim();
+        const isSpecialPrefix = /^(O-|PUR-|DIS-|INV-)/i.test(docNumber);
+        
+        // If invoice number still looks like a name (contains Arabic) or is empty, fallback to #REP
+        // Allow it to pass if it has a special known prefix (O-, PUR-, etc)
+        if (!docNumber || (/[\u0600-\u06FF]/.test(docNumber) && !isSpecialPrefix)) {
           docNumber = '#REP';
-        } else {
-          docNumber = String(invoice.invoiceNumber || data?.invoice?.invoiceNumber || '').replace('#', '').trim();
-          // If invoice number still looks like a name (contains Arabic), fallback to #REP
-          if (/[\u0600-\u06FF]/.test(docNumber)) {
-            docNumber = '#REP';
-          }
         }
         const targetInvId = invoice.id || data?.invoice?.id;
         if (targetInvId) {
@@ -1092,12 +1089,29 @@ export default function PrintPreviewOverlay({
       // Resolve exact document name in Arabic
       let docName = 'مستند';
       if (type === 'invoice') {
+        const inv = invoice || data?.invoice;
+        const invType = String(inv?.invoiceType || inv?.templateType || inv?.type || '').toLowerCase();
+        const invNum = String(inv?.invoiceNumber || '').toUpperCase();
+        
+        // Priority check for Purchase
+        const isPurchase = invNum.startsWith('PUR-') || 
+                           invNum.startsWith('DIS-') || 
+                           invType.includes('purchase') || 
+                           inv?.isPurchase === 1 || 
+                           inv?.isPurchase === true ||
+                           inv?.type === 'purchase';
+
+        const isOther = invNum.startsWith('O-') || invType.startsWith('sale_');
+
         const tmpl = String(templateType || data?.templateType || '').toLowerCase();
-        if (tmpl === 'entry') docName = 'سند استلام أجهزة';
-        else if (tmpl === 'inspection') docName = 'تقرير فحص فني';
+        
+        if (tmpl === 'inspection') docName = 'تقرير فحص فني';
         else if (tmpl === 'quotation') docName = 'عرض سعر';
         else if (tmpl === 'assignment') docName = 'تقرير الحالة والإسناد';
         else if (tmpl === 'maintenance') docName = 'تقرير صيانة أجهزة';
+        else if (isPurchase) docName = 'فاتورة مشتريات';
+        else if (isOther) docName = 'فاتورة خدمات أخرى';
+        else if (tmpl === 'entry') docName = 'سند استلام أجهزة';
         else if (tmpl === 'exit') docName = 'فاتورة خروج أجهزة';
         else if (tmpl.startsWith('sale')) docName = 'فاتورة مبيعات';
         else if (tmpl.startsWith('purchase')) docName = 'فاتورة مشتريات';

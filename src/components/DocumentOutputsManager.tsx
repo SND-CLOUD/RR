@@ -3,8 +3,9 @@ import {
   Printer, ArrowRight, RefreshCw, Calendar, User as UserIcon, Search, 
   ArrowUpDown, ArrowUp, ArrowDown, Share2, FileDown, FileText, CheckCircle2,
   Clock, Shield, Filter, Hash, Database, ChevronRight, ChevronLeft,
-  ChevronsRight, ChevronsLeft
+  ChevronsRight, ChevronsLeft, Trash2, AlertTriangle, X
 } from 'lucide-react';
+import { AnimatePresence, motion } from 'motion/react';
 import { ProviderFactory } from '../data/ProviderFactory';
 import { User } from '../types';
 import { parseDate } from '../lib/dateUtils';
@@ -54,6 +55,10 @@ export default function DocumentOutputsManager({
   const [pageSize, setPageSize] = useState<number>(10);
   const [currentPage, setCurrentPage] = useState<number>(1);
 
+  // Deletion Modal state
+  const [recordToDelete, setRecordToDelete] = useState<DocumentOutputRecord | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
   // Load records and users
   const loadData = async () => {
     setLoading(true);
@@ -91,6 +96,29 @@ export default function DocumentOutputsManager({
       setLoading(false);
     }
   };
+
+  const handleDeleteRecord = async (record: DocumentOutputRecord) => {
+    setRecordToDelete(record);
+  };
+
+  const confirmDelete = async () => {
+    if (!recordToDelete) return;
+    
+    setIsDeleting(true);
+    try {
+      const provider = ProviderFactory.getProvider();
+      await provider.deleteDoc('document_outputs', recordToDelete.id);
+      setRecords(prev => prev.filter(r => r.id !== recordToDelete.id));
+      setRecordToDelete(null);
+    } catch (err) {
+      console.error('Error deleting document output record:', err);
+      alert('فشل في حذف السجل');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const canDelete = currentUser?.role === 'admin' || currentUser?.role === 'manager' || currentUser?.isPrimary || currentUser?.permissions?.print_management?.delete;
 
   useEffect(() => {
     loadData();
@@ -159,12 +187,13 @@ export default function DocumentOutputsManager({
 
     // Contains Arabic text in number column or matches document_name
     const containsArabic = /[\u0600-\u06FF]/.test(num);
-    if (containsArabic || (name && num === name)) {
+    const isSpecialNumbered = /^(O-|PUR-|DIS-|INV-)/i.test(num);
+    if ((containsArabic && !isSpecialNumbered) || (name && num === name)) {
       return '#REP';
     }
 
     // Unnumbered reports/statements/tables
-    if ((name.includes('تقرير') || name.includes('كشف') || name.includes('جدول')) && (!num || num === '---' || !/^\d+$/.test(num.replace('#', '')))) {
+    if ((name.includes('تقرير') || name.includes('كشف') || name.includes('جدول')) && (!num || num === '---' || (!/^\d+$/.test(num.replace('#', '')) && !isSpecialNumbered))) {
       return '#REP';
     }
 
@@ -512,8 +541,11 @@ export default function DocumentOutputsManager({
           </div>
         ) : (
           <div className="bg-[#181818] rounded-2xl border border-white/5 overflow-hidden shadow-2xl flex-1 flex flex-col">
-            <div className="flex-1 overflow-auto scrollbar-thin scrollbar-thumb-white/10">
-              <table className="w-full text-xs text-right border-collapse min-w-[760px]">
+            <div 
+              className="flex-1 overflow-auto scrollbar-thin scrollbar-thumb-white/10 overscroll-contain touch-auto"
+              style={{ WebkitOverflowScrolling: 'touch' }}
+            >
+              <table className="w-full text-xs text-right border-collapse min-w-[850px]">
                 <thead className="bg-[#222222] text-gray-300 border-b border-white/10 select-none sticky top-0 z-10 font-cairo">
                   <tr>
                     {/* Index */}
@@ -586,6 +618,13 @@ export default function DocumentOutputsManager({
                         {renderSortIndicator('document_id')}
                       </div>
                     </th>
+
+                    {/* Actions Column */}
+                    {canDelete && (
+                      <th className="py-2.5 px-3 font-bold text-gray-400 w-12 text-center">
+                        حذف
+                      </th>
+                    )}
                   </tr>
                 </thead>
 
@@ -647,6 +686,19 @@ export default function DocumentOutputsManager({
                             {item.document_id || '---'}
                           </span>
                         </td>
+
+                        {/* 8. Actions (Delete) */}
+                        {canDelete && (
+                          <td className="py-2.5 px-3 text-center border-l border-white/5 whitespace-nowrap">
+                            <button
+                              onClick={() => handleDeleteRecord(item)}
+                              className="p-1.5 text-rose-500 hover:bg-rose-500/10 rounded-lg transition-all cursor-pointer"
+                              title="حذف السجل"
+                            >
+                              <Trash2 size={15} />
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
@@ -737,6 +789,83 @@ export default function DocumentOutputsManager({
           </button>
         </div>
       </div>
+      {/* Delete Confirmation Modal */}
+      <AnimatePresence>
+        {recordToDelete && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm"
+            onClick={() => {
+              if (!isDeleting) setRecordToDelete(null);
+            }}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-[#1e1e1e] border-2 border-rose-500/60 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5"
+              onClick={(e) => e.stopPropagation()}
+              dir="rtl"
+            >
+              <div className="flex items-center gap-4 text-rose-600 dark:text-rose-400">
+                <div className="w-12 h-12 rounded-2xl bg-rose-500/10 flex items-center justify-center shrink-0">
+                  <Trash2 size={28} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white font-cairo">تأكيد حذف السجل</h3>
+                  <p className="text-[10px] text-gray-500 font-bold font-mono">Document Record Deletion</p>
+                </div>
+                <button
+                  onClick={() => setRecordToDelete(null)}
+                  className="mr-auto p-2 hover:bg-black/5 dark:hover:bg-white/5 rounded-xl transition-all cursor-pointer text-gray-400 hover:text-gray-600 dark:hover:text-white"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div className="text-sm text-slate-700 dark:text-gray-300 leading-relaxed bg-slate-50 dark:bg-black/40 p-5 rounded-2xl border border-slate-200 dark:border-white/10 font-bold space-y-3 font-cairo">
+                <p>هل أنت متأكد من حذف هذا السجل من قائمة المطبوعات؟</p>
+                <div className="flex flex-col gap-1 py-2 border-y border-dashed border-gray-300 dark:border-white/10">
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">رقم المستند:</span>
+                    <span className="text-amber-500 font-mono">{getDisplayDocumentNumber(recordToDelete)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-gray-400">اسم المستند:</span>
+                    <span className="text-white">{recordToDelete.document_name}</span>
+                  </div>
+                </div>
+                <p className="text-[11px] text-rose-500 dark:text-rose-400 font-bold flex items-start gap-2">
+                   <span>⚠️</span>
+                   <span>تنبيه: سيتم حذف هذا السجل من قائمة التدقيق فقط، ولن يؤثر ذلك على المستند الأصلي في قاعدة البيانات.</span>
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={confirmDelete}
+                  className="flex-1 py-3.5 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-2xl font-black text-sm shadow-lg shadow-rose-600/20 transition-all cursor-pointer active:scale-95 font-cairo flex items-center justify-center gap-2"
+                >
+                  {isDeleting ? <RefreshCw size={18} className="animate-spin" /> : <Trash2 size={18} />}
+                  <span>نعم، حذف السجل</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeleting}
+                  onClick={() => setRecordToDelete(null)}
+                  className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 dark:bg-white/10 dark:hover:bg-white/15 text-slate-800 dark:text-white rounded-2xl font-black text-sm transition-all cursor-pointer active:scale-95 border border-slate-200 dark:border-white/10 font-cairo"
+                >
+                  إلغاء التراجع
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
