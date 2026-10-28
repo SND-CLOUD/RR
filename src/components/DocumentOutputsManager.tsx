@@ -147,6 +147,34 @@ export default function DocumentOutputsManager({
     return clean;
   };
 
+  // Resolve document number display for reports vs invoices/vouchers
+  const getDisplayDocumentNumber = (item: DocumentOutputRecord) => {
+    const num = String(item.document_number || '').trim();
+    const name = String(item.document_name || '').trim();
+
+    // Explicit report markers
+    if (num === '#REP' || num === 'REP' || num.startsWith('#REP') || num.startsWith('REP-') || num.startsWith('STMT-')) {
+      return '#REP';
+    }
+
+    // Contains Arabic text in number column or matches document_name
+    const containsArabic = /[\u0600-\u06FF]/.test(num);
+    if (containsArabic || (name && num === name)) {
+      return '#REP';
+    }
+
+    // Unnumbered reports/statements/tables
+    if ((name.includes('تقرير') || name.includes('كشف') || name.includes('جدول')) && (!num || num === '---' || !/^\d+$/.test(num.replace('#', '')))) {
+      return '#REP';
+    }
+
+    if (!num || num === '---') {
+      return '---';
+    }
+
+    return num.startsWith('#') ? num : `#${num}`;
+  };
+
   // Filter and sort records
   const filteredRecords = useMemo(() => {
     const now = new Date();
@@ -158,10 +186,11 @@ export default function DocumentOutputsManager({
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase().trim();
         const num = String(record.document_number || '').toLowerCase();
+        const displayNum = getDisplayDocumentNumber(record).toLowerCase();
         const name = String(record.document_name || '').toLowerCase();
         const user = String(record.user_id || '').toLowerCase();
         const docId = String(record.document_id || '').toLowerCase();
-        if (!num.includes(q) && !name.includes(q) && !user.includes(q) && !docId.includes(q)) {
+        if (!num.includes(q) && !displayNum.includes(q) && !name.includes(q) && !user.includes(q) && !docId.includes(q)) {
           return false;
         }
       }
@@ -468,8 +497,8 @@ export default function DocumentOutputsManager({
         </div>
       </div>
 
-      {/* 3. Table Content Area with smooth 4-direction scroll */}
-      <div className="flex-1 min-h-0 overflow-auto overscroll-contain p-2 sm:p-4 touch-pan-x touch-pan-y">
+      {/* 3. Table Content Area - Unified scroll context for better mobile performance */}
+      <div className="flex-1 min-h-0 p-2 sm:p-4 flex flex-col overflow-hidden">
         {loading ? (
           <div className="flex flex-col items-center justify-center h-64 text-gray-400 space-y-3">
             <RefreshCw size={28} className="animate-spin text-purple-500" />
@@ -482,8 +511,8 @@ export default function DocumentOutputsManager({
             <p className="text-xs text-gray-500 max-w-sm">لم يتم العثور على أي حركات طباعة أو تصدير تطابق الفلاتر المحددة حالياً.</p>
           </div>
         ) : (
-          <div className="bg-[#181818] rounded-2xl border border-white/5 overflow-hidden shadow-2xl flex flex-col">
-            <div className="overflow-x-auto overflow-y-auto max-h-full overscroll-contain touch-pan-x touch-pan-y">
+          <div className="bg-[#181818] rounded-2xl border border-white/5 overflow-hidden shadow-2xl flex-1 flex flex-col">
+            <div className="flex-1 overflow-auto scrollbar-thin scrollbar-thumb-white/10">
               <table className="w-full text-xs text-right border-collapse min-w-[760px]">
                 <thead className="bg-[#222222] text-gray-300 border-b border-white/10 select-none sticky top-0 z-10 font-cairo">
                   <tr>
@@ -578,7 +607,7 @@ export default function DocumentOutputsManager({
 
                         {/* 2. Document Number */}
                         <td className="py-2.5 px-3 font-mono font-bold text-amber-400 border-l border-white/5 whitespace-nowrap">
-                          #{item.document_number || '---'}
+                          {getDisplayDocumentNumber(item)}
                         </td>
 
                         {/* 3. Document Name */}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs, writeBatch, updateDoc, deleteDoc, addDoc, serverTimestamp } from '../firebase';
-import { Save, RefreshCw, Smartphone, Database, Languages, LogOut, Shield, Fingerprint, Lock, Clock, HardDrive, Download, Archive, Upload, RotateCcw, FileText, User as UserIcon, Tag, X, Cpu, Calculator, ArrowLeft, ArrowRight, Edit, Phone, Mail, Facebook, MapPin, Store, ChevronLeft, ChevronDown, Globe, Settings as SettingsIcon, CheckCircle, XCircle, Bell, Printer, SunMoon, Wrench } from 'lucide-react';
+import { Save, RefreshCw, Smartphone, Database, Languages, LogOut, Shield, Fingerprint, Lock, Clock, HardDrive, Download, Archive, Upload, RotateCcw, FileText, User as UserIcon, Tag, X, Cpu, Calculator, ArrowLeft, ArrowRight, Edit, Phone, Mail, Facebook, MapPin, Store, ChevronLeft, ChevronDown, Globe, Settings as SettingsIcon, CheckCircle, XCircle, Bell, Printer, SunMoon, Wrench, AlertTriangle } from 'lucide-react';
 import { localDb } from '../lib/local-db';
 import { FirebaseProviderInstance } from '../data/FirebaseProvider';
 import { LocalProviderInstance } from '../data/LocalProvider';
@@ -111,6 +111,8 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
   
   // Database configuration states
   const [dbMode, setDbMode] = useState<'LOCAL' | 'CLOUD' | 'AUTO'>('LOCAL');
+  const [showDbModeConfirm, setShowDbModeConfirm] = useState(false);
+  const [pendingDbMode, setPendingDbMode] = useState<'LOCAL' | 'CLOUD' | 'AUTO' | null>(null);
   const [hybridDbType, setHybridDbType] = useState<'none' | 'CLOUD' | 'LOCAL'>('none');
   const [hybridAdvancedTab, setHybridAdvancedTab] = useState<'reset' | 'transfer'>('reset');
   const [hybridSelectedTables, setHybridSelectedTables] = useState<string[]>(DEFAULT_HYBRID_TABLES);
@@ -3702,55 +3704,34 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
               {activeAdvancedManagementModal === 'database-sync' && (
                 <div className="animate-in fade-in duration-200">
                   <div className="space-y-6 animate-in fade-in duration-200">
-                            {/* Three Database Mode Selector Boxes at the Very Top */}
-                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                              <button
-                                type="button"
-                                onClick={() => handleSaveDbMode('LOCAL')}
-                                className={`p-5 rounded-2xl border-2 font-bold transition-all flex flex-col items-center justify-center gap-2 cursor-pointer ${
-                                  dbMode === 'LOCAL'
-                                    ? 'bg-orange-600/10 border-orange-600 text-orange-500 shadow-xl'
-                                    : 'bg-black/20 border-white/5 text-gray-400 hover:text-white hover:border-white/10'
-                                }`}
-                              >
-                                <HardDrive size={24} className={dbMode === 'LOCAL' ? 'text-orange-500' : 'text-gray-400'} />
-                                <div className="text-center">
-                                  <span className="block font-bold text-xs">إصدار محلي (LOCAL)</span>
-                                  <span className="text-[9px] text-gray-500 block mt-0.5">SQLite على الجهاز</span>
+                            {/* Single Database Mode Selector Dropdown at the Very Top */}
+                            <div className="relative w-full">
+                              <div className="flex items-center gap-3 bg-black/20 border border-white/5 p-3 rounded-2xl shadow-sm group hover:border-orange-500/30 transition-all">
+                                <div className="p-2 rounded-lg bg-orange-600/10 text-orange-500">
+                                  {dbMode === 'LOCAL' && <HardDrive size={18} />}
+                                  {dbMode === 'CLOUD' && <Globe size={18} />}
+                                  {dbMode === 'AUTO' && <Cpu size={18} />}
                                 </div>
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => handleSaveDbMode('CLOUD')}
-                                className={`p-5 rounded-2xl border-2 font-bold transition-all flex flex-col items-center justify-center gap-2 cursor-pointer ${
-                                  dbMode === 'CLOUD'
-                                    ? 'bg-orange-600/10 border-orange-600 text-orange-500 shadow-xl'
-                                    : 'bg-black/20 border-white/5 text-gray-400 hover:text-white hover:border-white/10'
-                                }`}
-                              >
-                                <Globe size={24} className={dbMode === 'CLOUD' ? 'text-orange-500' : 'text-gray-400'} />
-                                <div className="text-center">
-                                  <span className="block font-bold text-xs">إصدار سحابي (CLOUD)</span>
-                                  <span className="text-[9px] text-gray-500 block mt-0.5">Firebase Firestore</span>
+                                <div className="flex-1 text-right">
+                                  <span className="text-[10px] text-gray-500 block mb-0.5 font-bold">نوع قاعدة البيانات والارتباط</span>
+                                  <select
+                                    value={dbMode}
+                                    onChange={(e) => {
+                                      const newMode = e.target.value as 'LOCAL' | 'CLOUD' | 'AUTO';
+                                      if (newMode !== dbMode) {
+                                        setPendingDbMode(newMode);
+                                        setShowDbModeConfirm(true);
+                                      }
+                                    }}
+                                    className="w-full bg-transparent text-white font-black text-sm outline-none cursor-pointer appearance-none"
+                                  >
+                                    <option value="LOCAL">قاعدة بيانات محلية (SQLite - أوفلاين)</option>
+                                    <option value="CLOUD">قاعدة بيانات سحابية (Firestore - أونلاين)</option>
+                                    <option value="AUTO">وضع المزامنة التلقائي (هجين - Hybrid)</option>
+                                  </select>
                                 </div>
-                              </button>
-
-                              <button
-                                type="button"
-                                onClick={() => handleSaveDbMode('AUTO')}
-                                className={`p-5 rounded-2xl border-2 font-bold transition-all flex flex-col items-center justify-center gap-2 cursor-pointer ${
-                                  dbMode === 'AUTO'
-                                    ? 'bg-orange-600/10 border-orange-600 text-orange-500 shadow-xl'
-                                    : 'bg-black/20 border-white/5 text-gray-400 hover:text-white hover:border-white/10'
-                                }`}
-                              >
-                                <Cpu size={24} className={dbMode === 'AUTO' ? 'text-orange-500' : 'text-gray-400'} />
-                                <div className="text-center">
-                                  <span className="block font-bold text-xs">وضع هجين (AUTO)</span>
-                                  <span className="text-[9px] text-gray-500 block mt-0.5">تحويل سحابي/محلي تلقائي</span>
-                                </div>
-                              </button>
+                                <ChevronDown size={18} className="text-gray-500 group-hover:text-orange-500 transition-colors" />
+                              </div>
                             </div>
 
                         {/* 2. Status & Sync */}
@@ -4216,6 +4197,79 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
               </div>
             </motion.div>
           </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Database Mode Change Confirmation Modal */}
+      <AnimatePresence>
+        {showDbModeConfirm && pendingDbMode && (
+          <div 
+            className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
+            onClick={() => {
+              setShowDbModeConfirm(false);
+              setPendingDbMode(null);
+            }}
+          >
+            <motion.div 
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-white dark:bg-[#1e1e1e] border-2 border-orange-500/60 rounded-3xl max-w-md w-full p-6 shadow-2xl space-y-5"
+              onClick={(e) => e.stopPropagation()}
+              dir="rtl"
+            >
+              <div className="flex items-center gap-4 text-orange-600 dark:text-orange-400">
+                <div className="w-12 h-12 rounded-2xl bg-orange-500/10 flex items-center justify-center shrink-0">
+                  <AlertTriangle size={28} />
+                </div>
+                <div>
+                  <h3 className="text-lg font-black text-slate-900 dark:text-white font-cairo">تغيير نوع قاعدة البيانات</h3>
+                  <p className="text-[10px] text-gray-500 font-bold font-mono">Database Connection Shift</p>
+                </div>
+              </div>
+
+              <div className="text-sm text-slate-700 dark:text-gray-300 leading-relaxed bg-slate-50 dark:bg-black/40 p-5 rounded-2xl border border-slate-200 dark:border-white/10 font-bold space-y-3 font-cairo">
+                <p>هل أنت متأكد من تغيير ارتباط النظام من النوع الحالي إلى النوع الجديد؟</p>
+                <div className="flex items-center justify-center gap-4 py-2 border-y border-dashed border-gray-300 dark:border-white/10">
+                  <span className="text-gray-400 line-through">
+                    {dbMode === 'LOCAL' ? 'محلي (LOCAL)' : dbMode === 'CLOUD' ? 'سحابي (CLOUD)' : 'تلقائي (AUTO)'}
+                  </span>
+                  <ArrowRight size={16} className="text-orange-500" />
+                  <span className="text-orange-500 underline underline-offset-4">
+                    {pendingDbMode === 'LOCAL' ? 'محلي (LOCAL)' : pendingDbMode === 'CLOUD' ? 'سحابي (CLOUD)' : 'تلقائي (AUTO)'}
+                  </span>
+                </div>
+                <p className="text-[11px] text-rose-500 dark:text-rose-400 font-bold flex items-start gap-2">
+                   <span>⚠️</span>
+                   <span>ملاحظة: سيقوم النظام بإعادة التشغيل وتحديث الارتباط فور الموافقة.</span>
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSaveDbMode(pendingDbMode);
+                    setShowDbModeConfirm(false);
+                    setPendingDbMode(null);
+                  }}
+                  className="flex-1 py-3.5 bg-orange-600 hover:bg-orange-500 text-white rounded-2xl font-black text-sm shadow-lg shadow-orange-600/20 transition-all cursor-pointer active:scale-95 font-cairo"
+                >
+                  نعم، موافق
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDbModeConfirm(false);
+                    setPendingDbMode(null);
+                  }}
+                  className="flex-1 py-3.5 bg-slate-100 hover:bg-slate-200 dark:bg-white/10 dark:hover:bg-white/15 text-slate-800 dark:text-white rounded-2xl font-black text-sm transition-all cursor-pointer active:scale-95 border border-slate-200 dark:border-white/10 font-cairo"
+                >
+                  إلغاء التغيير
+                </button>
+              </div>
+            </motion.div>
+          </div>
         )}
       </AnimatePresence>
 

@@ -1045,7 +1045,17 @@ export default function PrintPreviewOverlay({
 
       if (type === 'invoice' && invoice) {
         docId = invoice.id || data?.invoice?.id || (invoice.invoiceNumber ? 'inv_' + String(invoice.invoiceNumber).replace('#', '').trim() : '');
-        docNumber = String(invoice.invoiceNumber || data?.invoice?.invoiceNumber || '').replace('#', '').trim();
+        const tmpl = String(templateType || data?.templateType || '').toLowerCase();
+        // If it's a report (inspection, quotation, assignment, maintenance) use #REP
+        if (['inspection', 'quotation', 'assignment', 'maintenance'].includes(tmpl)) {
+          docNumber = '#REP';
+        } else {
+          docNumber = String(invoice.invoiceNumber || data?.invoice?.invoiceNumber || '').replace('#', '').trim();
+          // If invoice number still looks like a name (contains Arabic), fallback to #REP
+          if (/[\u0600-\u06FF]/.test(docNumber)) {
+            docNumber = '#REP';
+          }
+        }
         const targetInvId = invoice.id || data?.invoice?.id;
         if (targetInvId) {
           try {
@@ -1073,10 +1083,10 @@ export default function PrintPreviewOverlay({
         }
       } else if (type === 'statement' && statement) {
         docId = statement.customerId || statement.id || '';
-        docNumber = `STMT-${String(statement.customerName || 'CUST').trim()}`;
+        docNumber = '#REP';
       } else if (type === 'table' && tableData) {
         docId = tableData.id || '';
-        docNumber = `REP-${String(tableData.title || 'TABLE').trim()}`;
+        docNumber = '#REP';
       }
 
       // Resolve exact document name in Arabic
@@ -1260,8 +1270,8 @@ export default function PrintPreviewOverlay({
       const { fileName } = getDocumentExportMeta();
       const result = await generateOptimizedPdfFromElement(printArea, {
         filename: fileName,
-        pixelRatio: 1.25,
-        quality: 0.74
+        pixelRatio: 2,
+        quality: 0.85
       });
 
       downloadPdfBlob(result.blob, result.filename);
@@ -1295,8 +1305,8 @@ export default function PrintPreviewOverlay({
       if (printArea) {
         const result = await generateOptimizedPdfFromElement(printArea, {
           filename: fileName,
-          pixelRatio: 1.25,
-          quality: 0.74
+          pixelRatio: 2,
+          quality: 0.85
         });
 
         if (canShareNatively || isNative) {

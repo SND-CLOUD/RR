@@ -19,7 +19,8 @@ import {
   Calculator,
   UserCheck,
   UserPlus,
-  PhoneCall
+  PhoneCall,
+  ChevronDown
 } from 'lucide-react';
 import { localDb } from '../lib/local-db';
 import { LocalProviderInstance } from '../data/LocalProvider';
@@ -963,23 +964,23 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
   };
 
   return (
-    <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 space-y-6 text-right font-cairo" dir="rtl">
+    <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 pb-24 space-y-6 text-right font-cairo" dir="rtl">
       
       {/* Top Navigation Bar: Completely Isolated Page Header */}
-      <div className="flex items-center justify-between bg-white dark:bg-[#1a1a1a] p-4 sm:p-5 rounded-2xl border border-slate-200 dark:border-white/10 shadow-sm">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
-            <Wrench size={24} />
+      <div className="flex items-center justify-between bg-white dark:bg-[#1a1a1a] p-3 sm:p-4 rounded-2xl border border-slate-200 dark:border-white/10 shadow-sm">
+        <div className="flex items-center gap-2.5">
+          <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center shrink-0">
+            <Wrench size={18} />
           </div>
-          <div>
-            <h1 className="text-xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+          <div className="max-w-[280px] sm:max-w-md">
+            <h1 className="text-sm font-black text-slate-900 dark:text-white flex items-center gap-2">
               صيانة متقدمة لقاعدة البيانات
-              <span className="text-[11px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 px-2.5 py-0.5 rounded-full font-bold">
-                حاوية معزولة
+              <span className="text-[9px] bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-500/30 px-2 py-0.5 rounded-full font-bold">
+                بيئة معزولة
               </span>
             </h1>
-            <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">
-              أدوات مستقلة ومعزولة لإدارة وترقيم جداول النظام بأمان تام وبدون أي تداخل مع شاشة الإعدادات
+            <p className="text-[10px] text-slate-500 dark:text-gray-400 mt-0.5 leading-relaxed line-clamp-2">
+              أدوات مستقلة ومعزولة لإدارة وترقيم جداول النظام بأمان تام وبدون أي تداخل مع شاشة الإعدادات الرئيسية.
             </p>
           </div>
         </div>
@@ -987,94 +988,38 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
         <button
           onClick={handleExit}
           type="button"
-          className="flex items-center gap-2 px-4 py-2.5 bg-slate-100 hover:bg-slate-200 dark:bg-white/10 dark:hover:bg-white/15 text-slate-800 dark:text-white rounded-xl text-xs font-bold transition-all cursor-pointer border border-slate-200 dark:border-white/10"
+          className="flex items-center gap-1.5 px-3 py-2 bg-slate-100 hover:bg-slate-200 dark:bg-white/10 dark:hover:bg-white/15 text-slate-800 dark:text-white rounded-xl text-[10px] font-bold transition-all cursor-pointer border border-slate-200 dark:border-white/10"
         >
-          <ArrowRight size={16} />
-          <span>رجوع للإعدادات</span>
+          <ArrowRight size={14} />
+          <span className="hidden sm:inline">رجوع</span>
         </button>
       </div>
 
-      {/* Section Switcher Tabs */}
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-2.5">
-        <button
-          type="button"
-          onClick={() => setActiveSection('vouchers')}
-          className={`p-3.5 rounded-2xl border transition-all flex items-center gap-2.5 text-xs font-black cursor-pointer shadow-sm ${
-            activeSection === 'vouchers'
-              ? 'bg-amber-500/10 border-amber-500 text-amber-700 dark:text-amber-300 ring-2 ring-amber-500/30'
-              : 'bg-white dark:bg-[#1a1a1a] border-slate-200 dark:border-white/10 text-slate-700 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-white/5'
-          }`}
-        >
-          <Receipt size={18} className="text-amber-500 shrink-0" />
-          <div className="text-right">
-            <span>سندات النظام والخزينة</span>
-            <span className="block text-[9px] text-emerald-600 dark:text-emerald-400 font-bold">5 أدوات مفعّلة</span>
+      {/* Section Switcher: Dropdown Menu */}
+      <div className="relative w-full sm:max-w-xs mr-auto">
+        <div className="bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 rounded-xl overflow-hidden shadow-sm group">
+          <select
+            value={activeSection}
+            onChange={(e) => setActiveSection(e.target.value as any)}
+            className="w-full bg-transparent px-4 py-3 text-xs font-black text-slate-900 dark:text-white outline-none cursor-pointer appearance-none text-right pr-11"
+          >
+            <option value="vouchers">سندات النظام والخزينة</option>
+            <option value="customers">سجلات وأرقام العملاء</option>
+            <option value="invoices">فواتير الصيانة والأجهزة</option>
+            <option value="other">فواتير أخرى ومبيعات</option>
+            <option value="comprehensive">معالجة شاملة للروابط</option>
+          </select>
+          <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
+            {activeSection === 'vouchers' && <Receipt size={18} className="text-amber-500" />}
+            {activeSection === 'customers' && <Users size={18} className="text-emerald-500" />}
+            {activeSection === 'invoices' && <FileText size={18} className="text-blue-500" />}
+            {activeSection === 'other' && <Database size={18} className="text-purple-500" />}
+            {activeSection === 'comprehensive' && <Sparkles size={18} className="text-rose-500" />}
           </div>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveSection('customers')}
-          className={`p-3.5 rounded-2xl border transition-all flex items-center gap-2.5 text-xs font-black cursor-pointer shadow-sm ${
-            activeSection === 'customers'
-              ? 'bg-emerald-500/10 border-emerald-500 text-emerald-700 dark:text-emerald-300 ring-2 ring-emerald-500/30'
-              : 'bg-white dark:bg-[#1a1a1a] border-slate-200 dark:border-white/10 text-slate-700 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-white/5'
-          }`}
-        >
-          <Users size={18} className="text-emerald-500 shrink-0" />
-          <div className="text-right">
-            <span>سجلات وأرقام العملاء</span>
-            <span className="block text-[9px] text-emerald-600 dark:text-emerald-400 font-bold">4 أدوات مفعّلة</span>
+          <div className="absolute left-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
+            <ChevronDown size={16} className="text-slate-400 group-hover:text-slate-600 transition-colors" />
           </div>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveSection('invoices')}
-          className={`p-3.5 rounded-2xl border transition-all flex items-center gap-2.5 text-xs font-black cursor-pointer shadow-sm ${
-            activeSection === 'invoices'
-              ? 'bg-blue-500/10 border-blue-500 text-blue-700 dark:text-blue-300 ring-2 ring-blue-500/30'
-              : 'bg-white dark:bg-[#1a1a1a] border-slate-200 dark:border-white/10 text-slate-700 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-white/5'
-          }`}
-        >
-          <FileText size={18} className="text-blue-500 shrink-0" />
-          <div className="text-right">
-            <span>فواتير الصيانة والأجهزة</span>
-            <span className="block text-[9px] text-blue-600 dark:text-blue-400 font-bold">4 أدوات مفعّلة</span>
-          </div>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveSection('other')}
-          className={`p-3.5 rounded-2xl border transition-all flex items-center gap-2.5 text-xs font-black cursor-pointer shadow-sm ${
-            activeSection === 'other'
-              ? 'bg-purple-500/10 border-purple-500 text-purple-700 dark:text-purple-300 ring-2 ring-purple-500/30'
-              : 'bg-white dark:bg-[#1a1a1a] border-slate-200 dark:border-white/10 text-slate-700 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-white/5'
-          }`}
-        >
-          <Database size={18} className="text-purple-500 shrink-0" />
-          <div className="text-right">
-            <span>فواتير أخرى ومبيعات</span>
-            <span className="block text-[9px] text-purple-600 dark:text-purple-400 font-bold">4 أدوات مفعّلة</span>
-          </div>
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveSection('comprehensive')}
-          className={`p-3.5 rounded-2xl border transition-all flex items-center gap-2.5 text-xs font-black cursor-pointer shadow-sm ${
-            activeSection === 'comprehensive'
-              ? 'bg-rose-500/10 border-rose-500 text-rose-700 dark:text-rose-300 ring-2 ring-rose-500/30'
-              : 'bg-white dark:bg-[#1a1a1a] border-slate-200 dark:border-white/10 text-slate-700 dark:text-gray-300 hover:bg-slate-50 dark:hover:bg-white/5'
-          }`}
-        >
-          <Sparkles size={18} className="text-rose-500 shrink-0" />
-          <div className="text-right">
-            <span>معالجة شاملة</span>
-            <span className="block text-[9px] text-rose-600 dark:text-rose-400 font-bold">تسوية الروابط</span>
-          </div>
-        </button>
+        </div>
       </div>
 
       {/* ========================================================================= */}

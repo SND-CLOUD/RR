@@ -4,8 +4,8 @@ import { sharePdfFile, openWhatsApp } from './shareHelper';
 
 export interface PdfGenerationOptions {
   filename?: string;
-  pixelRatio?: number; // Optimized default: 1.25 for crisp text with small footprint
-  quality?: number; // Optimized default: 0.74 for optimal JPEG compression (<200KB)
+  pixelRatio?: number; // Optimized default: 2 for high-quality text (prevents blurriness)
+  quality?: number; // Optimized default: 0.85 for clean JPEG with acceptable size
   backgroundColor?: string;
 }
 
@@ -26,8 +26,8 @@ export async function generateOptimizedPdfFromElement(
   element: HTMLElement,
   options: PdfGenerationOptions = {}
 ): Promise<PdfGenerationResult> {
-  const pixelRatio = options.pixelRatio ?? 1.25;
-  const quality = options.quality ?? 0.74;
+  const pixelRatio = options.pixelRatio ?? 2;
+  const quality = options.quality ?? 0.85;
   const backgroundColor = options.backgroundColor ?? '#ffffff';
   const filename = options.filename || `كشف_حساب_${new Date().toISOString().slice(0, 10)}.pdf`;
 
@@ -188,8 +188,8 @@ export async function exportAndShareOptimizedPdf(
 ): Promise<{ sizeKb: number; filename: string }> {
   const result = await generateOptimizedPdfFromElement(element, {
     filename: options.filename,
-    pixelRatio: 1.25,
-    quality: 0.74
+    pixelRatio: 2,
+    quality: 0.85
   });
 
   const isNative = typeof window !== 'undefined' && (window as any).Capacitor?.isNativePlatform?.();
