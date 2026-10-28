@@ -1467,22 +1467,6 @@ export default function PrintPreviewOverlay({
             </button>
           )}
 
-          {/* Export PDF Button */}
-          <button 
-            type="button"
-            onClick={handleDownloadPdf}
-            disabled={isGeneratingPDF || isSaving}
-            className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-purple-600 hover:bg-purple-500 text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0 font-cairo"
-            title="تصدير ملف PDF"
-          >
-            {isGeneratingPDF ? (
-              <Loader2 size={18} className="animate-spin" />
-            ) : (
-              <FileDown size={18} />
-            )}
-            <span className="text-xs md:text-sm font-bold">تصدير PDF</span>
-          </button>
-
           {/* Print Button */}
           {(handlePrint || onPrint) && (
             <button 

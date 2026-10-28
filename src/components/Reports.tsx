@@ -651,8 +651,22 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
   const paginatedItems = tableItems.slice((safeCurrentPage - 1) * itemsPerPage, safeCurrentPage * itemsPerPage);
   const paginatedInvoices = groupedInvoices.slice((safeCurrentPage - 1) * itemsPerPage, safeCurrentPage * itemsPerPage);
 
+  const getStatusLabel = (it: any) => {
+    if (it.status === '60' || it.status === 'delivered') return 'تم التسليم';
+    if (it.status === '50' || it.status === 'ready') return 'جاهز للتسليم';
+    if (it.status === '40' || it.status === 'repairing') return 'قيد الصيانة';
+    if (it.status === '30' || it.status === 'awaiting_approval') return 'انتظار الموافقة';
+    if (it.status === '35' || it.status === 'awaiting_parts') return 'انتظار قطع الغيار';
+    if (it.status === '20' || it.status === 'inspection') return 'قيد الفحص';
+    if (it.status === '10' || it.status === 'new') return 'جديد';
+    if (it.status === '70' || it.status === 'refused') return 'مرفوض';
+    if (it.status === '55' || it.status === '45' || it.status === 'unrepairable') return 'لا يصلح';
+    if (it.status === 'intact') return 'سليم';
+    return it.status || '---';
+  };
+
   const handleWhatsAppExport = () => {
-    let title = activeSubView === 'in-shop' 
+    const title = activeSubView === 'in-shop' 
       ? 'تقرير الأجهزة داخل المحل' 
       : activeSubView === 'delivered' 
       ? 'تقرير الأجهزة الخارجة' 
@@ -674,45 +688,62 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
         deliveredFilter === 'refused' ? 'مرفوض' : 'أخرى';
     }
 
-    const count = viewMode === 'invoices' ? groupedInvoices.length : tableItemsTotalQuantity;
-    const itemType = viewMode === 'invoices' ? 'فاتورة' : 'جهاز';
-    
-    let totalAmount = 0;
     if (viewMode === 'invoices') {
-      totalAmount = groupedInvoices.reduce((acc, inv) => acc + inv.totalCost, 0);
-    } else {
-      totalAmount = tableItems.reduce((acc, it) => acc + (Number(it.cost) || 0), 0);
-    }
+      const headers = ['م', 'رقم الفاتورة', 'اسم العميل', 'التاريخ', 'عدد الأجهزة', 'التكلفة الإجمالية'];
+      const rows = groupedInvoices.map((inv, idx) => [
+        String(idx + 1),
+        String(inv.invoiceNumber || ''),
+        inv.customer?.name || '',
+        inv.createdAt ? (parseDate(inv.createdAt)?.toLocaleDateString('ar-YE') || '') : '',
+        String(inv.totalQuantity || 0),
+        `${inv.totalCost.toLocaleString('en-US')} ${inv.currency || 'USD'}`
+      ]);
+      const totalAmount = groupedInvoices.reduce((acc, inv) => acc + inv.totalCost, 0);
 
-    let msg = `📋 *${title}*\n`;
-    msg += `📅 الفترة: ${timeRangeLabels[timeRange] || 'الحالية'}\n`;
-    msg += `🔍 التصفية: ${filterText}\n`;
-    msg += `📊 طريقة العرض: ${viewMode === 'invoices' ? 'فواتير' : 'أجهزة'}\n`;
-    msg += `🔢 الإجمالي: ${count} ${itemType}\n`;
-    msg += `💰 المبلغ الكلي: ${totalAmount.toLocaleString('en-US')}\n`;
-    msg += `-----------------------------------\n`;
-
-    if (viewMode === 'invoices') {
-      const list = groupedInvoices.slice(0, 20);
-      list.forEach((inv, i) => {
-        msg += `${i + 1}. فاتورة #${inv.invoiceNumber} | ${inv.customer.name} | ${inv.totalQuantity} أجهزة | ${inv.totalCost.toLocaleString('en-US')} ${inv.currency}\n`;
+      setPreviewData({
+        type: 'table',
+        data: {
+          table: {
+            title,
+            subtitle: `الفترة: ${timeRangeLabels[timeRange] || 'الحالية'} | التصفية: ${filterText} | إجمالي الفواتير: ${groupedInvoices.length}`,
+            headers,
+            rows,
+            footerNotes: `إجمالي الفواتير: ${groupedInvoices.length} فاتورة | المبلغ الإجمالي: ${totalAmount.toLocaleString('en-US')}`
+          }
+        }
       });
-      if (groupedInvoices.length > 20) {
-        msg += `...وغيرها (${groupedInvoices.length - 20} فاتورة أخرى)\n`;
-      }
     } else {
-      const list = tableItems.slice(0, 20);
-      list.forEach((it, i) => {
+      const headers = ['م', 'رقم الفاتورة', 'نوع الجهاز والموديل', 'اسم العميل', 'التاريخ', 'التكلفة', 'الحالة الفنية'];
+      const rows = tableItems.map((it, idx) => {
         const cust = getCustomerDetails(it);
-        msg += `${i + 1}. فاتورة #${it.invoiceNumber} | ${it.deviceType || 'جهاز'} ${it.deviceName || ''} | ${cust.name} | ${Number(it.cost) || 0}\n`;
+        const inv = itemInvoiceMap.get(String(it.invoiceNumber).replace('#', '').trim()) || itemInvoiceMap.get(String(it.invoiceNumber));
+        const curr = inv?.currency || 'USD';
+        const cost = Number(it.cost || 0);
+        return [
+          String(idx + 1),
+          String(it.invoiceNumber || ''),
+          `${it.deviceType || 'جهاز'} ${it.deviceName ? `- ${it.deviceName}` : ''}`,
+          cust?.name || '',
+          it.entryDate ? (parseDate(it.entryDate)?.toLocaleDateString('ar-YE') || '') : '',
+          `${cost.toLocaleString('en-US')} ${curr}`,
+          getStatusLabel(it)
+        ];
       });
-      if (tableItems.length > 20) {
-        msg += `...وغيرها (${tableItems.length - 20} جهاز آخر)\n`;
-      }
-    }
+      const totalAmount = tableItems.reduce((acc, it) => acc + (Number(it.cost) || 0), 0);
 
-    const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`;
-    window.open(url, '_blank');
+      setPreviewData({
+        type: 'table',
+        data: {
+          table: {
+            title,
+            subtitle: `الفترة: ${timeRangeLabels[timeRange] || 'الحالية'} | التصفية: ${filterText} | إجمالي الأجهزة: ${tableItems.length}`,
+            headers,
+            rows,
+            footerNotes: `إجمالي الأجهزة: ${tableItems.length} جهاز | المبلغ الإجمالي: ${totalAmount.toLocaleString('en-US')}`
+          }
+        }
+      });
+    }
   };
 
   const ViewModeSelector = () => (

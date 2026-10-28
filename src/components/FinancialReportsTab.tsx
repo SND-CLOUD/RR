@@ -553,35 +553,7 @@ export default function FinancialReportsTab({
 
   // WhatsApp Export
   const handleExportWhatsApp = () => {
-    let msg = `📊 *تقرير الحسابات والمالية والصناديق*\n`;
-    msg += `🏢 ${shopConfig?.shopName || 'مركز الصيانة المعتمد'}\n`;
-    msg += `📅 الفترة: ${getTimeRangeLabel()}\n`;
-    if (selectedFundId !== 'all') {
-      msg += `💼 الصندوق: ${getFundName(selectedFundId)}\n`;
-    }
-    msg += `---------------------------------\n`;
-    
-    // Currency balances
-    msg += `💰 *أرصدة الصناديق الحالية:*\n`;
-    (Object.entries(currencySummaries) as [string, CurrencySummaryItem][]).forEach(([curr, s]) => {
-      msg += `• ${curr}: ${s.totalBalance.toLocaleString('en-US')} (وارد: +${s.inFlow.toLocaleString('en-US')} | صرف: -${s.outFlow.toLocaleString('en-US')})\n`;
-    });
-    msg += `---------------------------------\n`;
-    msg += `📋 إجمالي العمليات المسجلة: ${filteredTransactions.length} عملية\n\n`;
-
-    // Last 10 operations
-    const sample = filteredTransactions.slice(0, 10);
-    sample.forEach((tx, i) => {
-      const isReceipt = tx.type === 'receipt' || tx.type === 'deposit' || tx.type === 'invoice_payment';
-      const sign = isReceipt ? '🟢 مدين (وارد)' : '🔴 دائن (منصرف)';
-      msg += `${i + 1}. [سند #${tx.voucherNumber}] ${sign} ${Math.abs(tx.amount || 0).toLocaleString('en-US')} ${tx.currency} - ${formatTxDetailsString(tx)}\n`;
-    });
-    if (filteredTransactions.length > 10) {
-      msg += `... وغيرها (${filteredTransactions.length - 10} عملية أخرى)\n`;
-    }
-
-    const url = `https://api.whatsapp.com/send?text=${encodeURIComponent(msg)}`;
-    window.open(url, '_blank');
+    handlePrintFullReport();
   };
 
   // Print Official Tabular Report (A4)

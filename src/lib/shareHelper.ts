@@ -22,32 +22,62 @@ export async function sharePdfFile(blob: Blob, filename: string, message: string
     try {
       const base64Data = await blobToBase64(blob);
       
-      const subFolder = category === 'invoice' ? 'فواتير' : category === 'voucher' ? 'سندات' : 'تقارير';
-      const appFolder = 'SND_App';
-      const fullPath = `${appFolder}/${subFolder}/${filename}`;
-      
-      // Save file in Documents directory (persistent)
+      // 1. Write file to Cache directory (guaranteed accessible by FileProvider and Share.share on Android without special permissions)
+      const cleanFilename = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
       const writeResult = await Filesystem.writeFile({
-        path: fullPath,
+        path: cleanFilename,
         data: base64Data,
-        directory: Directory.Documents,
+        directory: Directory.Cache,
         recursive: true
       });
       
-      console.log('File written natively to:', writeResult.uri);
+      console.log('File written natively to cache:', writeResult.uri);
       
-      // Share natively
+      // 2. Share natively with file attached
       await Share.share({
         title: 'مشاركة الملف',
         text: message,
         files: [writeResult.uri],
-        dialogTitle: 'مشاركة عبر',
+        dialogTitle: 'مشاركة الملف عبر',
       });
+
+      // 3. Best-effort background copy to persistent Documents directory (safe if it fails)
+      try {
+        const subFolder = category === 'invoice' ? 'فواتير' : category === 'voucher' ? 'سندات' : 'تقارير';
+        const fullPath = `SND_App/${subFolder}/${cleanFilename}`;
+        await Filesystem.writeFile({
+          path: fullPath,
+          data: base64Data,
+          directory: Directory.Documents,
+          recursive: true
+        });
+      } catch (docErr) {
+        console.warn('Backup save to Documents folder skipped or restricted:', docErr);
+      }
       
       return true;
     } catch (error) {
-      console.error('Capacitor native share error:', error);
-      // Fallback below
+      console.error('Capacitor native share error on Cache:', error);
+      // Secondary fallback with Directory.Data
+      try {
+        const base64Data = await blobToBase64(blob);
+        const cleanFilename = filename.endsWith('.pdf') ? filename : `${filename}.pdf`;
+        const dataResult = await Filesystem.writeFile({
+          path: cleanFilename,
+          data: base64Data,
+          directory: Directory.Data,
+          recursive: true
+        });
+        await Share.share({
+          title: 'مشاركة الملف',
+          text: message,
+          files: [dataResult.uri],
+          dialogTitle: 'مشاركة الملف عبر',
+        });
+        return true;
+      } catch (err2) {
+        console.error('Secondary native share error:', err2);
+      }
     }
   }
 

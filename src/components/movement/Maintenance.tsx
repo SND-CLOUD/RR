@@ -14,6 +14,7 @@ import PrintPreviewOverlay from '../PrintPreviewOverlay';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
 import { sanitizeDocumentStyles, sanitizeElementInlineStyles, cleanOklchInStyleText } from '../../lib/html2canvasHelper';
+import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../../lib/pdfHelper';
 import { localDb } from '../../lib/local-db';
 
 export default function Maintenance({ user, onBack, initialInvoice }: { user: User, onBack: () => void, initialInvoice?: Invoice | null }) {
@@ -498,45 +499,18 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
           const element = document.getElementById('print-preview-area');
           if (element) {
             try {
-              // Temporarily remove transform to ensure clean capture
-              const originalTransform = element.style.transform;
-              element.style.transform = 'none';
-              
-              const canvas = await htmlToImage.toCanvas(element, {
-                pixelRatio: 2,
-                backgroundColor: '#ffffff',
-              });
-
-              // Restore transform
-              element.style.transform = originalTransform;
-
-              const imgData = canvas.toDataURL('image/jpeg', 0.95);
-
-              const pdf = new jsPDF({
-                orientation: 'portrait',
-                unit: 'mm',
-                format: 'a4',
-                compress: true
-              });
-
-              const pdfWidth = pdf.internal.pageSize.getWidth();
-              const pdfHeight = (canvas.height * pdfWidth) / canvas.width;
-              let heightLeft = pdfHeight;
-              let position = 0;
-
-              pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight, undefined, 'FAST');
-              heightLeft -= pdf.internal.pageSize.getHeight();
-
-              while (heightLeft > 0.5) {
-                position = heightLeft - pdfHeight;
-                pdf.addPage();
-                pdf.addImage(imgData, 'JPEG', 0, position, pdfWidth, pdfHeight, undefined, 'FAST');
-                heightLeft -= pdf.internal.pageSize.getHeight();
-              }
-              
               const formattedDate = new Date().toISOString().split('T')[0];
               const filename = `تقرير الصيانة_${selectedInvoice.customerName}_${formattedDate}.pdf`;
-              pdf.save(filename);
+
+              // Ultra-optimized compressed PDF generation (< 100KB) matching Quick Search pipeline
+              const pdfResult = await generateOptimizedPdfFromElement(element, {
+                filename,
+                pixelRatio: 1.25,
+                quality: 0.74,
+                backgroundColor: '#ffffff'
+              });
+
+              downloadPdfBlob(pdfResult.blob, filename);
 
               let message = `*تقرير إجراء صيانة* 📄\n\n`;
               message += `إلى من يهمه الأمر، مرفق لكم تقرير تحديث حالة الأجهزة:\n\n`;
@@ -555,8 +529,7 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
 
               let sharedNatively = false;
               try {
-                const pdfBlob = pdf.output('blob');
-                sharedNatively = await sharePdfFile(pdfBlob, filename, message, 'report');
+                sharedNatively = await sharePdfFile(pdfResult.blob, filename, message, 'report');
               } catch (err) {
                 console.warn('Native sharing failed:', err);
               }

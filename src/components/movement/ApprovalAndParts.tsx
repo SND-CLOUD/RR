@@ -9,10 +9,12 @@ import { Invoice, InvoiceItem, User, Customer, isShopMaintenanceItem, isPurchase
 import { useTranslation } from 'react-i18next';
 import { Search, Loader2, X, Clock, Check, RefreshCw, ArrowUpRight, Save, Plus, Printer, Share2, FileText, Phone, Smartphone, Building, ArrowLeft, ArrowRight, MessageCircle, MapPin, Facebook, Edit2, Trash2, ZoomIn, ZoomOut, User as UserIcon } from 'lucide-react';
 import BankAccountsFooter from '../BankAccountsFooter';
+import PrintPreviewOverlay from '../PrintPreviewOverlay';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
 import { sanitizeDocumentStyles, sanitizeElementInlineStyles, cleanOklchInStyleText } from '../../lib/html2canvasHelper';
 import { ProviderFactory } from '../../data/ProviderFactory';
+import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../../lib/pdfHelper';
 
 const WhatsAppIcon = (props: React.SVGProps<SVGSVGElement>) => (
   <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" {...props}>
@@ -296,49 +298,20 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
       restore = await sanitizeDocumentStyles();
       sanitizeElementInlineStyles(element);
 
-      // Temporarily remove transform to ensure clean capture
-      const originalTransform = element.style.transform;
-      element.style.transform = 'none';
-      
-      const canvas = await htmlToImage.toCanvas(element, {
-        pixelRatio: 2,
-        backgroundColor: '#ffffff',
-      });
-
-      // Restore transform
-      element.style.transform = originalTransform;
-
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-
-      const pdf = new jsPDF({
-        orientation: 'p',
-        unit: 'mm',
-        format: 'a4',
-        compress: true
-      });
-      
-      const imgWidth = 210;
-      const pageHeight = 297;
-      
-      // Calculate realistic height based on scale width vs height ratio
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-      heightLeft -= pageHeight;
-
-      while (heightLeft > 5) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-        heightLeft -= pageHeight;
-      }
-
       const formattedDate = new Date().toISOString().split('T')[0];
-      const filename = `عرض سعر أجهزة_${invoice.customerName}_${formattedDate}.pdf`;
+      const filename = activePrintReportInvoice 
+        ? `عرض سعر أجهزة_${invoice.customerName}_${formattedDate}.pdf`
+        : `تقرير الحالة والإسناد_${invoice.customerName}_${formattedDate}.pdf`;
 
-      pdf.save(filename);
+      // Ultra-optimized compressed PDF generation (< 100KB) matching Quick Search pipeline
+      const pdfResult = await generateOptimizedPdfFromElement(element, {
+        filename,
+        pixelRatio: 1.25,
+        quality: 0.74,
+        backgroundColor: '#ffffff'
+      });
+
+      downloadPdfBlob(pdfResult.blob, filename);
 
       // WhatsApp text composition
       let message = `*عرض سعر صيانة أجهزة فني* 📄\n\n`;
@@ -366,8 +339,7 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
 
       let sharedNatively = false;
       try {
-        const pdfBlob = pdf.output('blob');
-        sharedNatively = await sharePdfFile(pdfBlob, filename, message, 'report');
+        sharedNatively = await sharePdfFile(pdfResult.blob, filename, message, 'invoice');
       } catch (shareErr) {
         console.warn('Native share was skipped:', shareErr);
       }
@@ -1157,716 +1129,46 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
 
   const renderPrintReportOverlay = () => {
     if (!activePrintReportInvoice) return null;
-    const inv = activePrintReportInvoice;
-    
-    const getConditionRank = (item: any) => {
-      const statusLabel = getItemStatus(item);
-      if (statusLabel === 'لا يصلح') return 3;
-      if (statusLabel === 'سليم') return 2;
-      return 1; // صيانة
-    };
-
-    const invItems = items
-      .filter(it => it.invoiceNumber === inv.invoiceNumber)
-      .sort((a, b) => {
-        const typeA = a.deviceType || '';
-        const typeB = b.deviceType || '';
-        const typeCompare = typeA.localeCompare(typeB, 'ar');
-        if (typeCompare !== 0) return typeCompare;
-        
-        const nameA = a.deviceName || '';
-        const nameB = b.deviceName || '';
-        const nameCompare = nameA.localeCompare(nameB, 'ar');
-        if (nameCompare !== 0) return nameCompare;
-        
-        return getConditionRank(a) - getConditionRank(b);
-      });
-      
-    const totalCostVal = invItems.reduce((sum, item) => sum + (Number(item.cost || item.unitCost || 0) * (item.quantity || 1)), 0);
-    const currencyVal = inv.currency || 'USD';
-    const customerPhone = getCustomerPhone(inv.customerId) || 'غير متوفر';
-    const customerCompany = getCustomerCompany(inv.customerId) || 'غير متوفر';
-
     return (
-      <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[999] overflow-hidden flex items-center justify-center p-2 sm:p-4 font-sans print:p-0 print:bg-white print:relative" dir="rtl">
-        <div className="bg-[#141414] border border-white/10 w-full max-w-5xl max-h-[96vh] rounded-3xl overflow-hidden shadow-2xl flex flex-col print:border-0 print:my-0 print:shadow-none print:bg-white">
-          
-          {/* Buttons / Controls hidden during print */}
-          <div className="flex items-center justify-between p-4 bg-black/50 border-b border-white/5 print:hidden select-none gap-2 flex-wrap">
-            <div className="flex items-center gap-2">
-              <button 
-                type="button"
-                onClick={() => {
-                  setUserZoom(1);
-                  setActivePrintReportInvoice(null);
-                }}
-                title="العودة للتعديل"
-                className="w-11 h-11 flex items-center justify-center rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-900 transition-all cursor-pointer shadow-md active:scale-95"
-              >
-                <ArrowRight size={20} />
-              </button>
-              <span className="text-sm font-bold text-white hidden sm:block">معاينة وتجهيز وعرض سعر العميل</span>
-            </div>
-
-            {/* Zoom Controls */}
-            <div className="flex items-center gap-1 bg-black/40 rounded-lg p-1 border border-white/10">
-              <button
-                type="button"
-                onClick={() => setUserZoom(prev => Math.min(2.5, Number((prev + 0.1).toFixed(1))))}
-                className="w-8 h-8 flex items-center justify-center text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-all active:scale-95 cursor-pointer"
-                title="تكبير"
-              >
-                <ZoomIn size={16} />
-              </button>
-              <span className="text-xs font-mono text-gray-300 min-w-[4ch] text-center font-bold select-none" dir="ltr">
-                {Math.round(userZoom * 100)}%
-              </span>
-              <button
-                type="button"
-                onClick={() => setUserZoom(prev => Math.max(0.5, Number((prev - 0.1).toFixed(1))))}
-                className="w-8 h-8 flex items-center justify-center text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-all active:scale-95 cursor-pointer"
-                title="تصغير"
-              >
-                <ZoomOut size={16} />
-              </button>
-              {userZoom !== 1 && (
-                <button
-                  type="button"
-                  onClick={() => setUserZoom(1)}
-                  className="text-[10px] px-2 h-8 text-blue-400 hover:text-blue-300 hover:bg-white/10 rounded-md transition-all active:scale-95 font-cairo font-bold cursor-pointer"
-                  title="إعادة ضبط"
-                >
-                  تلقائي
-                </button>
-              )}
-            </div>
-
-            <div className="flex items-center gap-2">
-              {/* Native Print button */}
-              <button 
-                type="button"
-                onClick={handlePrintDirect}
-                title="طباعة فورية"
-                className="w-11 h-11 flex items-center justify-center rounded-xl bg-white hover:bg-gray-100 text-black border border-white/20 shadow-md hover:scale-[1.05] active:scale-95 transition-all cursor-pointer"
-              >
-                <Printer size={20} />
-              </button>
-
-              {/* WhatsApp Export button */}
-              <button 
-                type="button"
-                onClick={() => handleExportPDFAndWhatsApp(inv)}
-                disabled={isGeneratingPDF}
-                title="إرسال للواتس اب وتنزيل PDF"
-                className="w-11 h-11 flex items-center justify-center rounded-xl bg-green-600 hover:bg-green-500 text-white shadow-md hover:scale-[1.05] active:scale-95 transition-all cursor-pointer disabled:opacity-50"
-              >
-                {isGeneratingPDF ? (
-                  <Loader2 className="animate-spin" size={20} />
-                ) : (
-                  <WhatsAppIcon className="w-5 h-5 text-white" />
-                )}
-              </button>
-            </div>
-          </div>
-
-          {/* Printable Section Box */}
-          <div className="w-full flex-1 overflow-auto flex items-center justify-center bg-black/45 py-3 px-2 sm:px-4 scroll-smooth">
-            <div 
-              className="relative shrink-0 my-auto transition-all duration-150 flex justify-center"
-              style={{ 
-                width: `${794 * (scaleFactor * userZoom)}px`, 
-                height: `${1123 * (scaleFactor * userZoom)}px` 
-              }}
-            >
-              <div 
-                id="print-report-area" 
-                style={{ 
-                  transform: `scale(${scaleFactor * userZoom})`, 
-                  transformOrigin: 'top left',
-                  width: '794px',
-                  minWidth: '794px',
-                  height: '1123px',
-                  minHeight: '1123px',
-                  position: 'absolute',
-                  top: 0,
-                  left: 0
-                }}
-                className="p-6 bg-white text-gray-900 print:p-0 print:bg-white print:text-black shadow-2xl rounded-sm print:rounded-none print:shadow-none flex flex-col justify-between select-none"
-              >
-                <div className="absolute left-8 top-1.5 text-[8px] text-gray-400 font-normal select-none opacity-45 font-mono pointer-events-none flex items-center gap-1.5" dir="rtl">
-                  <span>تاريخ ووقت الطباعة: {new Date().toLocaleDateString('ar-YE')} {new Date().toLocaleTimeString('ar-YE', { hour12: true, hour: '2-digit', minute: '2-digit' })}</span>
-                  <span className="border border-gray-400 px-1 rounded font-bold text-[9px] text-gray-500 bg-transparent inline-block font-sans ml-1">
-                    {inv.printCount || 0}
-                  </span>
-                </div>
-                <div>
-                  {/* Header Layout */}
-                  <div className="flex justify-between items-start border-b-2 border-gray-900 pb-2.5 mb-2.5">
-                    {/* Right Corner: Shop Name */}
-                    <div className="text-right flex-1 pt-1">
-                      <h2 className="text-xl font-black text-gray-900 tracking-tight leading-tight font-cairo whitespace-nowrap">{shopConfig?.shopName || 'عالم الصيانة والتجارة'}</h2>
-                      <div className="text-sm font-black text-gray-900 tracking-tight leading-tight mt-1.5 font-cairo">قسم الصيانة</div>
-                      <div className="mt-2 space-y-1">
-                        {(shopConfig?.phone1 || shopConfig?.phone2) && (
-                          <div className="text-[10px] font-bold text-gray-800 flex items-center justify-start gap-1.5 w-fit">
-                            <span>تلفون :</span>
-                            <span dir="ltr" className="font-mono">
-                              {shopConfig?.phone1}
-                              {shopConfig?.phone1 && shopConfig?.phone2 && ' - '}
-                              {shopConfig?.phone2}
-                            </span>
-                            <div className="flex items-center gap-1 mr-1.5">
-                              <Smartphone size={10} className="text-gray-700" />
-                              {(shopConfig?.phone1Whatsapp || shopConfig?.phone2Whatsapp) && (
-                                <MessageCircle size={10} className="text-green-600" />
-                              )}
-                            </div>
-                          </div>
-                        )}
-                        {shopConfig?.landline && (
-                          <div className="text-[10px] font-bold text-gray-800 flex items-center justify-start gap-1.5 w-fit">
-                            <span>ثابت :</span>
-                            <span dir="ltr" className="font-mono">{shopConfig.landline}</span>
-                            <div className="flex items-center gap-1 mr-1.5">
-                              <Phone size={10} className="text-gray-700" />
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                    
-                    {/* Center: Title / Logo */}
-                    <div className="text-center flex-[1.2] flex flex-col items-center justify-center">
-                      {shopConfig?.logoUrl ? (
-                        <img src={shopConfig.logoUrl} alt="Logo" className="h-16 max-w-[150px] object-contain mb-1.5" referrerPolicy="no-referrer" />
-                      ) : (
-                        <div className="w-12 h-12 border border-dashed border-gray-300 rounded-xl mb-1.5 flex items-center justify-center text-gray-400 text-[10px] font-bold">شعار المحل</div>
-                      )}
-                      <h1 className="text-lg font-black text-gray-900 tracking-tight border-2 border-gray-900 px-4 py-1.5 rounded-lg inline-block bg-gray-50/50">عرض سعر صيانة أجهزة</h1>
-                    </div>
-
-                    {/* Left Corner: Invoice Info */}
-                    <div className="text-left flex-1 space-y-1 pt-1 bg-gray-50/50 p-3 rounded-lg border border-gray-200">
-                      <div className="text-sm font-bold text-gray-700 flex justify-between gap-4">
-                        <span>رقم التقرير:</span>
-                        <span className="font-mono text-gray-900">{inv.invoiceNumber}</span>
-                      </div>
-                      <div className="text-sm font-bold text-gray-700 flex justify-between gap-4">
-                        <span>التاريخ:</span>
-                        <span className="font-mono text-gray-900">{inv.createdAt ? (function(){ const d = parseDate(inv.createdAt); return !d ? '---' : d.toISOString().slice(0,10).replace(/-/g, '/'); })() : '---'}</span>
-                      </div>
-                      <div className="text-sm font-bold text-gray-700 flex justify-between gap-4">
-                        <span>وقت الإصدار:</span>
-                        <span className="font-mono text-gray-900">
-                          {inv.createdAt ? (function(){ 
-                            const d = parseDate(inv.createdAt); 
-                            return !d ? '---' : d.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit' }); 
-                          })() : new Date().toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit' })}
-                        </span>
-                      </div>
-                      <div className="text-sm font-bold text-gray-700 flex justify-between gap-4 border-t border-gray-200 pt-1 mt-1 font-cairo">
-                        <span>رقم المستخدم:</span>
-                        <span className="font-mono text-gray-900">{user?.userNumber || '100'}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Customer Info Single Line */}
-                  <div className="bg-gray-100 p-2 rounded-lg mb-2 border border-gray-300 flex flex-row items-center justify-start gap-4 px-6 text-xs font-black text-gray-900 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <span className="text-[10px] text-gray-600 ml-2 whitespace-nowrap">إسم العميل:</span>
-                      <span className="text-gray-900 font-black">{inv.customerName}</span>
-                    </div>
-                    {customerCompany && customerCompany !== '---' && (
-                      <div className="border-r border-gray-300 pr-6 flex items-center">
-                        <span className="text-[10px] text-gray-600 ml-2 whitespace-nowrap">الجهة:</span>
-                        <span className="text-gray-900 font-black">{customerCompany}</span>
-                      </div>
-                    )}
-                    {customerPhone && customerPhone !== '---' && (
-                      <div className="border-r border-gray-300 pr-6 flex items-center">
-                        <span className="text-[10px] text-gray-600 ml-2 whitespace-nowrap">الجوال:</span>
-                        <span className="font-mono text-gray-900" dir="ltr">{customerPhone}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Device Detailed Items Table */}
-                  <div className="border border-gray-400 overflow-hidden mb-2 rounded-md">
-                    <table className="w-full text-right border-collapse text-xs table-fixed">
-                      <thead className="bg-gray-100 text-gray-800 font-bold border-b-2 border-gray-400 text-[11px]">
-                        <tr>
-                          <th className="px-2 py-1.5 text-center w-[5%] border-l border-gray-400 bg-gray-200/50">م</th>
-                          <th className="px-2 py-1.5 border-l border-gray-400 w-[25%]">النوع/الجهاز</th>
-                          <th className="px-2 py-1.5 border-l border-gray-400 w-[40%]">تقرير الفحص / نتيجة الصيانة</th>
-                          <th className="px-2 py-1.5 text-center border-l border-gray-400 w-[12%]">سعر الوحدة</th>
-                          <th className="px-2 py-1.5 text-center border-l border-gray-400 w-[8%]">العدد</th>
-                          <th className="px-2 py-1.5 text-center w-[10%] font-black bg-gray-200/50">الإجمالي</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-300">
-                        {invItems.map((item, idx) => {
-                          const itemQty = Number(item.quantity || 1);
-                          const totalItemCost = Number(item.cost || 0);
-                          const unitItemCost = item.unitCost || (itemQty > 0 ? totalItemCost / itemQty : 0);
-                          const statusLabel = getItemStatus(item);
-                          const reportVal = item.engineerReport || item.technicalNotes || item.faultType || '';
-                          const parsed = parseEngineerReport(reportVal);
-                          const displayStatusReport = (() => {
-                            if (statusLabel === 'لا يصلح') {
-                              return 'لا يصلح';
-                            }
-                            if (statusLabel === 'سليم') {
-                              return 'سليم';
-                            }
-                            // صيانة: إظهار بيانات نتيجة الصيانة فقط
-                            if (parsed.outcome && parsed.outcome.trim() !== '') {
-                              return parsed.outcome.trim();
-                            }
-                            const cleanTechnical = parsed.technical 
-                              ? parsed.technical
-                                  .replace(/الجهاز بحاجة إلى صيانة/gi, '')
-                                  .replace(/تقرير الفحص[:\s-]*/gi, '')
-                                  .replace(/\|\s*$/, '')
-                                  .trim() 
-                              : '';
-                            if (cleanTechnical && cleanTechnical !== 'صيانة' && cleanTechnical !== '-') {
-                              return cleanTechnical;
-                            }
-                            if (item.outcome && typeof item.outcome === 'string' && !['approved', 'waiting_parts', 'refused'].includes(item.outcome) && item.outcome.trim() !== '') {
-                              return item.outcome.trim();
-                            }
-                            return 'تشغيل كامل للجهاز';
-                          })();
-                          
-                          return (
-                            <tr key={item.id ? `appr-it-${item.id}-${idx}` : `appr-it-idx-${idx}`} className="even:bg-gray-50/50 text-[11px] leading-none">
-                              <td className="px-2 py-1 text-center font-mono font-bold border-l border-gray-400 bg-gray-50 w-[5%]">{idx + 1}</td>
-                              <td className="px-2 py-1 font-bold text-gray-900 border-l border-gray-400 w-[25%] max-w-[190px] whitespace-nowrap overflow-hidden text-ellipsis" title={`${item.deviceType} ${item.deviceName ? `- ${item.deviceName}` : ''}`}>
-                                {item.deviceType} {item.deviceName ? `- ${item.deviceName}` : ''}
-                              </td>
-                              <td className="px-2 py-1 text-gray-800 border-l border-gray-400 w-[40%] max-w-[310px] whitespace-nowrap overflow-hidden text-ellipsis" title={displayStatusReport}>
-                                <span>{displayStatusReport}</span>
-                              </td>
-                              <td className="px-2 py-1 text-center font-mono text-gray-900 border-l border-gray-400 w-[12%]">
-                                {unitItemCost.toLocaleString('en-US')}
-                              </td>
-                              <td className="px-2 py-1 text-center font-mono text-gray-900 border-l border-gray-400 w-[8%]">
-                                {itemQty}
-                              </td>
-                              <td className="px-2 py-1 text-center font-mono font-black text-gray-900 bg-gray-50 w-[10%]">
-                                {totalItemCost.toLocaleString('en-US')}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                        {/* Last row for totals */}
-                        <tr className="bg-gray-200/60 font-bold border-t-2 border-gray-400 text-[11px]">
-                          <td colSpan={4} className="px-2 py-1.5 text-left font-black border-l border-gray-400">الإجمالي</td>
-                          <td className="px-2 py-1.5 text-center font-mono font-black border-l border-gray-400">
-                            {invItems.reduce((sum, item) => sum + Number(item.quantity || 1), 0)}
-                          </td>
-                          <td className="px-2 py-1.5 text-center font-mono font-black text-gray-900">
-                            {invItems.reduce((sum, item) => sum + Number(item.cost || 0), 0).toLocaleString('en-US')} <span className="text-[10px] font-sans mr-0.5">{currencyVal}</span>
-                          </td>
-                        </tr>
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* العدادات بعد الجدول بشكل صحيح ومرتب */}
-                  {(() => {
-                    const maintCount = invItems.filter((i: any) => getItemStatus(i) === 'صيانة').reduce((sum: number, i: any) => sum + (Number(i.quantity) || 1), 0);
-                    const safeCount = invItems.filter((i: any) => getItemStatus(i) === 'سليم').reduce((sum: number, i: any) => sum + (Number(i.quantity) || 1), 0);
-                    const failedCount = invItems.filter((i: any) => getItemStatus(i) === 'لا يصلح').reduce((sum: number, i: any) => sum + (Number(i.quantity) || 1), 0);
-
-                    const smartCounters = [
-                      { label: 'صيانة', count: maintCount, bg: 'bg-amber-50 text-amber-700' },
-                      { label: 'سليم', count: safeCount, bg: 'bg-emerald-50 text-emerald-700' },
-                      { label: 'لا يصلح', count: failedCount, bg: 'bg-rose-50 text-rose-700' }
-                    ].filter(c => c.count > 0);
-
-                    if (smartCounters.length === 0) return null;
-
-                    return (
-                      <div className="border border-gray-400 rounded-md overflow-hidden bg-gray-50 mb-2 font-cairo w-full text-xs">
-                        <div className="bg-gray-100 border-b border-gray-400 p-2 font-black text-center text-gray-700 text-xs">
-                          ملخص إحصائيات حالة الأجهزة الفنية
-                        </div>
-                        <div className="flex divide-x divide-x-reverse divide-gray-400 font-bold">
-                          {smartCounters.map((c, i) => (
-                            <div key={i} className={`flex-1 p-2 text-center ${c.bg}`}>
-                              <div className="text-[10px] opacity-75 font-bold mb-0.5">{c.label}</div>
-                              <div className="text-sm font-mono font-black">{c.count}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    );
-                  })()}
-                </div>
-
-                <div>
-                  <div className="border-t-2 border-gray-900 my-3"></div>
-
-                  {/* Footer Notes & Signatures - New Layout */}
-                  <div className="flex justify-between items-start text-xs font-bold text-gray-900 leading-loose mb-2 px-4">
-                    {/* Right Side */}
-                    <div className="text-right space-y-1">
-                        <p>نرجو منكم الرد خلال 24 ساعة كحد أقصى</p>
-                        <p className="pt-2 font-black">توقيع العميل بالموافقة / ........................................</p>
-                    </div>
-
-                    {/* Left Side */}
-                    <div className="text-left space-y-1">
-                        <p className="pt-2">اسم المهندس المختص / <span className="font-bold border-b border-dashed px-4">................</span> التوقيع /.............</p>
-                    </div>
-                  </div>
-
-                  <div className="border-t-[3px] border-black mt-2 mb-1 border-solid"></div>
-                  
-                  {/* Address and Facebook */}
-                  <div className="flex flex-row items-center justify-between text-[10px] font-bold text-black font-cairo py-1 mt-0">
-                    {shopConfig?.address && (
-                      <div className="flex items-center gap-1.5 justify-center flex-row-reverse text-center w-max">
-                         <MapPin size={12} className="text-gray-600" />
-                         <span>{shopConfig.address}</span>
-                      </div>
-                    )}
-
-                    {shopConfig?.facebookUrl && (
-                      <div className="flex items-center gap-1.5 justify-center flex-row-reverse text-center w-max">
-                         <Facebook size={12} className="text-blue-600" />
-                         <span dir="ltr">{shopConfig.facebookUrl}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  <BankAccountsFooter shopConfig={shopConfig} currentOutput={currentOutput || { output_datetime: new Date() }} />
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
+      <PrintPreviewOverlay
+        type="invoice"
+        data={{
+          invoice: {
+            ...activePrintReportInvoice,
+            customerPhone: getCustomerPhone(activePrintReportInvoice.customerId) || (activePrintReportInvoice as any).customerPhone || ''
+          },
+          items: items.filter(it => it.invoiceNumber === activePrintReportInvoice.invoiceNumber),
+          templateType: subTab === 'parts' ? 'assignment' : 'quotation'
+        }}
+        onClose={() => setActivePrintReportInvoice(null)}
+        shopConfig={shopConfig}
+        user={user}
+      />
     );
   };
 
   // SHOW CLONED DETAILED FORM VIEW
   if (selectedInvoice) {
     if (showPreviewReport) {
-      const inv = selectedInvoice;
       return (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-[999] overflow-hidden flex items-center justify-center p-2 sm:p-4 font-sans print:p-0 print:bg-white print:relative" dir="rtl">
-          <div className="bg-[#141414] border border-white/10 w-full max-w-5xl max-h-[96vh] rounded-3xl overflow-hidden shadow-2xl flex flex-col print:border-0 print:shadow-none print:bg-white">
-            <div className="flex items-center justify-between p-4 bg-black/50 border-b border-white/5 print:hidden select-none gap-2 flex-wrap col-span-full">
-              <div className="flex items-center gap-2">
-                <button 
-                  type="button"
-                  onClick={() => {
-                    setUserZoom(1);
-                    setShowPreviewReport(false);
-                  }}
-                  title="العودة للخلف للمراجعة"
-                  className="w-11 h-11 flex items-center justify-center rounded-xl bg-slate-200 hover:bg-slate-300 text-slate-900 transition-all cursor-pointer shadow-md active:scale-95"
-                >
-                  <ArrowRight size={20} />
-                </button>
-                <span className="text-sm font-bold text-white hidden sm:block">معاينة وتجهيز وعرض سعر العميل</span>
-              </div>
-
-              {/* Zoom Controls */}
-              <div className="flex items-center gap-1 bg-black/40 rounded-lg p-1 border border-white/10">
-                <button
-                  type="button"
-                  onClick={() => setUserZoom(prev => Math.min(2.5, Number((prev + 0.1).toFixed(1))))}
-                  className="w-8 h-8 flex items-center justify-center text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-all active:scale-95 cursor-pointer"
-                  title="تكبير"
-                >
-                  <ZoomIn size={16} />
-                </button>
-                <span className="text-xs font-mono text-gray-300 min-w-[4ch] text-center font-bold select-none" dir="ltr">
-                  {Math.round(userZoom * 100)}%
-                </span>
-                <button
-                  type="button"
-                  onClick={() => setUserZoom(prev => Math.max(0.5, Number((prev - 0.1).toFixed(1))))}
-                  className="w-8 h-8 flex items-center justify-center text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-all active:scale-95 cursor-pointer"
-                  title="تصغير"
-                >
-                  <ZoomOut size={16} />
-                </button>
-                {userZoom !== 1 && (
-                  <button
-                    type="button"
-                    onClick={() => setUserZoom(1)}
-                    className="text-[10px] px-2 h-8 text-blue-400 hover:text-blue-300 hover:bg-white/10 rounded-md transition-all active:scale-95 font-cairo font-bold cursor-pointer"
-                    title="إعادة ضبط"
-                  >
-                    تلقائي
-                  </button>
-                )}
-              </div>
-
-              <div className="flex items-center gap-2">
-                <button 
-                  type="button"
-                  disabled={loadingForm}
-                  onClick={() => saveApprovalData('none')}
-                  title="حفظ وترحيل"
-                  className="w-11 h-11 flex items-center justify-center rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white shadow-[0_0_15px_rgba(5,150,105,0.3)] transition-all cursor-pointer disabled:opacity-50 active:scale-95 hover:scale-105"
-                >
-                  {loadingForm ? <Loader2 className="animate-spin" size={20} /> : <Save size={20} />}
-                </button>
-
-                <button 
-                  type="button"
-                  disabled={loadingForm}
-                  onClick={() => saveApprovalData('print')}
-                  title="حفظ وطباعة مباشرة"
-                  className="w-11 h-11 flex items-center justify-center rounded-xl bg-blue-600 hover:bg-blue-500 text-white shadow-md transition-all cursor-pointer disabled:opacity-50 active:scale-95 hover:scale-105"
-                >
-                  {loadingForm ? <Loader2 className="animate-spin" size={20} /> : <Printer size={20} />}
-                </button>
-
-                <button 
-                  type="button"
-                  disabled={loadingForm || isGeneratingPDF}
-                  onClick={() => saveApprovalData('whatsapp')}
-                  title="حفظ وارسال واتس وتنزيل PDF"
-                  className="w-11 h-11 flex items-center justify-center rounded-xl bg-green-600 hover:bg-green-500 text-white shadow-md transition-all cursor-pointer disabled:opacity-50 active:scale-95 hover:scale-105"
-                >
-                  {isGeneratingPDF ? (
-                    <Loader2 className="animate-spin" size={20} />
-                  ) : (
-                    <WhatsAppIcon className="w-5 h-5 text-white" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            {/* Content to print is simply the active print element or logic for it */}
-            <div className="w-full flex-1 overflow-auto flex items-center justify-center bg-black/45 py-3 px-2 sm:px-4 scroll-smooth">
-              <div 
-                className="relative shrink-0 my-auto transition-all duration-150 flex justify-center"
-                style={{ 
-                  width: `${794 * (scaleFactor * userZoom)}px`, 
-                  height: `${1123 * (scaleFactor * userZoom)}px` 
-                }}
-              >
-                <div 
-                  id="print-report-area" 
-                  style={{ 
-                    transform: `scale(${scaleFactor * userZoom})`, 
-                    transformOrigin: 'top left',
-                    width: '794px',
-                    minWidth: '794px',
-                    height: '1123px',
-                    minHeight: '1123px',
-                    position: 'absolute',
-                    top: 0,
-                    left: 0
-                  }}
-                  className="p-6 bg-white text-gray-900 print:p-0 print:bg-white print:text-black shadow-2xl rounded-sm print:rounded-none print:shadow-none flex flex-col justify-between select-none"
-                >
-                  <div className="absolute left-8 top-1.5 text-[8px] text-gray-400 font-normal select-none opacity-45 font-mono pointer-events-none flex items-center gap-1.5" dir="rtl">
-                    <span>تاريخ ووقت الطباعة: {new Date().toLocaleDateString('ar-YE')} {new Date().toLocaleTimeString('ar-YE', { hour12: true, hour: '2-digit', minute: '2-digit' })}</span>
-                    <span className="border border-gray-400 px-1 rounded font-bold text-[9px] text-gray-500 bg-transparent inline-block font-sans ml-1">
-                      {inv.printCount || 0}
-                    </span>
-                  </div>
-                  <div>
-                    {/* Header Layout */}
-                    <div className="flex justify-between items-start border-b-2 border-gray-900 pb-2.5 mb-2.5">
-                      {/* Right Corner: Shop Name */}
-                      <div className="text-right flex-1 pt-1">
-                        <h2 className="text-xl font-black text-gray-900 tracking-tight leading-tight font-cairo whitespace-nowrap">{shopConfig?.shopName || 'عالم الصيانة والتجارة'}</h2>
-                        <div className="text-sm font-black text-gray-900 tracking-tight leading-tight mt-1.5 font-cairo">قسم الصيانة</div>
-                        <div className="mt-2 space-y-1">
-                          {(shopConfig?.phone1 || shopConfig?.phone2) && (
-                            <div className="text-[10px] font-bold text-gray-800 flex items-center justify-start gap-1.5 w-fit">
-                              <span>تلفون :</span>
-                              <span dir="ltr" className="font-mono">
-                                {shopConfig?.phone1}
-                                {shopConfig?.phone1 && shopConfig?.phone2 && ' - '}
-                                {shopConfig?.phone2}
-                              </span>
-                              <div className="flex items-center gap-1 mr-1.5">
-                                <Smartphone size={10} className="text-gray-700" />
-                                {(shopConfig?.phone1Whatsapp || shopConfig?.phone2Whatsapp) && (
-                                  <MessageCircle size={10} className="text-green-600" />
-                                )}
-                              </div>
-                            </div>
-                          )}
-                          {shopConfig?.landline && (
-                            <div className="text-[10px] font-bold text-gray-800 flex items-center justify-start gap-1.5 w-fit">
-                              <span>ثابت :</span>
-                              <span dir="ltr" className="font-mono">{shopConfig.landline}</span>
-                              <div className="flex items-center gap-1 mr-1.5">
-                                <Phone size={10} className="text-gray-700" />
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      </div>
-                      
-                      {/* Center: Title / Logo */}
-                      <div className="text-center flex-[1.2] flex flex-col items-center justify-center">
-                        {shopConfig?.logoUrl ? (
-                          <img src={shopConfig.logoUrl} alt="Logo" className="h-16 max-w-[150px] object-contain mb-1.5" referrerPolicy="no-referrer" />
-                        ) : (
-                          <div className="w-12 h-12 border border-dashed border-gray-300 rounded-xl mb-1.5 flex items-center justify-center text-gray-400 text-[10px] font-bold">شعار المحل</div>
-                        )}
-                        <h1 className="text-lg font-black text-gray-900 tracking-tight border-2 border-gray-900 px-4 py-1.5 rounded-lg inline-block bg-gray-50/50">تقرير الحالة والإسناد</h1>
-                      </div>
-
-                      {/* Left Corner: Invoice Info */}
-                      <div className="text-left flex-1 space-y-1 pt-1 bg-gray-50/50 p-3 rounded-lg border border-gray-200">
-                        <div className="text-sm font-bold text-gray-700 flex justify-between gap-4">
-                          <span>رقم التقرير:</span>
-                          <span className="font-mono text-gray-900">{inv.invoiceNumber}</span>
-                        </div>
-                        <div className="text-sm font-bold text-gray-700 flex justify-between gap-4">
-                          <span>التاريخ:</span>
-                          <span className="font-mono text-gray-900">{inv.createdAt ? (function(){ const d = parseDate(inv.createdAt); return !d ? '---' : d.toISOString().slice(0,10).replace(/-/g, '/'); })() : '---'}</span>
-                        </div>
-                        <div className="text-sm font-bold text-gray-700 flex justify-between gap-4">
-                          <span>وقت الإصدار:</span>
-                          <span className="font-mono text-gray-900">
-                            {inv.createdAt ? (function(){ 
-                              const d = parseDate(inv.createdAt); 
-                              return !d ? '---' : d.toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit' }); 
-                            })() : new Date().toLocaleTimeString('en-US', { hour12: true, hour: '2-digit', minute: '2-digit' })}
-                          </span>
-                        </div>
-                        <div className="text-sm font-bold text-gray-700 flex justify-between gap-4 border-t border-gray-200 pt-1 mt-1 font-cairo">
-                          <span>رقم المستخدم:</span>
-                          <span className="font-mono text-gray-900">{user?.userNumber || '100'}</span>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Customer Info Single Line */}
-                    <div className="bg-gray-100 p-2 rounded-lg mb-2 border border-gray-300 flex flex-row items-center justify-start gap-4 px-6 text-xs font-black text-gray-900 whitespace-nowrap">
-                      <div className="flex items-center">
-                        <span className="text-[10px] text-gray-600 ml-2 whitespace-nowrap">إسم العميل:</span>
-                        <span className="text-gray-900 font-black">{inv.customerName}</span>
-                      </div>
-                      {getCustomerCompany(inv.customerId) && getCustomerCompany(inv.customerId) !== '---' && (
-                        <div className="border-r border-gray-300 pr-6 flex items-center">
-                          <span className="text-[10px] text-gray-600 ml-2 whitespace-nowrap">الجهة:</span>
-                          <span className="text-gray-900 font-black">{getCustomerCompany(inv.customerId)}</span>
-                        </div>
-                      )}
-                      {getCustomerPhone(inv.customerId) && getCustomerPhone(inv.customerId) !== '---' && getCustomerPhone(inv.customerId) !== 'غير متوفر' && (
-                        <div className="border-r border-gray-300 pr-6 flex items-center">
-                          <span className="text-[10px] text-gray-600 ml-2 whitespace-nowrap">الجوال:</span>
-                          <span className="font-mono text-gray-900" dir="ltr">{getCustomerPhone(inv.customerId)}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Device Detailed Items Table */}
-                    <div className="border border-gray-400 overflow-hidden mb-2 rounded-md">
-                      <table className="w-full text-right border-collapse text-xs table-fixed">
-                        <thead className="bg-gray-100 text-gray-800 font-bold border-b-2 border-gray-400 text-[11px]">
-                          <tr>
-                            <th className="px-2 py-1.5 text-center w-[5%] border-l border-gray-400 bg-gray-200/50">م</th>
-                            <th className="px-2 py-1.5 border-l border-gray-400 w-[25%]">النوع/الجهاز</th>
-                            <th className="px-2 py-1.5 border-l border-gray-400 w-[35%]">تقرير الفحص المسجل</th>
-                            <th className="px-2 py-1.5 border-l border-gray-400 w-[25%]">تفاصيل الإجراء الحالي</th>
-                            <th className="px-2 py-1.5 text-center border-l border-gray-400 w-[10%]">العدد</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-gray-300">
-                          {actionItems.map((action, idx) => {
-                            const it = invoiceItems.find(i => i.id === action.id);
-                            if (!it) return null;
-                            return (
-                              <tr key={idx} className="even:bg-gray-50/50 text-[11px] leading-none">
-                                <td className="px-2 py-1 text-center font-mono font-bold border-l border-gray-400 bg-gray-50 w-[5%]">{idx + 1}</td>
-                                <td className="px-2 py-1 font-bold text-gray-900 border-l border-gray-400 w-[25%] max-w-[190px] whitespace-nowrap overflow-hidden text-ellipsis" title={`${it.deviceType} ${it.deviceName ? `- ${it.deviceName}` : ''}`}>
-                                  {it.deviceType} {it.deviceName ? `- ${it.deviceName}` : ''}
-                                </td>
-                                <td className="px-2 py-1 text-gray-800 border-l border-gray-400 w-[35%] max-w-[270px] whitespace-nowrap overflow-hidden text-ellipsis" title={(() => {
-                                  const reportVal = it.engineerReport || '';
-                                  const parsed = parseEngineerReport(reportVal);
-                                  return parsed.outcome ? `${parsed.technical} - ${parsed.outcome}` : (reportVal || 'لا يوجد تقرير');
-                                })()}>
-                                  {(() => {
-                                    const reportVal = it.engineerReport || '';
-                                    const parsed = parseEngineerReport(reportVal);
-                                    return parsed.outcome ? `${parsed.technical} - ${parsed.outcome}` : (reportVal || 'لا يوجد تقرير');
-                                  })()}
-                                </td>
-                                <td className="px-2 py-1 text-gray-800 border-l border-gray-400 w-[25%] max-w-[190px] whitespace-nowrap overflow-hidden text-ellipsis" title={`${action.outcome === 'approved' ? 'موافقة' : action.outcome === 'waiting_parts' ? 'انتظار قطع' : 'رفض'} - ${action.reason || '-'}`}>
-                                  <span className="font-bold text-gray-900 ml-1">
-                                    ({action.outcome === 'approved' ? 'موافقة' : action.outcome === 'waiting_parts' ? 'انتظار قطع' : 'رفض'})
-                                  </span>
-                                  {action.reason || '-'}
-                                </td>
-                                <td className="px-2 py-1 text-center font-mono text-gray-900 border-l border-gray-400 w-[10%]">
-                                  {action.count}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                          {/* Last row for totals */}
-                          <tr className="bg-gray-200/60 font-bold border-t-2 border-gray-400 text-[11px]">
-                            <td colSpan={4} className="px-2 py-1.5 text-left font-black border-l border-gray-400">إجمالي الأجهزة المشمولة في الإجراء</td>
-                            <td className="px-2 py-1.5 text-center font-mono font-black border-l border-gray-400">
-                              {actionItems.reduce((acc, row) => acc + row.count, 0)}
-                            </td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-
-                  <div>
-                    <div className="border-t-2 border-gray-900 my-3"></div>
-
-                    {/* Footer Notes & Signatures - New Layout */}
-                    <div className="flex justify-between items-start text-xs font-bold text-gray-900 leading-loose mb-2 px-4">
-                      {/* Right Side */}
-                      <div className="text-right space-y-1">
-                          <p>نرجو منكم الرد خلال 24 ساعة كحد أقصى</p>
-                          <p className="pt-2 font-black">توقيع العميل بالموافقة / ........................................</p>
-                      </div>
-
-                      {/* Left Side */}
-                      <div className="text-left space-y-1">
-                          <p className="pt-2">اسم المهندس المختص / <span className="font-bold border-b border-dashed px-4">................</span> التوقيع /.............</p>
-                      </div>
-                    </div>
-
-                    <div className="border-t-[3px] border-black mt-2 mb-1 border-solid"></div>
-                    
-                    {/* Address and Facebook */}
-                    <div className="flex flex-row items-center justify-between text-[10px] font-bold text-black font-cairo py-1 mt-0">
-                      {shopConfig?.address && (
-                        <div className="flex items-center gap-1.5 justify-center flex-row-reverse text-center w-max">
-                           <MapPin size={12} className="text-gray-600" />
-                           <span>{shopConfig.address}</span>
-                        </div>
-                      )}
-
-                      {shopConfig?.facebookUrl && (
-                        <div className="flex items-center gap-1.5 justify-center flex-row-reverse text-center w-max">
-                           <Facebook size={12} className="text-blue-600" />
-                           <span dir="ltr">{shopConfig.facebookUrl}</span>
-                        </div>
-                      )}
-                    </div>
-
-                    <BankAccountsFooter shopConfig={shopConfig} currentOutput={{ output_datetime: new Date() }} />
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <PrintPreviewOverlay
+          type="invoice"
+          data={{
+            invoice: {
+              ...selectedInvoice,
+              customerPhone: getCustomerPhone(selectedInvoice.customerId) || (selectedInvoice as any).customerPhone || ''
+            },
+            items: items.filter(it => it.invoiceNumber === selectedInvoice.invoiceNumber),
+            templateType: subTab === 'parts' ? 'assignment' : 'quotation'
+          }}
+          onClose={() => setShowPreviewReport(false)}
+          shopConfig={shopConfig}
+          user={user}
+          onPrint={() => saveApprovalData('print')}
+          onWhatsApp={() => saveApprovalData('whatsapp')}
+          onSave={() => saveApprovalData('none')}
+          isSaving={loadingForm}
+        />
       );
     }
 

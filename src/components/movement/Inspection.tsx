@@ -14,6 +14,7 @@ import PrintPreviewOverlay from '../PrintPreviewOverlay';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
 import { sanitizeDocumentStyles, sanitizeElementInlineStyles, cleanOklchInStyleText } from '../../lib/html2canvasHelper';
+import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../../lib/pdfHelper';
 
 const WhatsAppIcon = (props: React.SVGProps<SVGSVGElement>) => (
   <svg viewBox="0 0 24 24" width="24" height="24" fill="currentColor" {...props}>
@@ -860,47 +861,18 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
       restore = await sanitizeDocumentStyles();
       sanitizeElementInlineStyles(element);
 
-      // Temporarily remove transform to ensure clean capture
-      const originalTransform = element.style.transform;
-      element.style.transform = 'none';
-      
-      const canvas = await htmlToImage.toCanvas(element, {
-        pixelRatio: 2,
-        backgroundColor: '#ffffff',
-      });
-
-      // Restore transform
-      element.style.transform = originalTransform;
-
-      const imgData = canvas.toDataURL('image/jpeg', 0.95);
-
-      const pdf = new jsPDF({
-        orientation: 'p',
-        unit: 'mm',
-        format: 'a4',
-        compress: true
-      });
-      const imgWidth = 210;
-      const pageHeight = 297;
-      
-      const imgHeight = (canvas.height * imgWidth) / canvas.width;
-      let heightLeft = imgHeight;
-      let position = 0;
-
-      pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-      heightLeft -= pageHeight;
-
-      while (heightLeft > 5) {
-        position = heightLeft - imgHeight;
-        pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, position, imgWidth, imgHeight, undefined, 'FAST');
-        heightLeft -= pageHeight;
-      }
-
       const formattedDate = new Date().toISOString().split('T')[0];
       const filename = `تقرير الفحص_${invoice.customerName}_${formattedDate}.pdf`;
 
-      pdf.save(filename);
+      // Ultra-optimized compressed PDF generation (< 100KB) matching Quick Search pipeline
+      const pdfResult = await generateOptimizedPdfFromElement(element, {
+        filename,
+        pixelRatio: 1.25,
+        quality: 0.74,
+        backgroundColor: '#ffffff'
+      });
+
+      downloadPdfBlob(pdfResult.blob, filename);
 
       // WhatsApp text composition
       let message = `*كشف تقرير ومعاينة فحص أجهزة* 🔍📄\n\n`;
@@ -920,8 +892,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
 
       let sharedNatively = false;
       try {
-        const pdfBlob = pdf.output('blob');
-        sharedNatively = await sharePdfFile(pdfBlob, filename, message, 'report');
+        sharedNatively = await sharePdfFile(pdfResult.blob, filename, message, 'report');
       } catch (shareErr) {
         console.warn('Native share was skipped:', shareErr);
       }

@@ -643,21 +643,7 @@ export default function Vault({
 
   // WhatsApp share for fund statement
   const handleShareFundWhatsApp = (fund: FinFund, entries: ProcessedFundStatementEntry[]) => {
-    const totalIn = entries.reduce((s, e) => s + e.debit, 0);
-    const totalOut = entries.reduce((s, e) => s + e.credit, 0);
-    const lastBalance = entries.length > 0 ? entries[entries.length - 1].runningBalance : parseFundBalance(fund.balance);
-
-    let message = `📊 *كشف حساب صندوق: ${fund.name}*\n`;
-    message += `🏛️ المتجر: ${shopConfig?.shopName || 'المتجر'}\n`;
-    message += `💰 العملة: ${fund.currency}\n`;
-    message += `🏦 الرصيد الختامي: ${lastBalance.toLocaleString('en-US')} ${fund.currency}\n`;
-    message += `📥 إجمالي المدين (الوارد): +${totalIn.toLocaleString('en-US')} ${fund.currency}\n`;
-    message += `📤 إجمالي الدائن (المنصرف): -${totalOut.toLocaleString('en-US')} ${fund.currency}\n`;
-    message += `🔢 عدد العمليات: ${entries.length}\n`;
-    message += `📅 التاريخ: ${new Date().toLocaleDateString('ar-YE')}\n`;
-
-    const encoded = encodeURIComponent(message);
-    window.open(`https://api.whatsapp.com/send?text=${encoded}`, '_blank');
+    handlePrintFundStatement(fund, entries);
   };
 
   // Print movements table below funds
