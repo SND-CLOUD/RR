@@ -88,8 +88,6 @@ export default function App() {
   const goToDashboard = () => {
     setActiveTab('dashboard');
     setVaultInitialProps(null);
-    setEntryExitView('hub');
-    setMovementView('hub');
     setDashboardResetTrigger(prev => prev + 1);
     window.dispatchEvent(new CustomEvent('reset-dashboard-counter'));
   };
@@ -901,7 +899,10 @@ export default function App() {
     }
   };
 
-
+  useEffect(() => {
+    setMovementView('hub');
+    setEntryExitView('hub');
+  }, [activeTab]);
 
   useEffect(() => {
     document.dir = i18n.language === 'ar' ? 'rtl' : 'ltr';
@@ -1300,10 +1301,10 @@ export default function App() {
 
           <nav className="flex-1 px-4 py-8 space-y-2 overflow-hidden">
             <NavItem active={activeTab === 'dashboard'} onClick={goToDashboard} icon={<LayoutDashboard size={22} />} label={t('common.dashboard')} />
-            <NavItem active={activeTab === 'entry-exit'} onClick={() => { setVaultInitialProps(null); setEntryExitView('hub'); setActiveTab('entry-exit'); }} icon={<FilePlus size={22} />} label={t('common.entryExit')} />
+            <NavItem active={activeTab === 'entry-exit'} onClick={() => { setVaultInitialProps(null); setActiveTab('entry-exit'); }} icon={<FilePlus size={22} />} label={t('common.entryExit')} />
             <NavItem active={activeTab === 'vault'} onClick={() => { setVaultInitialProps(null); setActiveTab('vault'); }} icon={<CircleDollarSign size={22} />} label={t('common.vault')} />
             <NavItem active={activeTab === 'customers'} onClick={() => { setVaultInitialProps(null); setActiveTab('customers'); }} icon={<Users size={22} />} label={t('common.customers')} />
-            <NavItem active={activeTab === 'device-movement'} onClick={() => { setVaultInitialProps(null); setMovementView('hub'); setActiveTab('device-movement'); }} icon={<SettingsIcon size={22} />} label={t('common.deviceMovement')} />
+            <NavItem active={activeTab === 'device-movement'} onClick={() => { setVaultInitialProps(null); setActiveTab('device-movement'); }} icon={<SettingsIcon size={22} />} label={t('common.deviceMovement')} />
             <NavItem active={activeTab === 'inspection'} onClick={() => { setVaultInitialProps(null); setActiveTab('inspection'); }} icon={<ClipboardCheck size={22} />} label="فحص" />
             <NavItem active={activeTab === 'maintenance'} onClick={() => { setVaultInitialProps(null); setActiveTab('maintenance'); }} icon={<Wrench size={22} />} label="صيانة" />
           </nav>
@@ -1519,7 +1520,7 @@ export default function App() {
           <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-xl border-t border-gray-200 dark:border-white/5 py-2 px-6 flex items-center justify-around shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)] dark:shadow-2xl mobile-bottom-nav" dir="rtl">
             <MobileNavItem 
               active={activeTab === 'entry-exit'} 
-              onClick={() => { setEntryExitView('hub'); setActiveTab('entry-exit'); }} 
+              onClick={() => setActiveTab('entry-exit')} 
               icon={<ArrowRightLeft size={22} />} 
               label="دخول وخروج أجهزة"
               colorClass="text-orange-500"

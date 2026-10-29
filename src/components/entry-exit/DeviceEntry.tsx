@@ -58,9 +58,10 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
   const [deviceModels, setDeviceModels] = useState<{ id: string; name: string; categoryName?: string }[]>([]);
   const [noPhone, setNoPhone] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [todayEntryCount, setTodayEntryCount] = useState(0);
-  const [newDevices, setNewDevices] = useState<InvoiceItem[]>([]);
-  const [deviceSearchQuery, setDeviceSearchQuery] = useState('');
+  const [successInfo, setSuccessInfo] = useState<{ invoiceNumber: string } | null>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [shopConfig, setShopConfig] = useState<any>(null);
+  const [currentOutput, setCurrentOutput] = useState<any>(null);
   const previewInvoiceObj = useRef<any>({});
 
   // Form State
@@ -198,38 +199,12 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
       setDeviceModels(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as any)));
     });
 
-    const unsubscribeNewDevices = onSnapshot(collection(db, 'invoice_items'), (snapshot) => {
-      const allItems = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as InvoiceItem));
-      
-      // Filter for "New" devices (status 10 or new)
-      const filtered = allItems.filter(i => 
-        (i.status === '10' || i.status === 'new') && 
-        !String(i.invoiceNumber).startsWith('PUR-') && 
-        !String(i.invoiceNumber).startsWith('O-')
-      ).sort((a, b) => {
-        const dateA = a.createdAt ? (typeof a.createdAt.toDate === 'function' ? a.createdAt.toDate().getTime() : new Date(a.createdAt).getTime()) : 0;
-        const dateB = b.createdAt ? (typeof b.createdAt.toDate === 'function' ? b.createdAt.toDate().getTime() : new Date(b.createdAt).getTime()) : 0;
-        return dateB - dateA;
-      });
-      setNewDevices(filtered);
-
-      // Calculate today's entries
-      const now = new Date();
-      const startOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
-      const count = allItems.filter(i => {
-        const date = i.createdAt ? (typeof i.createdAt.toDate === 'function' ? i.createdAt.toDate().getTime() : new Date(i.createdAt).getTime()) : 0;
-        return date >= startOfDay && !String(i.invoiceNumber).startsWith('PUR-') && !String(i.invoiceNumber).startsWith('O-');
-      }).reduce((sum, item) => sum + (Number(item.quantity) || 1), 0);
-      setTodayEntryCount(count);
-    });
-
     return () => {
       unsubscribeAppSettings();
       unsubscribeInvoices();
       unsubscribeShopSettings();
       unsubscribeCats();
       unsubscribeModels();
-      unsubscribeNewDevices();
     };
   }, []);
 
@@ -763,56 +738,22 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
       )}
 
       <div className="max-w-6xl mx-auto space-y-6 pb-20">
-        {/* Unified Header with Daily Counter */}
-        <div className="flex items-center justify-between px-4 py-4 border-b border-white/10 bg-black/20" dir="rtl">
-          <div className="flex items-center gap-4">
+        {/* Unified Header */}
+        <div className="flex items-center px-4 py-3 border-b border-white/10 bg-black/20" dir="rtl">
+          <div className="flex items-center gap-2">
             {onBack && (
-              <button onClick={onBack} className="p-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-2xl transition-all border border-white/5">
-                <ArrowRight size={20} />
+              <button onClick={onBack} className="p-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all">
+                <ArrowRight size={18} />
               </button>
             )}
-            <div className="space-y-0.5">
-              <h2 className="text-lg font-black text-white flex items-center gap-2 m-0 p-0">
-                 {t('addInvoice.title')}
-                 <span className="text-[10px] bg-orange-600/10 text-orange-500 font-black px-2 py-0.5 rounded border border-orange-500/20 tracking-widest">#{invoiceNumber || '...'}</span>
-              </h2>
-              <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">تسجيل دخول أجهزة صيانة جديدة</p>
-            </div>
-          </div>
-
-          <div className="flex flex-col items-center justify-center bg-orange-600/10 border border-orange-500/20 px-6 py-2 rounded-2xl">
-            <span className="text-[10px] font-black text-orange-500/80 uppercase mb-0.5">دخل اليوم</span>
-            <span className="text-3xl font-black text-white tabular-nums drop-shadow-md">{todayEntryCount}</span>
+            <h2 className="text-lg font-black text-white flex items-center gap-2 m-0 p-0">
+               {t('addInvoice.title')}
+               <span className="text-[10px] bg-orange-600/10 text-orange-500 font-bold px-2 py-0.5 rounded border border-orange-500/20">#{invoiceNumber || '...'}</span>
+            </h2>
           </div>
         </div>
 
-        {/* Search & Quick Add Section */}
-        <div className="px-4 py-2" dir="rtl">
-          <div className="relative group">
-            <div className="absolute inset-y-0 right-4 flex items-center pointer-events-none">
-              <Search size={20} className="text-gray-500 group-focus-within:text-orange-500 transition-colors" />
-            </div>
-            <input 
-              type="text"
-              placeholder="البحث في الأجهزة الجديدة المسجلة..."
-              value={deviceSearchQuery}
-              onChange={(e) => setDeviceSearchQuery(e.target.value)}
-              className="w-full bg-[#1a1a1a] border border-white/10 rounded-3xl py-4 pr-12 pl-40 focus:border-orange-500 focus:ring-4 focus:ring-orange-500/5 outline-none text-white text-sm font-bold shadow-2xl transition-all"
-            />
-            <button 
-              onClick={() => {
-                const element = document.getElementById('device-entry-form');
-                if (element) element.scrollIntoView({ behavior: 'smooth' });
-              }}
-              className="absolute left-2 top-2 bottom-2 bg-orange-600 hover:bg-orange-500 text-white px-6 rounded-2xl font-black text-xs transition-all flex items-center gap-2 shadow-lg active:scale-95"
-            >
-              <Plus size={16} />
-              إضافة دخول جديد
-            </button>
-          </div>
-        </div>
-
-        <div id="device-entry-form" className="bg-[#1a1a1a] rounded-3xl border border-white/5 shadow-2xl flex flex-col overflow-hidden mx-4">
+        <div className="bg-[#1a1a1a] rounded-3xl border border-white/5 shadow-2xl flex flex-col overflow-hidden">
           <div className="flex-1 p-0 space-y-0">
             {/* Unified Form Block */}
             <section className="p-4 md:p-5 space-y-4" dir="rtl">
