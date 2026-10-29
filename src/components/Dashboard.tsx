@@ -110,23 +110,7 @@ export default function Dashboard({
   const [selectedCurrency, setSelectedCurrency] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<VaultTransaction[]>([]);
   
-  // New Modals State
-  const [showInventoryReportsModal, setShowInventoryReportsModal] = useState(false);
-  const inventoryReportsModalRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (inventoryReportsModalRef.current && !inventoryReportsModalRef.current.contains(event.target as Node)) {
-        setShowInventoryReportsModal(false);
-      }
-    }
-    if (showInventoryReportsModal) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showInventoryReportsModal]);
 
   useEffect(() => {
     // Listen to all vault transactions
@@ -375,36 +359,37 @@ export default function Dashboard({
         </button>
       </div>
 
-      {/* Action Grid - 3x2 layout */}
-      <div className="grid grid-cols-3 gap-3 md:gap-4 max-w-4xl mx-auto pt-2">
+      {/* Action Grid - 3x3 layout */}
+      <div className="grid grid-cols-3 gap-3 md:gap-4 max-w-4xl mx-auto pt-2 pb-6">
         <ActionCard 
-          onClick={() => onNavigate('entry-exit')}
+          onClick={() => onNavigate('entry-exit', 'entry')}
           icon={<FilePlus size={24} className="md:w-7 md:h-7" />} 
-          label="دخول وخروج" 
+          label="دخول أجهزة" 
           color="bg-orange-600 hover:bg-orange-700"
         />
         <ActionCard 
           onClick={() => onNavigate('device-movement')}
           icon={<SettingsIcon size={24} className="md:w-7 md:h-7" />} 
-          label="قسم الصيانة" 
+          label="حركات الصيانة" 
           color="bg-blue-600 hover:bg-blue-700"
         />
         <ActionCard 
-          onClick={() => onNavigate('customers')}
-          icon={<Users size={24} className="md:w-7 md:h-7" />} 
-          label="العملاء" 
-          color="bg-amber-500 hover:bg-amber-600"
-        />
-        <ActionCard 
-          onClick={() => onNavigate('vault')}
-          icon={<CircleDollarSign size={24} className="md:w-7 md:h-7" />} 
-          label="الحسابات" 
+          onClick={() => onNavigate('entry-exit', 'exit')}
+          icon={<CheckCircle size={24} className="md:w-7 md:h-7" />} 
+          label="خروج أجهزة" 
           color="bg-emerald-600 hover:bg-emerald-700"
         />
+
         <ActionCard 
-          onClick={() => setShowInventoryReportsModal(true)}
-          icon={<Layers size={24} className="md:w-7 md:h-7" />} 
-          label="المخزون والتقارير" 
+          onClick={() => onNavigate('reports')}
+          icon={<BarChart3 size={24} className="md:w-7 md:h-7" />} 
+          label="التقارير والإحصائيات" 
+          color="bg-indigo-600 hover:bg-indigo-700"
+        />
+        <ActionCard 
+          onClick={() => onNavigate('inventory')}
+          icon={<Package size={24} className="md:w-7 md:h-7" />} 
+          label="المخزون" 
           color="bg-purple-600 hover:bg-purple-700"
         />
         <ActionCard 
@@ -413,55 +398,31 @@ export default function Dashboard({
             onNavigate('other-services');
           }}
           icon={<Wrench size={24} className="md:w-7 md:h-7" />} 
-          label="خدمات أخرى" 
-          color="bg-indigo-600 hover:bg-indigo-700"
+          label="خدمات اخرى للاهمية" 
+          color="bg-blue-500 hover:bg-blue-600"
         />
-      </div>
 
-      {/* Modals */}
-      
-      {/* Inventory & Reports Modal */}
-      {showInventoryReportsModal && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
-        >
-          <div 
-            ref={inventoryReportsModalRef}
-            className="bg-[#1a1a1a] rounded-2xl p-6 w-full max-w-sm border border-white/10 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 pointer-events-auto"
-          >
-            <button 
-              onClick={() => setShowInventoryReportsModal(false)}
-              className="absolute top-4 left-4 p-2 bg-white/5 hover:bg-white/10 rounded-full text-white transition-colors"
-            >
-              <X size={20} />
-            </button>
-            <h2 className="text-xl font-black text-white mb-6 font-cairo text-center">المخزون والتقارير</h2>
-            
-            <div className="space-y-4">
-              <button 
-                onClick={() => {
-                  setShowInventoryReportsModal(false);
-                  onNavigate('inventory');
-                }}
-                className="w-full flex items-center justify-between bg-purple-600 hover:bg-purple-700 text-white p-4 rounded-xl transition-colors shadow-lg"
-              >
-                <span className="font-bold font-cairo text-lg">المخزون</span>
-                <Package size={24} />
-              </button>
-              <button 
-                onClick={() => {
-                  setShowInventoryReportsModal(false);
-                  onNavigate('reports');
-                }}
-                className="w-full flex items-center justify-between bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-xl transition-colors shadow-lg"
-              >
-                <span className="font-bold font-cairo text-lg">التقارير</span>
-                <BarChart3 size={24} />
-              </button>
-            </div>
+        <ActionCard 
+          onClick={() => onNavigate('vault')}
+          icon={<CircleDollarSign size={24} className="md:w-7 md:h-7" />} 
+          label="الحسابات" 
+          color="bg-emerald-700 hover:bg-emerald-800"
+        />
+        <ActionCard 
+          onClick={() => onNavigate('customers')}
+          icon={<Users size={24} className="md:w-7 md:h-7" />} 
+          label="العملاء" 
+          color="bg-amber-500 hover:bg-amber-600"
+        />
+        {/* Placeholder Button 9 - Empty */}
+        <div className="p-4 rounded-2xl flex flex-col items-center justify-center gap-3 transition-all duration-300 text-center border border-dashed border-gray-300 dark:border-white/10 opacity-30 aspect-square select-none pointer-events-none">
+          <div className="text-gray-400">
+            <MoreVertical size={20} />
           </div>
         </div>
-      )}
+      </div>
+
+
     </div>
   );
 }
