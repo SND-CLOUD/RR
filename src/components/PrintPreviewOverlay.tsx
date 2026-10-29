@@ -11,6 +11,7 @@ import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../lib/pdfHelp
 import { tafqeet } from '../lib/tafqeet';
 import { resolveVoucherDynamicStatement, resolveVoucherExtraNotes, resolveLiveInvoiceNumber, formatCustomerReference } from '../lib/voucherDisplayService';
 import { ProviderFactory } from '../data/ProviderFactory';
+import { isPurchaseInvoice, isSaleInvoice } from '../types';
 
 function getCurrencyFullName(curr?: string) {
   if (!curr) return '';
@@ -1035,25 +1036,46 @@ export default function PrintPreviewOverlay({
     });
   };
 
-  const recordDocumentOutput = async (outputType: 'PRINT' | 'PDF' | 'SHARE') => {
+  const recordDocumentOutput = async (outputType: 'PRINT' | 'PDF' | 'SHARE', overrideDocNumber?: string, overrideDocId?: string, overrideDocName?: string) => {
     try {
       const nextCount = (currentPrintCount || 0) + 1;
       setCurrentPrintCount(nextCount);
 
-      let docId = '';
+      let docId = overrideDocId || '';
       let docNumber = '';
 
       if (type === 'invoice' && invoice) {
-        docId = invoice.id || data?.invoice?.id || (invoice.invoiceNumber ? 'inv_' + String(invoice.invoiceNumber).replace('#', '').trim() : '');
-        docNumber = String(invoice.invoiceNumber || data?.invoice?.invoiceNumber || '').replace('#', '').trim();
-        const isSpecialPrefix = /^(O-|PUR-|DIS-|INV-)/i.test(docNumber);
+        let rawNum = overrideDocNumber || invoice.invoiceNumber || data?.invoice?.invoiceNumber || '';
+        if (rawNum === 'معاينة') {
+          rawNum = overrideDocNumber || '';
+        }
+        let cleanDocNum = String(rawNum).replace(/#/g, '').trim();
+
+        const targetInvId = overrideDocId || invoice.id || data?.invoice?.id;
+        docId = targetInvId || (cleanDocNum && cleanDocNum !== 'معاينة' ? 'inv_' + cleanDocNum : '');
+
+        // If number is still empty or 'معاينة' and we have an ID, query provider for the real saved number
+        if ((!cleanDocNum || cleanDocNum === 'معاينة') && targetInvId) {
+          try {
+            const fetched = await ProviderFactory.getProvider().getDoc('invoices', targetInvId);
+            if (fetched?.exists && fetched.exists()) {
+              const fData = fetched.data();
+              if (fData?.invoiceNumber && fData.invoiceNumber !== 'معاينة') {
+                cleanDocNum = String(fData.invoiceNumber).replace(/#/g, '').trim();
+              }
+            }
+          } catch (e) {}
+        }
+
+        const isSpecialPrefix = /^(O-|PUR-|DIS-|INV-)/i.test(cleanDocNum);
         
         // If invoice number still looks like a name (contains Arabic) or is empty, fallback to #REP
-        // Allow it to pass if it has a special known prefix (O-, PUR-, etc)
-        if (!docNumber || (/[\u0600-\u06FF]/.test(docNumber) && !isSpecialPrefix)) {
+        if (!cleanDocNum || cleanDocNum === 'معاينة' || (/[\u0600-\u06FF]/.test(cleanDocNum) && !isSpecialPrefix)) {
           docNumber = '#REP';
+        } else {
+          docNumber = cleanDocNum;
         }
-        const targetInvId = invoice.id || data?.invoice?.id;
+
         if (targetInvId) {
           try {
             await ProviderFactory.getProvider().updateDoc('invoices', targetInvId, {
@@ -1067,7 +1089,7 @@ export default function PrintPreviewOverlay({
         }
       } else if (type === 'voucher' && voucher) {
         docId = voucher.id || '';
-        docNumber = String(voucher.voucherNumber || voucher.number || '').trim();
+        docNumber = String(voucher.voucherNumber || voucher.number || '').replace(/#/g, '').trim();
         if (voucher.id) {
           try {
             await ProviderFactory.getProvider().updateDoc('vault_transactions', voucher.id, {
@@ -1087,35 +1109,61 @@ export default function PrintPreviewOverlay({
       }
 
       // Resolve exact document name in Arabic
-      let docName = 'مستند';
-      if (type === 'invoice') {
+      let docName = overrideDocName || 'مستند';
+      if (type === 'invoice' && !overrideDocName) {
         const inv = invoice || data?.invoice;
         const invType = String(inv?.invoiceType || inv?.templateType || inv?.type || '').toLowerCase();
-        const invNum = String(inv?.invoiceNumber || '').toUpperCase();
+        const invNum = String(overrideDocNumber || docNumber || inv?.invoiceNumber || '').toUpperCase();
         
         // Priority check for Purchase
-        const isPurchase = invNum.startsWith('PUR-') || 
+        const isPurchase = isPurchaseInvoice(inv) ||
+                           invNum.startsWith('PUR-') || 
                            invNum.startsWith('DIS-') || 
                            invType.includes('purchase') || 
                            inv?.isPurchase === 1 || 
                            inv?.isPurchase === true ||
-                           inv?.type === 'purchase';
+                           inv?.isPurchase === '1' ||
+                           inv?.type === 'purchase' ||
+                           inv?.templateType === 'purchase' ||
+                           Boolean(inv?.purchaseType) ||
+                           Boolean(inv?.supplierId) ||
+                           Boolean(inv?.supplierName) ||
+                           Boolean(inv?.batchName) ||
+                           (inv?.notes && /شراء|مورد|مشتريات|تفكيك/.test(inv.notes)) ||
+                           (items && items.some((it: any) => it.isPurchase === 1 || it.source === 'purchase'));
 
-        const isOther = invNum.startsWith('O-') || invType.startsWith('sale_');
+        const isSaleSoftware = invType === 'sale_software' || invType.includes('software');
+        const isSaleMaintenance = invType === 'sale_maintenance';
+        const isSaleParts = invType === 'sale_parts' || invType.includes('parts');
+        const isOtherSale = (invNum.startsWith('O-') && !isPurchase) || invType.startsWith('sale');
 
         const tmpl = String(templateType || data?.templateType || '').toLowerCase();
         
-        if (tmpl === 'inspection') docName = 'تقرير فحص فني';
-        else if (tmpl === 'quotation') docName = 'عرض سعر';
-        else if (tmpl === 'assignment') docName = 'تقرير الحالة والإسناد';
-        else if (tmpl === 'maintenance') docName = 'تقرير صيانة أجهزة';
-        else if (isPurchase) docName = 'فاتورة مشتريات';
-        else if (isOther) docName = 'فاتورة خدمات أخرى';
-        else if (tmpl === 'entry') docName = 'سند استلام أجهزة';
-        else if (tmpl === 'exit') docName = 'فاتورة خروج أجهزة';
-        else if (tmpl.startsWith('sale')) docName = 'فاتورة مبيعات';
-        else if (tmpl.startsWith('purchase')) docName = 'فاتورة مشتريات';
-        else docName = 'فاتورة أجهزة';
+        if (isPurchase || tmpl.includes('purchase')) {
+          docName = 'فاتورة مشتريات';
+        } else if (isSaleSoftware) {
+          docName = 'فاتورة خدمات برمجية';
+        } else if (isSaleMaintenance) {
+          docName = 'فاتورة صيانة خارجية';
+        } else if (isSaleParts) {
+          docName = 'فاتورة بيع قطع غيار';
+        } else if (isOtherSale) {
+          docName = 'فاتورة خدمات أخرى';
+        } else if (tmpl === 'inspection') {
+          docName = 'تقرير فحص فني';
+        } else if (tmpl === 'quotation') {
+          docName = 'عرض سعر';
+        } else if (tmpl === 'assignment') {
+          docName = 'تقرير الحالة والإسناد';
+        } else if (tmpl === 'maintenance') {
+          docName = 'تقرير صيانة أجهزة';
+        } else if (tmpl === 'entry') {
+          docName = 'سند استلام أجهزة';
+        } else if (tmpl === 'exit') {
+          docName = 'فاتورة خروج أجهزة';
+        } else {
+          docName = 'فاتورة أجهزة';
+        }
       } else if (type === 'voucher') {
         const vType = String(voucher?.type || '').toLowerCase();
         if (vType === 'receipt') docName = 'سند قبض مالي';
@@ -1343,9 +1391,24 @@ export default function PrintPreviewOverlay({
   };
 
   const getTemplateName = (tmpl: PrintTemplateType) => {
-    const isPurchase = ['purchase', 'purchase_parts', 'purchase_batch'].includes(tmpl) || invoice?.isPurchase === 1 || invoice?.type === 'purchase' || invoice?.invoiceType === 'purchase' || String(invoice?.invoiceNumber).startsWith('PUR-') || String(invoice?.invoiceNumber).startsWith('DIS-');
+    const isPurchase = isPurchaseInvoice(invoice) ||
+                       ['purchase', 'purchase_parts', 'purchase_batch'].includes(tmpl) || 
+                       invoice?.isPurchase === 1 || 
+                       invoice?.isPurchase === true ||
+                       invoice?.isPurchase === '1' ||
+                       invoice?.type === 'purchase' || 
+                       invoice?.invoiceType === 'purchase' || 
+                       invoice?.templateType === 'purchase' || 
+                       String(invoice?.invoiceNumber).startsWith('PUR-') || 
+                       String(invoice?.invoiceNumber).startsWith('DIS-') ||
+                       Boolean(invoice?.purchaseType) ||
+                       Boolean(invoice?.supplierId) ||
+                       Boolean(invoice?.supplierName) ||
+                       Boolean(invoice?.batchName) ||
+                       (invoice?.notes && /شراء|مورد|مشتريات|تفكيك/.test(invoice.notes)) ||
+                       (items && items.some((it: any) => it.isPurchase === 1 || it.source === 'purchase'));
     if (isPurchase) {
-      return 'فاتورة شراء';
+      return 'فاتورة مشتريات';
     }
     switch(tmpl) {
       case 'entry': return 'فاتورة دخول أجهزة';
@@ -1472,8 +1535,11 @@ export default function PrintPreviewOverlay({
             <button 
               onClick={async () => {
                 if (onWhatsApp) {
-                  await onWhatsApp();
-                  await recordDocumentOutput('SHARE');
+                  const saveRes: any = await onWhatsApp();
+                  const savedNum = (typeof saveRes === 'string' ? saveRes : saveRes?.invoiceNumber) 
+                                   || (data?.invoice?.invoiceNumber !== 'معاينة' ? data?.invoice?.invoiceNumber : '');
+                  const savedId = saveRes?.id || data?.invoice?.id;
+                  await recordDocumentOutput('SHARE', savedNum, savedId);
                 } else if (handleWhatsApp) {
                   await handleWhatsApp();
                 }
@@ -1496,8 +1562,11 @@ export default function PrintPreviewOverlay({
             <button 
               onClick={async () => {
                 if (onPrint) {
-                  await onPrint();
-                  await recordDocumentOutput('PRINT');
+                  const saveRes: any = await onPrint();
+                  const savedNum = (typeof saveRes === 'string' ? saveRes : saveRes?.invoiceNumber) 
+                                   || (data?.invoice?.invoiceNumber !== 'معاينة' ? data?.invoice?.invoiceNumber : '');
+                  const savedId = saveRes?.id || data?.invoice?.id;
+                  await recordDocumentOutput('PRINT', savedNum, savedId);
                 } else if (handlePrint) {
                   await handlePrint();
                 }

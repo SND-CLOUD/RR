@@ -15,6 +15,7 @@ import { sharePdfFile, openWhatsApp } from '../lib/shareHelper';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
 import { sanitizeDocumentStyles, sanitizeElementInlineStyles } from '../lib/html2canvasHelper';
+import { ProviderFactory } from '../data/ProviderFactory';
 
 type ServiceType = 'hub' | 'software' | 'maintenance' | 'parts' | 'purchase' | 'catalog' | 'stock';
 
@@ -683,10 +684,32 @@ export default function OtherServiceInvoice({
 
       const newInvoiceNumber = String(assignedPurchaseNumber);
 
+      // Mutate currentOutput in place so any open PrintPreviewOverlay immediately sees the real number
+      if (currentOutput && currentOutput.invoice) {
+        currentOutput.invoice.invoiceNumber = newInvoiceNumber;
+        currentOutput.invoice.id = purInvoiceRef.id;
+      }
+
       if (action === 'print' || action === 'whatsapp') {
+        const outputType = action === 'whatsapp' ? 'SHARE' : 'PRINT';
+        const outputRecord = {
+          id: 'out_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now(),
+          document_id: purInvoiceRef.id,
+          document_number: newInvoiceNumber,
+          document_name: 'فاتورة مشتريات',
+          output_type: outputType,
+          output_datetime: new Date().toISOString(),
+          user_id: String(user?.userNumber || user?.name || '1')
+        };
+        try {
+          await ProviderFactory.getProvider().setDoc('document_outputs', outputRecord.id, outputRecord);
+        } catch (e) {
+          console.warn("Error recording purchase document_output:", e);
+        }
+
         const updatedOutput = {
           ...currentOutput,
-          invoice: { ...currentOutput.invoice, invoiceNumber: newInvoiceNumber }
+          invoice: { ...currentOutput.invoice, invoiceNumber: newInvoiceNumber, id: purInvoiceRef.id }
         };
         setCurrentOutput(updatedOutput);
         
@@ -706,6 +729,8 @@ export default function OtherServiceInvoice({
       setSuccessInfo({ invoiceNumber: newInvoiceNumber });
       setActiveTab('stock');
       localStorage.setItem('otherServicesTab', 'stock');
+
+      return { id: purInvoiceRef.id, invoiceNumber: newInvoiceNumber, invoiceType: 'purchase' };
     } catch (err: any) {
       console.error("Error saving purchase:", err);
       setError(err.message || 'حدث خطأ أثناء حفظ عملية الشراء');
@@ -716,6 +741,24 @@ export default function OtherServiceInvoice({
 
   // Preview Generator for Sales and Purchase Invoices
   const generateOutputData = async () => {
+    let projectedNum = 'O-1';
+    try {
+      const settingsDoc = await getDoc(doc(db, 'settings', 'app'));
+      let maxOther = 0;
+      if (settingsDoc.exists() && settingsDoc.data().lastOtherInvoiceNumber) {
+        maxOther = Number(settingsDoc.data().lastOtherInvoiceNumber) || 0;
+      }
+      try {
+        const { localDb } = await import('../lib/local-db');
+        const resNum = await localDb.query("SELECT MAX(CAST(REPLACE(invoiceNumber, 'O-', '') AS INTEGER)) as maxNum FROM invoices WHERE invoiceNumber LIKE 'O-%'");
+        if (resNum.values?.[0]?.maxNum) {
+          const localMax = Number(resNum.values[0].maxNum);
+          if (localMax > maxOther) maxOther = localMax;
+        }
+      } catch(e) {}
+      projectedNum = `O-${maxOther + 1}`;
+    } catch (e) {}
+
     if (activeTab === 'purchase') {
       if (!supplierName.trim()) {
         setError("الرجاء إدخال اسم المورد أو البائع");
@@ -761,7 +804,7 @@ export default function OtherServiceInvoice({
 
       return {
         invoice: {
-          invoiceNumber: 'معاينة',
+          invoiceNumber: projectedNum,
           customerName: supplierName.trim(),
           phone1: supplierPhone.trim() || '',
           currency,
@@ -797,7 +840,7 @@ export default function OtherServiceInvoice({
 
     return {
       invoice: {
-        invoiceNumber: 'معاينة',
+        invoiceNumber: projectedNum,
         customerName: customer.name,
         currency,
         totalCost: totalSalesCost,
@@ -1205,10 +1248,37 @@ export default function OtherServiceInvoice({
 
       const newInvoiceNumber = String(finalAssignedInvoiceNumber);
       
+      // Mutate currentOutput in place so any open PrintPreviewOverlay immediately sees the real number
+      if (currentOutput && currentOutput.invoice) {
+        currentOutput.invoice.invoiceNumber = newInvoiceNumber;
+        currentOutput.invoice.id = invoiceRef.id;
+      }
+
       if (action === 'print' || action === 'whatsapp') {
+        const outputType = action === 'whatsapp' ? 'SHARE' : 'PRINT';
+        let docName = 'فاتورة مبيعات';
+        if (activeTab === 'software') docName = 'فاتورة خدمات برمجية';
+        else if (activeTab === 'maintenance') docName = 'فاتورة صيانة خارجية';
+        else if (activeTab === 'parts') docName = 'فاتورة بيع قطع غيار';
+
+        const outputRecord = {
+          id: 'out_' + Math.random().toString(36).substring(2, 11) + '_' + Date.now(),
+          document_id: invoiceRef.id,
+          document_number: newInvoiceNumber,
+          document_name: docName,
+          output_type: outputType,
+          output_datetime: new Date().toISOString(),
+          user_id: String(user?.userNumber || user?.name || '1')
+        };
+        try {
+          await ProviderFactory.getProvider().setDoc('document_outputs', outputRecord.id, outputRecord);
+        } catch (e) {
+          console.warn("Error recording sale document_output:", e);
+        }
+
         const updatedOutput = {
           ...currentOutput,
-          invoice: { ...currentOutput.invoice, invoiceNumber: newInvoiceNumber }
+          invoice: { ...currentOutput.invoice, invoiceNumber: newInvoiceNumber, id: invoiceRef.id }
         };
         setCurrentOutput(updatedOutput);
         
@@ -1227,6 +1297,8 @@ export default function OtherServiceInvoice({
       resetSalesForm();
       setShowPreview(false);
       setSuccessInfo({ invoiceNumber: newInvoiceNumber });
+
+      return { id: invoiceRef.id, invoiceNumber: newInvoiceNumber, invoiceType: `sale_${activeTab}` };
     } catch (err: any) {
       console.error(err);
       setError(err.message || 'حدث خطأ أثناء الحفظ');

@@ -303,6 +303,7 @@ export function isSaleInvoice(inv: any): boolean {
   if (explicitType === 'sale' || explicitType.startsWith('sale_') || explicitType === 'other_services') return true;
   const num = String(inv.invoiceNumber || '').trim().toUpperCase();
   if (num.startsWith('SALE-') || num.startsWith('INV-SALE-') || num.startsWith('SRV-')) return true;
+  if (num.startsWith('O-') && !isPurchaseInvoice(inv)) return true;
   return false;
 }
 

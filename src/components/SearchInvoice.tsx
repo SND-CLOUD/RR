@@ -10,7 +10,7 @@ import { useTranslation } from 'react-i18next';
 import PrintPreviewOverlay from './PrintPreviewOverlay';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { formatTxDate, parseTxDate, parseDate, formatDate, formatTime } from '../lib/dateUtils';
-import { isInShopMaintenanceDevice, isShopMaintenanceItem, isPurchaseInvoice } from '../types';
+import { isInShopMaintenanceDevice, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../types';
 import { deleteInvoiceWithCascade, checkIsPurchase, checkIsSale } from '../lib/invoiceCascadeService';
 import { getItemBillableCost, isItemRefusedOrFailed } from '../lib/billableService';
 import { resolveLiveInvoiceNumber, resolveVoucherDynamicStatement } from '../lib/voucherDisplayService';
@@ -499,10 +499,11 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
     }).slice(0, 15);
   };
 
-  // REPORT AUTOCOMPLETE SENSITIVITY
+  // REPORT AUTOCOMPLETE SENSITIVITY (Only technical maintenance invoices have reports)
   const getReportSuggestions = () => {
     if (!reportSearchTerm.trim()) return [];
     return invoices
+      .filter(inv => !checkIsPurchase(inv) && !checkIsSale(inv) && !String(inv.invoiceNumber || '').startsWith('O-') && !String(inv.invoiceNumber || '').startsWith('PUR-') && !String(inv.invoiceNumber || '').startsWith('DIS-'))
       .map(inv => ({ inv, match: matchInvoice(inv, reportSearchTerm) }))
       .filter(item => item.match.matched)
       .sort((a, b) => {
@@ -664,17 +665,7 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
       const invId = entry.id.substring(4);
       const inv = invoices.find(i => i.id === invId);
       if (inv) {
-        const cust = customers.find(c => c.id === inv.customerId);
-        setPreviewData({
-          type: 'invoice',
-          data: {
-            invoice: {
-              ...inv,
-              customerPhone: cust?.phone1 || inv.customerPhone || ''
-            },
-            items: getInvoiceItemsList(inv.invoiceNumber, inv.id, inv.customerId)
-          }
-        });
+        handleViewInvoiceDetails(inv);
       }
     } else if (entry.id.startsWith('tx-')) {
       const txId = entry.id.substring(3);
@@ -739,6 +730,18 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
 
   const handleViewInvoiceDetails = (inv: any, tmpl?: string) => {
     const cust = customers.find(c => c.id === inv.customerId);
+    let resolvedTmpl = tmpl;
+    const isPur = isPurchaseInvoice(inv) || checkIsPurchase(inv);
+    const isSale = isSaleInvoice(inv) || checkIsSale(inv);
+
+    if (isPur) {
+      resolvedTmpl = 'purchase';
+    } else if (isSale) {
+      resolvedTmpl = inv.invoiceType || inv.templateType || 'sale_parts';
+    } else if (!resolvedTmpl || resolvedTmpl === 'entry' || resolvedTmpl === 'exit' || resolvedTmpl === 'inspection') {
+      resolvedTmpl = resolvedTmpl || 'entry';
+    }
+
     setPreviewData({
       type: 'invoice',
       data: {
@@ -747,7 +750,7 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
           customerPhone: cust?.phone1 || inv.customerPhone || ''
         },
         items: getInvoiceItemsList(inv.invoiceNumber, inv.id, inv.customerId),
-        templateType: tmpl
+        templateType: resolvedTmpl
       }
     });
   };
@@ -1223,8 +1226,12 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                             className="w-full text-right px-4 py-3 hover:bg-orange-600/10 transition-colors flex items-center justify-between text-xs"
                           >
                             <div className="flex flex-col">
-                              <span className="font-bold text-white font-cairo">فاتورة رقم: {inv.invoiceNumber}</span>
-                              <span className="text-[10px] text-gray-500 font-bold font-cairo">العميل: {inv.customerName}</span>
+                              <span className="font-bold text-white font-cairo">
+                                {isPurchaseInvoice(inv) || checkIsPurchase(inv) ? 'فاتورة مشتريات' : (isSaleInvoice(inv) || checkIsSale(inv) ? 'فاتورة خدمات أخرى' : 'فاتورة رقم')}: {inv.invoiceNumber}
+                              </span>
+                              <span className="text-[10px] text-gray-500 font-bold font-cairo">
+                                {isPurchaseInvoice(inv) || checkIsPurchase(inv) ? 'المورد' : 'العميل'}: {inv.supplierName || inv.customerName}
+                              </span>
                             </div>
                             <div className="font-mono text-amber-500 font-bold">
                               {inv.totalCost} {inv.currency}
@@ -1245,7 +1252,17 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                     <div className="space-y-1">
                       <div className="flex items-center gap-2">
                         <span className="bg-orange-600/15 border border-orange-500/20 text-orange-400 font-mono font-bold text-xs px-2.5 py-0.5 rounded-lg">
-                          {selectedInvoice.invoiceType === 'sale_software' ? 'فاتورة خدمات برمجية' : (selectedInvoice.invoiceType === 'sale_maintenance' ? 'فاتورة صيانة خارجية' : (selectedInvoice.invoiceType === 'sale_parts' ? 'فاتورة بيع قطع غيار' : 'فاتورة صيانة'))} #{selectedInvoice.invoiceNumber}
+                          {isPurchaseInvoice(selectedInvoice) || checkIsPurchase(selectedInvoice) 
+                            ? 'فاتورة مشتريات' 
+                            : (selectedInvoice.invoiceType === 'sale_software' 
+                                ? 'فاتورة خدمات برمجية' 
+                                : (selectedInvoice.invoiceType === 'sale_maintenance' 
+                                    ? 'فاتورة صيانة خارجية' 
+                                    : (selectedInvoice.invoiceType === 'sale_parts' 
+                                        ? 'فاتورة بيع قطع غيار' 
+                                        : (isSaleInvoice(selectedInvoice) || checkIsSale(selectedInvoice) 
+                                            ? 'فاتورة خدمات أخرى' 
+                                            : 'فاتورة صيانة'))))} #{selectedInvoice.invoiceNumber}
                         </span>
                         <span className="text-xs text-gray-500 font-bold">
                           {parseDate(selectedInvoice.createdAt) ? parseDate(selectedInvoice.createdAt)!.toLocaleDateString('ar-YE') : '---'}
@@ -1253,7 +1270,7 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                       </div>
                       <h2 className="text-base font-black text-white font-cairo mt-1.5 flex items-center gap-2">
                         <User size={16} className="text-gray-500" />
-                        <span>العميل: {selectedInvoice.customerName}</span>
+                        <span>{isPurchaseInvoice(selectedInvoice) || checkIsPurchase(selectedInvoice) ? 'المورد: ' : 'العميل: '}{selectedInvoice.supplierName || selectedInvoice.customerName}</span>
                       </h2>
                     </div>
 
@@ -1281,68 +1298,115 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                         </span>
                       </div>
                       <button 
-                        onClick={() => handleViewInvoiceDetails(selectedInvoice, invoicePrintTemplate)}
+                        onClick={() => {
+                          const isPur = isPurchaseInvoice(selectedInvoice) || checkIsPurchase(selectedInvoice);
+                          const isSale = isSaleInvoice(selectedInvoice) || checkIsSale(selectedInvoice);
+                          const tmpl = isPur 
+                            ? 'purchase' 
+                            : (isSale 
+                                ? (selectedInvoice.invoiceType || 'sale_parts') 
+                                : invoicePrintTemplate);
+                          handleViewInvoiceDetails(selectedInvoice, tmpl);
+                        }}
                         className="flex flex-col items-center justify-center px-4 py-2 bg-emerald-600/10 hover:bg-emerald-600 text-emerald-500 hover:text-white border border-emerald-500/20 rounded-xl min-w-[100px] transition-all cursor-pointer"
                         title="عرض الفاتورة للطباعة"
                       >
                         <Printer size={16} className="mb-1" />
-                        <span className="text-[10px] font-bold block font-cairo">عرض التقرير</span>
+                        <span className="text-[10px] font-bold block font-cairo">عرض الفاتورة</span>
                       </button>
                     </div>
                   </div>
 
-                  {/* Mode Selector for Invoice */}
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-4 bg-white/[0.02] border border-white/5 rounded-2xl p-4">
-                    <span className="text-xs font-bold text-gray-400 font-cairo">المستند المطلوب عرضه وطباعته:</span>
-                    <div className="flex items-center gap-6">
-                      <label className="flex items-center gap-2 cursor-pointer select-none font-cairo text-xs font-bold">
-                        <input 
-                          type="radio" 
-                          name="searchInvoiceTemplate" 
-                          checked={invoicePrintTemplate === 'entry'} 
-                          onChange={() => setInvoicePrintTemplate('entry')}
-                          className="accent-orange-600 w-4 h-4"
-                        />
-                        <span className={invoicePrintTemplate === 'entry' ? 'text-white' : 'text-gray-500'}>فاتورة دخول</span>
-                      </label>
+                  {/* Mode Selector for Invoice (only for maintenance invoices) */}
+                  {!isPurchaseInvoice(selectedInvoice) && !checkIsPurchase(selectedInvoice) && !isSaleInvoice(selectedInvoice) && !checkIsSale(selectedInvoice) && (
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-4 bg-white/[0.02] border border-white/5 rounded-2xl p-4">
+                      <span className="text-xs font-bold text-gray-400 font-cairo">المستند المطلوب عرضه وطباعته:</span>
+                      <div className="flex items-center gap-6">
+                        <label className="flex items-center gap-2 cursor-pointer select-none font-cairo text-xs font-bold">
+                          <input 
+                            type="radio" 
+                            name="searchInvoiceTemplate" 
+                            checked={invoicePrintTemplate === 'entry'} 
+                            onChange={() => setInvoicePrintTemplate('entry')}
+                            className="accent-orange-600 w-4 h-4"
+                          />
+                          <span className={invoicePrintTemplate === 'entry' ? 'text-white' : 'text-gray-500'}>فاتورة دخول</span>
+                        </label>
 
-                      <label className="flex items-center gap-2 cursor-pointer select-none font-cairo text-xs font-bold">
-                        <input 
-                          type="radio" 
-                          name="searchInvoiceTemplate" 
-                          checked={invoicePrintTemplate === 'exit'} 
-                          onChange={() => setInvoicePrintTemplate('exit')}
-                          className="accent-orange-600 w-4 h-4"
-                        />
-                        <span className={invoicePrintTemplate === 'exit' ? 'text-white' : 'text-gray-500'}>فاتورة خروج</span>
-                      </label>
+                        <label className="flex items-center gap-2 cursor-pointer select-none font-cairo text-xs font-bold">
+                          <input 
+                            type="radio" 
+                            name="searchInvoiceTemplate" 
+                            checked={invoicePrintTemplate === 'exit'} 
+                            onChange={() => setInvoicePrintTemplate('exit')}
+                            className="accent-orange-600 w-4 h-4"
+                          />
+                          <span className={invoicePrintTemplate === 'exit' ? 'text-white' : 'text-gray-500'}>فاتورة خروج</span>
+                        </label>
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* List of items on this invoice */}
                   <div className="space-y-3">
-                    <h3 className="text-xs font-black text-white font-cairo">تفاصيل الأجهزة المدرجة في الفاتورة ({getInvoiceItemsList(selectedInvoice.invoiceNumber, selectedInvoice.id, selectedInvoice.customerId).length}):</h3>
+                    <h3 className="text-xs font-black text-white font-cairo">
+                      {isPurchaseInvoice(selectedInvoice) || checkIsPurchase(selectedInvoice) 
+                        ? `الأصناف والمواد المشتراة (${getInvoiceItemsList(selectedInvoice.invoiceNumber, selectedInvoice.id, selectedInvoice.customerId).length}):` 
+                        : (isSaleInvoice(selectedInvoice) || checkIsSale(selectedInvoice) 
+                            ? `الأصناف والخدمات المباعة (${getInvoiceItemsList(selectedInvoice.invoiceNumber, selectedInvoice.id, selectedInvoice.customerId).length}):`
+                            : `تفاصيل الأجهزة المدرجة في الفاتورة (${getInvoiceItemsList(selectedInvoice.invoiceNumber, selectedInvoice.id, selectedInvoice.customerId).length}):`
+                          )}
+                    </h3>
                     
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                       {getInvoiceItemsList(selectedInvoice.invoiceNumber, selectedInvoice.id, selectedInvoice.customerId).map((item, idx) => (
                         <div key={item.id ? `sug-it-${item.id}-${idx}` : `sug-it-idx-${idx}`} className="bg-black/30 p-4 border border-white/5 rounded-2xl space-y-3">
                           <div className="flex items-center justify-between">
-                            <span className="text-xs font-black text-white font-cairo">{item.deviceName || 'جهاز تقني'}</span>
-                            <span className={`px-2.5 py-0.5 rounded-full border text-[9px] font-bold ${getStatusStyle(item.status)}`}>
-                              {getStatusText(item.status)}
+                            <span className="text-xs font-black text-white font-cairo">
+                              {item.deviceName || item.name || (isPurchaseInvoice(selectedInvoice) ? 'صنف مشتريات' : 'جهاز تقني')}
                             </span>
+                            {!isPurchaseInvoice(selectedInvoice) && !checkIsPurchase(selectedInvoice) && !isSaleInvoice(selectedInvoice) && !checkIsSale(selectedInvoice) && (
+                              <span className={`px-2.5 py-0.5 rounded-full border text-[9px] font-bold ${getStatusStyle(item.status)}`}>
+                                {getStatusText(item.status)}
+                              </span>
+                            )}
+                            {(isPurchaseInvoice(selectedInvoice) || checkIsPurchase(selectedInvoice)) && (
+                              <span className="px-2.5 py-0.5 rounded-full border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 text-[9px] font-bold">
+                                تم التوريد للمخزن
+                              </span>
+                            )}
+                            {(isSaleInvoice(selectedInvoice) || checkIsSale(selectedInvoice)) && (
+                              <span className="px-2.5 py-0.5 rounded-full border border-cyan-500/20 bg-cyan-500/10 text-cyan-400 text-[9px] font-bold">
+                                مباع
+                              </span>
+                            )}
                           </div>
 
-                          <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-400 font-bold font-cairo">
-                            <div>نوع الجهاز: <span className="text-slate-200">{item.deviceType}</span></div>
-                            <div>الكمية: <span className="text-slate-200">{item.quantity}</span></div>
-                            <div className="col-span-2">خلل الجهاز: <span className="text-slate-200">{item.faultType}</span></div>
-                            {item.technicalNotes && <div className="col-span-2 text-amber-500">ملاحظات الفني: <span>{item.technicalNotes}</span></div>}
-                          </div>
+                          {isPurchaseInvoice(selectedInvoice) || checkIsPurchase(selectedInvoice) ? (
+                            <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-400 font-bold font-cairo">
+                              <div>الصنف: <span className="text-slate-200">{item.deviceName || item.deviceType}</span></div>
+                              <div>الكمية: <span className="text-slate-200">{item.quantity}</span></div>
+                              {item.unitCost && <div>سعر الوحدة: <span className="text-slate-200">{item.unitCost} {selectedInvoice.currency}</span></div>}
+                              {item.deviceNotes && <div className="col-span-2 text-gray-300">ملاحظات: <span>{item.deviceNotes}</span></div>}
+                            </div>
+                          ) : (isSaleInvoice(selectedInvoice) || checkIsSale(selectedInvoice)) ? (
+                            <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-400 font-bold font-cairo">
+                              <div>البيان / الصنف: <span className="text-slate-200">{item.deviceName || item.deviceType}</span></div>
+                              <div>الكمية: <span className="text-slate-200">{item.quantity}</span></div>
+                              {item.deviceNotes && <div className="col-span-2 text-gray-300">ملاحظات: <span>{item.deviceNotes}</span></div>}
+                            </div>
+                          ) : (
+                            <div className="grid grid-cols-2 gap-2 text-[10px] text-gray-400 font-bold font-cairo">
+                              <div>نوع الجهاز: <span className="text-slate-200">{item.deviceType}</span></div>
+                              <div>الكمية: <span className="text-slate-200">{item.quantity}</span></div>
+                              <div className="col-span-2">خلل الجهاز: <span className="text-slate-200">{item.faultType}</span></div>
+                              {item.technicalNotes && <div className="col-span-2 text-amber-500">ملاحظات الفني: <span>{item.technicalNotes}</span></div>}
+                            </div>
+                          )}
 
                           <div className="border-t border-white/5 pt-2 flex items-center justify-between text-xs font-mono">
                             <span className="text-gray-500">مـ : {idx + 1}</span>
-                            <span className="text-amber-500 font-bold">التكلفة: {item.cost} {selectedInvoice.currency}</span>
+                            <span className="text-amber-500 font-bold">{isPurchaseInvoice(selectedInvoice) || checkIsPurchase(selectedInvoice) ? 'إجمالي الشراء' : 'التكلفة'}: {item.cost} {selectedInvoice.currency}</span>
                           </div>
                         </div>
                       ))}
@@ -1634,7 +1698,7 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                 {selectedReportInvoice && (
                    <div className="mt-4 pt-4 border-t border-white/5 flex items-center justify-between">
                      <span className="text-sm font-bold text-gray-300">
-                        الفاتورة المختارة: <span className="text-amber-500 font-mono">{selectedReportInvoice.invoiceNumber}</span> - العميل: {selectedReportInvoice.customerName}
+                        الفاتورة المختارة: <span className="text-amber-500 font-mono">{selectedReportInvoice.invoiceNumber}</span> - {isPurchaseInvoice(selectedReportInvoice) || checkIsPurchase(selectedReportInvoice) ? 'المورد: ' : 'العميل: '}{selectedReportInvoice.supplierName || selectedReportInvoice.customerName}
                      </span>
                      <button 
                         onClick={() => handleViewInvoiceDetails(selectedReportInvoice, reportPrintTemplate)}

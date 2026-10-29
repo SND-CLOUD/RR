@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { AnimatePresence, motion } from 'motion/react';
 import { ProviderFactory } from '../data/ProviderFactory';
-import { User } from '../types';
+import { User, isPurchaseInvoice } from '../types';
 import { parseDate } from '../lib/dateUtils';
 
 interface DocumentOutputRecord {
@@ -35,6 +35,7 @@ export default function DocumentOutputsManager({
 }) {
   const [records, setRecords] = useState<DocumentOutputRecord[]>([]);
   const [usersList, setUsersList] = useState<{ id: string; name: string; username: string; userNumber?: number }[]>([]);
+  const [invoicesMap, setInvoicesMap] = useState<Map<string, any>>(new Map());
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
 
@@ -74,6 +75,24 @@ export default function DocumentOutputsManager({
         });
       }
       setRecords(loadedRecords);
+
+      // Fetch invoices for live document correlation
+      try {
+        const invoicesSnap = await provider.getDocs('invoices');
+        const imap = new Map<string, any>();
+        if (invoicesSnap && invoicesSnap.docs) {
+          invoicesSnap.docs.forEach((d: any) => {
+            const data = d.data();
+            imap.set(d.id, { id: d.id, ...data });
+            if (data?.invoiceNumber) {
+              imap.set(String(data.invoiceNumber).replace(/#/g, '').trim(), { id: d.id, ...data });
+            }
+          });
+        }
+        setInvoicesMap(imap);
+      } catch (invErr) {
+        console.warn("Could not load invoices in DocumentOutputsManager:", invErr);
+      }
 
       // Fetch users for dropdown
       const usersSnap = await provider.getDocs('users');
@@ -177,31 +196,61 @@ export default function DocumentOutputsManager({
 
   // Resolve document number display for reports vs invoices/vouchers
   const getDisplayDocumentNumber = (item: DocumentOutputRecord) => {
-    const num = String(item.document_number || '').trim();
+    let rawNum = String(item.document_number || '').trim();
+    let cleanNum = rawNum.replace(/#/g, '').trim();
     const name = String(item.document_name || '').trim();
 
+    // Check linked invoice to recover real number if item has placeholder or REP
+    if (item.document_id && (cleanNum === 'REP' || cleanNum === 'معاينة' || !cleanNum || cleanNum === '---')) {
+      const linkedInv = invoicesMap.get(item.document_id) || invoicesMap.get(item.document_id.replace(/^inv_/, ''));
+      if (linkedInv?.invoiceNumber && linkedInv.invoiceNumber !== 'معاينة') {
+        cleanNum = String(linkedInv.invoiceNumber).replace(/#/g, '').trim();
+      }
+    }
+
     // Explicit report markers
-    if (num === '#REP' || num === 'REP' || num.startsWith('#REP') || num.startsWith('REP-') || num.startsWith('STMT-')) {
+    if (cleanNum === 'REP' || cleanNum.startsWith('REP') || cleanNum.startsWith('STMT-')) {
       return '#REP';
     }
 
+    if (!cleanNum || cleanNum === '---' || cleanNum === 'معاينة') {
+      return '---';
+    }
+
+    const isSpecialNumbered = /^(O-|PUR-|DIS-|INV-)/i.test(cleanNum);
+    const containsArabic = /[\u0600-\u06FF]/.test(cleanNum);
+
     // Contains Arabic text in number column or matches document_name
-    const containsArabic = /[\u0600-\u06FF]/.test(num);
-    const isSpecialNumbered = /^(O-|PUR-|DIS-|INV-)/i.test(num);
-    if ((containsArabic && !isSpecialNumbered) || (name && num === name)) {
+    if ((containsArabic && !isSpecialNumbered) || (name && cleanNum === name)) {
       return '#REP';
     }
 
     // Unnumbered reports/statements/tables
-    if ((name.includes('تقرير') || name.includes('كشف') || name.includes('جدول')) && (!num || num === '---' || (!/^\d+$/.test(num.replace('#', '')) && !isSpecialNumbered))) {
+    if ((name.includes('تقرير') || name.includes('كشف') || name.includes('جدول')) && (!/^\d+$/.test(cleanNum) && !isSpecialNumbered)) {
       return '#REP';
     }
 
-    if (!num || num === '---') {
-      return '---';
-    }
+    return `#${cleanNum}`;
+  };
 
-    return num.startsWith('#') ? num : `#${num}`;
+  // Resolve exact document name with fallback to correlated invoice data
+  const getDisplayDocumentName = (item: DocumentOutputRecord) => {
+    if (item.document_id) {
+      const cleanNum = String(item.document_number || '').replace(/#/g, '').trim();
+      const linkedInv = invoicesMap.get(item.document_id) || invoicesMap.get(item.document_id.replace(/^inv_/, '')) || (cleanNum ? invoicesMap.get(cleanNum) : null);
+      if (linkedInv) {
+        if (isPurchaseInvoice(linkedInv)) return 'فاتورة مشتريات';
+        if (linkedInv.invoiceType === 'sale_software') return 'فاتورة خدمات برمجية';
+        if (linkedInv.invoiceType === 'sale_maintenance') return 'فاتورة صيانة خارجية';
+        if (linkedInv.invoiceType === 'sale_parts') return 'فاتورة بيع قطع غيار';
+        if (String(linkedInv.invoiceNumber || '').startsWith('O-')) {
+          return item.document_name && item.document_name !== 'مستند' && item.document_name !== 'فاتورة أجهزة'
+            ? item.document_name
+            : 'فاتورة خدمات أخرى';
+        }
+      }
+    }
+    return item.document_name || 'مستند أجهزة';
   };
 
   // Filter and sort records
@@ -217,9 +266,10 @@ export default function DocumentOutputsManager({
         const num = String(record.document_number || '').toLowerCase();
         const displayNum = getDisplayDocumentNumber(record).toLowerCase();
         const name = String(record.document_name || '').toLowerCase();
+        const displayName = getDisplayDocumentName(record).toLowerCase();
         const user = String(record.user_id || '').toLowerCase();
         const docId = String(record.document_id || '').toLowerCase();
-        if (!num.includes(q) && !displayNum.includes(q) && !name.includes(q) && !user.includes(q) && !docId.includes(q)) {
+        if (!num.includes(q) && !displayNum.includes(q) && !name.includes(q) && !displayName.includes(q) && !user.includes(q) && !docId.includes(q)) {
           return false;
         }
       }
@@ -653,7 +703,7 @@ export default function DocumentOutputsManager({
                         <td className="py-2.5 px-3 font-bold text-white border-l border-white/5 whitespace-nowrap">
                           <div className="flex items-center gap-1.5">
                             <FileText size={14} className="text-gray-400 shrink-0" />
-                            <span>{item.document_name || 'مستند أجهزة'}</span>
+                            <span>{getDisplayDocumentName(item)}</span>
                           </div>
                         </td>
 
