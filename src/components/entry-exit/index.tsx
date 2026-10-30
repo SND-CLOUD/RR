@@ -198,11 +198,11 @@ export default function EntryExit({ user, onBack, view, setView }: EntryExitProp
   ].filter(c => c.allowed);
 
   if (view === 'entry') {
-    return <DeviceEntry user={user} onBack={() => setView('hub')} />;
+    return <DeviceEntry user={user} onBack={onBack} />;
   }
   
   if (view === 'exit') {
-    return <DeviceExit user={user} onBack={() => setView('hub')} />;
+    return <DeviceExit user={user} onBack={onBack} />;
   }
 
   return (

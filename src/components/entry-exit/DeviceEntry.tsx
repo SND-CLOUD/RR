@@ -22,7 +22,8 @@ import {
   Facebook,
   Smartphone,
   SlidersHorizontal,
-  MessageCircle
+  MessageCircle,
+  Search
 } from 'lucide-react';
 import ReportActions from '../ReportActions';
 import PrintPreviewOverlay from '../PrintPreviewOverlay';
@@ -58,10 +59,6 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
   const [deviceModels, setDeviceModels] = useState<{ id: string; name: string; categoryName?: string }[]>([]);
   const [noPhone, setNoPhone] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [successInfo, setSuccessInfo] = useState<{ invoiceNumber: string } | null>(null);
-  const [showPreview, setShowPreview] = useState(false);
-  const [shopConfig, setShopConfig] = useState<any>(null);
-  const [currentOutput, setCurrentOutput] = useState<any>(null);
   const previewInvoiceObj = useRef<any>({});
 
   // Form State
@@ -101,6 +98,10 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
       deviceNotes: true,
     };
   });
+
+  const [shopConfig, setShopConfig] = useState<any>(null);
+  const [showPreview, setShowPreview] = useState(false);
+  const [successInfo, setSuccessInfo] = useState<any>(null);
   
   useEffect(() => {
     localStorage.setItem('entry_visible_columns', JSON.stringify(visibleColumns));
@@ -738,22 +739,25 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
       )}
 
       <div className="max-w-6xl mx-auto space-y-6 pb-20">
-        {/* Unified Header */}
-        <div className="flex items-center px-4 py-3 border-b border-white/10 bg-black/20" dir="rtl">
-          <div className="flex items-center gap-2">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-4 border-b border-white/10 bg-black/20" dir="rtl">
+          <div className="flex items-center gap-4">
             {onBack && (
-              <button onClick={onBack} className="p-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all">
-                <ArrowRight size={18} />
+              <button onClick={onBack} className="p-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-2xl transition-all border border-white/5">
+                <ArrowRight size={20} />
               </button>
             )}
-            <h2 className="text-lg font-black text-white flex items-center gap-2 m-0 p-0">
-               {t('addInvoice.title')}
-               <span className="text-[10px] bg-orange-600/10 text-orange-500 font-bold px-2 py-0.5 rounded border border-orange-500/20">#{invoiceNumber || '...'}</span>
-            </h2>
+            <div className="space-y-0.5">
+              <h2 className="text-lg font-black text-white flex items-center gap-2 m-0 p-0">
+                 {t('addInvoice.title')}
+                 <span className="text-[10px] bg-orange-600/10 text-orange-500 font-black px-2 py-0.5 rounded border border-orange-500/20 tracking-widest">#{invoiceNumber || '...'}</span>
+              </h2>
+              <p className="text-[10px] text-gray-500 font-bold uppercase tracking-widest">تسجيل دخول أجهزة صيانة جديدة</p>
+            </div>
           </div>
         </div>
 
-        <div className="bg-[#1a1a1a] rounded-3xl border border-white/5 shadow-2xl flex flex-col overflow-hidden">
+        <div id="device-entry-form" className="bg-[#1a1a1a] rounded-3xl border border-white/5 shadow-2xl flex flex-col overflow-hidden mx-4">
           <div className="flex-1 p-0 space-y-0">
             {/* Unified Form Block */}
             <section className="p-4 md:p-5 space-y-4" dir="rtl">

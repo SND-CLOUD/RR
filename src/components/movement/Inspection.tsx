@@ -81,7 +81,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
   const [currentOutput, setCurrentOutput] = useState<any>(null);
 
   // Double Purpose tabs
-  const [subTab, setSubTab] = useState<'new_devices' | 'under_inspection' | 'phased_inspection'>('new_devices');
+  const [subTab, setSubTab] = useState<'under_inspection' | 'phased_inspection'>('under_inspection');
   const [phasedStage, setPhasedStage] = useState<'phase1' | 'phase2'>('phase1');
   const [selectedOptions, setSelectedOptions] = useState<Record<string, 'action1' | 'action2' | 'action3'>>({});
   const [selectedInvoiceForCancel, setSelectedInvoiceForCancel] = useState<Invoice | null>(null);
@@ -99,18 +99,16 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
 
   useEffect(() => {
     if (initialInvoice && items.length > 0 && !selectedInvoice) {
-      if (initialInvoice.status === '10' || initialInvoice.status === 'new') {
-        setSubTab('new_devices');
-      } else if (initialInvoice.status === '20' || initialInvoice.status === '25') {
-        setSubTab('under_inspection');
-        openInvoice(initialInvoice);
-      } else if (initialInvoice.status === '21') {
+      if (initialInvoice.status === '21') {
         setSubTab('phased_inspection');
         setPhasedStage('phase1');
         openInvoice(initialInvoice);
       } else if (initialInvoice.status === '22') {
         setSubTab('phased_inspection');
         setPhasedStage('phase2');
+        openInvoice(initialInvoice);
+      } else {
+        setSubTab('under_inspection');
         openInvoice(initialInvoice);
       }
     }
@@ -143,21 +141,11 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
     setCurrentPage(1);
   }, [subTab, phasedStage, search]);
 
-  const countNewDevices = items.filter(i => isShopMaintenanceItem(i) && (i.status === '10' || i.status === 'new')).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
-
   const countPhase1Devices = items.filter(i => isShopMaintenanceItem(i) && i.status === '21').reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
   const countPhase2Devices = items.filter(i => isShopMaintenanceItem(i) && i.status === '22').reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
   const countPhasedDevices = countPhase1Devices + countPhase2Devices;
 
   const countInspectionDevices = items.filter(i => isShopMaintenanceItem(i) && (i.status === '20' || i.status === '25' || i.status === 'testing' || i.status === 'inspected')).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0) + countPhasedDevices;
-
-  const newInvoicesFiltered = invoices.filter(inv => {
-    if (isPurchaseInvoice(inv) || isSaleInvoice(inv)) return false;
-    return items.some(item => item.invoiceNumber === inv.invoiceNumber && isShopMaintenanceItem(item, inv) && (item.status === '10' || item.status === 'new') && item.quantity > 0);
-  }).filter(inv => 
-    (inv.customerName || '').toLowerCase().includes(search.toLowerCase()) || 
-    (inv.invoiceNumber || '').includes(search)
-  ).sort((a, b) => Number(b.invoiceNumber) - Number(a.invoiceNumber));
 
   const pendingInvoicesFiltered = invoices.filter(inv => {
     if (isPurchaseInvoice(inv) || isSaleInvoice(inv)) return false;
@@ -183,19 +171,13 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
     (inv.invoiceNumber || '').includes(search)
   ).sort((a, b) => Number(b.invoiceNumber) - Number(a.invoiceNumber));
 
-  const activeInvoices = subTab === 'new_devices' 
-    ? newInvoicesFiltered 
-    : subTab === 'under_inspection' 
+  const activeInvoices = subTab === 'under_inspection' 
     ? pendingInvoicesFiltered 
     : (phasedStage === 'phase1' ? phase1InvoicesFiltered : phase2InvoicesFiltered);
 
   const totalPages = Math.max(1, Math.ceil(activeInvoices.length / itemsPerPage));
   const safeCurrentPage = Math.min(currentPage, totalPages);
   const currentInvoices = activeInvoices.slice((safeCurrentPage - 1) * itemsPerPage, safeCurrentPage * itemsPerPage);
-
-  const getNewDevicesCount = (invoiceNumber: string) => {
-    return items.filter(item => item.invoiceNumber === invoiceNumber && isShopMaintenanceItem(item) && (item.status === '10' || item.status === 'new')).reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
-  };
 
   const getInspectionDevicesCount = (invoiceNumber: string) => {
     return items.filter(item => item.invoiceNumber === invoiceNumber && isShopMaintenanceItem(item) && item.status === '20').reduce((sum, i) => sum + (Number(i.quantity) || 0), 0);
@@ -215,35 +197,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
       return;
     }
 
-    if (subTab === 'new_devices') {
-      // Entry to Inspection: Transition status to '20'
-      try {
-        const batch = writeBatch(db);
-        const invRef = doc(db, 'invoices', invoice.id!);
-        batch.update(invRef, {
-          status: '20',
-          updatedAt: serverTimestamp()
-        });
-
-        const invoiceItems = items.filter(i => i.invoiceNumber === invoice.invoiceNumber && (i.status === '10' || i.status === 'new'));
-        invoiceItems.forEach(item => {
-          const resolvedEntryDate = resolveEntryDateString(item, invoice);
-          batch.update(doc(db, 'invoice_items', item.id!), {
-            status: '20',
-            technician: item.technician || user?.name || user?.username || 'System',
-            entryDate: resolvedEntryDate,
-            updatedAt: serverTimestamp()
-          });
-        });
-
-        await batch.commit();
-        showToast(`تم تغيير حالة الفاتورة #${invoice.invoiceNumber} وأجهزتها بنجاح إلى قيد الفحص.`);
-        setSubTab('under_inspection');
-      } catch (err) {
-        console.error(err);
-        alert('حدث خطأ أثناء محاولة تسجيل دخول فحص.');
-      }
-    } else if (subTab === 'under_inspection') {
+    if (subTab === 'under_inspection') {
       if (choice === 'action3') {
         // Transition from '20' to '21' (Phased Inspection Phase 1)
         try {
@@ -1891,73 +1845,48 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         )}
       </AnimatePresence>
 
-      {/* Large Purple Dual Stats Counter Card */}
+      {/* Compact Purple Dual Stats Counter Card */}
       <div className="px-0">
-        <div className="w-full bg-gradient-to-br from-purple-600 via-indigo-600 to-purple-700 text-white p-6 rounded-none sm:rounded-[2rem] shadow-lg relative overflow-hidden">
-          {/* Faint Background Icon */}
-          <div className="absolute top-1/2 left-6 -translate-y-1/2 opacity-10 pointer-events-none">
-            <SearchIcon size={160} />
-          </div>
-
-          <div className="relative z-10 grid grid-cols-3 divide-x divide-white/15 rtl:divide-x-reverse">
-            {/* Clickable section 1: New Devices */}
-            <button
-              onClick={() => {
-                setSubTab('new_devices');
-                setSelectedInvoice(null);
-              }}
-              className={`flex flex-col items-center justify-center py-4 px-2 transition-all rounded-2xl relative cursor-pointer ${
-                subTab === 'new_devices' 
-                  ? 'bg-white/15 shadow-inner scale-[1.02]' 
-                  : 'hover:bg-white/5 opacity-80 hover:opacity-100'
-              }`}
-            >
-              {subTab === 'new_devices' && (
-                <span className="absolute top-3 right-3 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping" />
-              )}
-              <span className="text-3xl sm:text-5xl font-black font-mono tracking-wider drop-shadow-md">{countNewDevices}</span>
-              <span className="text-xs sm:text-sm font-bold font-cairo mt-2 text-purple-100">أجهزة جديدة</span>
-              <span className="text-[10px] text-purple-200 mt-1 opacity-70">بانتظار الفحص</span>
-            </button>
-
-            {/* Clickable section 2: Under Inspection Devices */}
+        <div className="w-full bg-gradient-to-r from-purple-600 via-indigo-600 to-purple-700 text-white p-3 sm:p-4 rounded-xl sm:rounded-2xl shadow-md relative overflow-hidden">
+          <div className="relative z-10 grid grid-cols-2 divide-x divide-white/15 rtl:divide-x-reverse">
+            {/* Clickable section 1: Under Inspection Devices */}
             <button
               onClick={() => {
                 setSubTab('under_inspection');
                 setSelectedInvoice(null);
               }}
-              className={`flex flex-col items-center justify-center py-4 px-2 transition-all rounded-2xl relative cursor-pointer ${
+              className={`flex flex-col items-center justify-center py-2 px-2 transition-all rounded-xl relative cursor-pointer ${
                 subTab === 'under_inspection' 
-                  ? 'bg-white/15 shadow-inner scale-[1.02]' 
+                  ? 'bg-white/15 shadow-inner scale-[1.01]' 
                   : 'hover:bg-white/5 opacity-80 hover:opacity-100'
               }`}
             >
               {subTab === 'under_inspection' && (
-                <span className="absolute top-3 right-3 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping" />
+                <span className="absolute top-2 right-2 w-2 h-2 bg-emerald-400 rounded-full animate-ping" />
               )}
-              <span className="text-3xl sm:text-5xl font-black font-mono tracking-wider drop-shadow-md">{countInspectionDevices}</span>
-              <span className="text-xs sm:text-sm font-bold font-cairo mt-2 text-purple-100">أجهزة قيد الفحص</span>
-              <span className="text-[10px] text-purple-200 mt-1 opacity-70">المرحلة الواحدة</span>
+              <span className="text-2xl sm:text-3xl font-black font-mono tracking-wider drop-shadow-md">{countInspectionDevices}</span>
+              <span className="text-xs font-bold font-cairo mt-1 text-purple-100">أجهزة قيد الفحص</span>
+              <span className="text-[9px] text-purple-200 opacity-75">المرحلة الواحدة</span>
             </button>
 
-            {/* Clickable section 3: Phased Inspection Devices */}
+            {/* Clickable section 2: Phased Inspection Devices */}
             <button
               onClick={() => {
                 setSubTab('phased_inspection');
                 setSelectedInvoice(null);
               }}
-              className={`flex flex-col items-center justify-center py-4 px-2 transition-all rounded-2xl relative cursor-pointer ${
+              className={`flex flex-col items-center justify-center py-2 px-2 transition-all rounded-xl relative cursor-pointer ${
                 subTab === 'phased_inspection' 
-                  ? 'bg-white/15 shadow-inner scale-[1.02]' 
+                  ? 'bg-white/15 shadow-inner scale-[1.01]' 
                   : 'hover:bg-white/5 opacity-80 hover:opacity-100'
               }`}
             >
               {subTab === 'phased_inspection' && (
-                <span className="absolute top-3 right-3 w-2.5 h-2.5 bg-emerald-400 rounded-full animate-ping" />
+                <span className="absolute top-2 right-2 w-2 h-2 bg-emerald-400 rounded-full animate-ping" />
               )}
-              <span className="text-3xl sm:text-5xl font-black font-mono tracking-wider drop-shadow-md">{countPhasedDevices}</span>
-              <span className="text-xs sm:text-sm font-bold font-cairo mt-2 text-purple-100">أجهزة قيد فحص مرحلي</span>
-              <span className="text-[10px] text-purple-200 mt-1 opacity-70">فحص وتعميد على مرحلتين</span>
+              <span className="text-2xl sm:text-3xl font-black font-mono tracking-wider drop-shadow-md">{countPhasedDevices}</span>
+              <span className="text-xs font-bold font-cairo mt-1 text-purple-100">أجهزة قيد فحص مرحلي</span>
+              <span className="text-[9px] text-purple-200 opacity-75">على مرحلتين</span>
             </button>
           </div>
         </div>
@@ -2052,8 +1981,8 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                         <div className="text-[8px] sm:text-[9px] text-rose-400/80 font-medium">العملية</div>
                       </div>
                       <div className="text-purple-300">
-                        <div>{subTab === 'new_devices' ? 'دخول' : 'معاينة'}</div>
-                        <div className="text-[8px] sm:text-[9px] text-purple-300/80 font-medium">{subTab === 'new_devices' ? 'فحص' : 'واعتماد'}</div>
+                        <div>معاينة</div>
+                        <div className="text-[8px] sm:text-[9px] text-purple-300/80 font-medium">واعتماد</div>
                       </div>
                     </div>
                   )}
@@ -2074,9 +2003,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                       {invoice.customerName || getCustomerName(invoice.customerId)}
                     </td>
                     <td className="px-2 py-2 font-mono text-purple-400 font-bold text-center whitespace-nowrap">
-                      {subTab === 'new_devices' 
-                        ? getNewDevicesCount(invoice.invoiceNumber) 
-                        : subTab === 'under_inspection' 
+                      {subTab === 'under_inspection' 
                         ? getInspectionDevicesCount(invoice.invoiceNumber)
                         : countPhasedInvoicesCount(invoice.invoiceNumber, phasedStage === 'phase1' ? '21' : '22')}
                     </td>
@@ -2126,8 +2053,8 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                               className="accent-rose-500 w-4 h-4 cursor-pointer ring-1 ring-rose-500/40 rounded-full"
                             />
                           </label>
-                          {/* 2. دخول فحص / معاينة واعتماد (action1) */}
-                          <label className="flex items-center justify-center cursor-pointer p-1 rounded-md hover:bg-purple-500/10 transition-colors" title={subTab === 'new_devices' ? 'دخول فحص' : 'معاينة واعتماد'}>
+                          {/* 2. معاينة واعتماد (action1) */}
+                          <label className="flex items-center justify-center cursor-pointer p-1 rounded-md hover:bg-purple-500/10 transition-colors" title="معاينة واعتماد">
                             <input
                               type="radio"
                               name={`action-${invoice.id}`}

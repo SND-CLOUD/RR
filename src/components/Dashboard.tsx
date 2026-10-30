@@ -26,7 +26,9 @@ import {
   Wrench,
   Bell,
   ClipboardCheck,
-  FileOutput
+  FileOutput,
+  ArrowDownToLine,
+  ArrowUpFromLine
 } from 'lucide-react';
 import { collection, query, where, getDocs, onSnapshot, orderBy } from '../firebase';
 import { db } from '../firebase';
@@ -377,50 +379,56 @@ export default function Dashboard({
 
       {/* Action Grid - 3x2 layout */}
       <div className="grid grid-cols-3 gap-3 md:gap-4 max-w-4xl mx-auto pt-2">
+        {/* Row 1 */}
+        {/* 1. دخول أجهزة */}
         <ActionCard 
-          onClick={() => onNavigate('entry-exit')}
-          icon={<FilePlus size={24} className="md:w-7 md:h-7" />} 
-          label="دخول وخروج" 
+          onClick={() => onNavigate('device-intake')}
+          icon={<ArrowDownToLine size={24} className="md:w-7 md:h-7" />} 
+          label="دخول أجهزة" 
           color="bg-orange-600 hover:bg-orange-700"
         />
+        {/* 2. قسم الصيانة */}
         <ActionCard 
           onClick={() => onNavigate('device-movement')}
           icon={<SettingsIcon size={24} className="md:w-7 md:h-7" />} 
           label="قسم الصيانة" 
           color="bg-blue-600 hover:bg-blue-700"
         />
+        {/* 3. خروج أجهزة */}
+        <ActionCard 
+          onClick={() => onNavigate('device-exit')}
+          icon={<ArrowUpFromLine size={24} className="md:w-7 md:h-7" />} 
+          label="خروج أجهزة" 
+          color="bg-emerald-600 hover:bg-emerald-700"
+        />
+
+        {/* Row 2 */}
+        {/* 1. الحسابات */}
+        <ActionCard 
+          onClick={() => onNavigate('vault')}
+          icon={<CircleDollarSign size={24} className="md:w-7 md:h-7" />} 
+          label="الحسابات" 
+          color="bg-teal-600 hover:bg-teal-700"
+        />
+        {/* 2. العملاء */}
         <ActionCard 
           onClick={() => onNavigate('customers')}
           icon={<Users size={24} className="md:w-7 md:h-7" />} 
           label="العملاء" 
           color="bg-amber-500 hover:bg-amber-600"
         />
-        <ActionCard 
-          onClick={() => onNavigate('vault')}
-          icon={<CircleDollarSign size={24} className="md:w-7 md:h-7" />} 
-          label="الحسابات" 
-          color="bg-emerald-600 hover:bg-emerald-700"
-        />
+        {/* 3. أخرى */}
         <ActionCard 
           onClick={() => setShowInventoryReportsModal(true)}
           icon={<Layers size={24} className="md:w-7 md:h-7" />} 
-          label="المخزون والتقارير" 
+          label="أخرى" 
           color="bg-purple-600 hover:bg-purple-700"
-        />
-        <ActionCard 
-          onClick={() => {
-            localStorage.setItem('otherServicesTab', 'hub');
-            onNavigate('other-services');
-          }}
-          icon={<Wrench size={24} className="md:w-7 md:h-7" />} 
-          label="خدمات أخرى" 
-          color="bg-indigo-600 hover:bg-indigo-700"
         />
       </div>
 
       {/* Modals */}
       
-      {/* Inventory & Reports Modal */}
+      {/* Other Options Modal: خدمات أخرى + التقارير + المخزون */}
       {showInventoryReportsModal && (
         <div 
           className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
@@ -435,28 +443,44 @@ export default function Dashboard({
             >
               <X size={20} />
             </button>
-            <h2 className="text-xl font-black text-white mb-6 font-cairo text-center">المخزون والتقارير</h2>
+            <h2 className="text-xl font-black text-white mb-6 font-cairo text-center">خيارات وخدمات أخرى</h2>
             
-            <div className="space-y-4">
+            <div className="space-y-3.5">
+              {/* Option 1: خدمات أخرى */}
               <button 
                 onClick={() => {
                   setShowInventoryReportsModal(false);
-                  onNavigate('inventory');
+                  localStorage.setItem('otherServicesTab', 'hub');
+                  onNavigate('other-services');
                 }}
-                className="w-full flex items-center justify-between bg-purple-600 hover:bg-purple-700 text-white p-4 rounded-xl transition-colors shadow-lg"
+                className="w-full flex items-center justify-between bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-xl transition-all shadow-lg active:scale-95"
               >
-                <span className="font-bold font-cairo text-lg">المخزون</span>
-                <Package size={24} />
+                <span className="font-bold font-cairo text-base">خدمات أخرى</span>
+                <Wrench size={22} />
               </button>
+
+              {/* Option 2: التقارير */}
               <button 
                 onClick={() => {
                   setShowInventoryReportsModal(false);
                   onNavigate('reports');
                 }}
-                className="w-full flex items-center justify-between bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-xl transition-colors shadow-lg"
+                className="w-full flex items-center justify-between bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-xl transition-all shadow-lg active:scale-95"
               >
-                <span className="font-bold font-cairo text-lg">التقارير</span>
-                <BarChart3 size={24} />
+                <span className="font-bold font-cairo text-base">التقارير</span>
+                <BarChart3 size={22} />
+              </button>
+
+              {/* Option 3: المخزون */}
+              <button 
+                onClick={() => {
+                  setShowInventoryReportsModal(false);
+                  onNavigate('inventory');
+                }}
+                className="w-full flex items-center justify-between bg-purple-600 hover:bg-purple-700 text-white p-4 rounded-xl transition-all shadow-lg active:scale-95"
+              >
+                <span className="font-bold font-cairo text-base">المخزون</span>
+                <Package size={22} />
               </button>
             </div>
           </div>

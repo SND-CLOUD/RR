@@ -96,15 +96,15 @@ export default function DeviceMovement({
   ];
 
   if (view === 'inspection') {
-    return <Inspection user={user} onBack={() => setView('hub')} />;
+    return <Inspection user={user} onBack={onBack} />;
   }
   
   if (view === 'approval') {
-    return <ApprovalAndParts user={user} onBack={() => setView('hub')} />;
+    return <ApprovalAndParts user={user} onBack={onBack} />;
   }
 
   if (view === 'maintenance') {
-    return <Maintenance user={user} onBack={() => setView('hub')} />;
+    return <Maintenance user={user} onBack={onBack} />;
   }
 
   return (

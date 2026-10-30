@@ -33,7 +33,9 @@ import {
   Eye,
   ArrowUpDown,
   Search,
-  AlertCircle
+  AlertCircle,
+  ArrowDownToLine,
+  ArrowUpFromLine
 } from 'lucide-react';
 import { collection, query, where, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, onSnapshot, writeBatch, deleteDoc, serverTimestamp } from './firebase';
 import { db } from './firebase';
@@ -48,6 +50,8 @@ import PrintPreviewOverlay from './components/PrintPreviewOverlay';
 // Components
 import Dashboard from './components/Dashboard';
 import EntryExit from './components/entry-exit';
+import DeviceIntakeHub from './components/entry-exit/DeviceIntakeHub';
+import DeviceExitHub from './components/entry-exit/DeviceExitHub';
 import DeviceMovement from './components/movement';
 import Inspection from './components/movement/Inspection';
 import Maintenance from './components/movement/Maintenance';
@@ -82,12 +86,14 @@ export default function App() {
   const [shopConfig, setShopConfig] = useState<ShopConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSetup, setShowSetup] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'entry-exit' | 'device-movement' | 'inspection' | 'maintenance' | 'inventory' | 'reports' | 'customers' | 'settings' | 'search' | 'vault' | 'device-management' | 'approval' | 'other-services' | 'advanced-database-maintenance'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'entry-exit' | 'device-movement' | 'inspection' | 'maintenance' | 'inventory' | 'reports' | 'customers' | 'settings' | 'search' | 'vault' | 'device-management' | 'approval' | 'other-services' | 'advanced-database-maintenance' | 'device-intake' | 'device-exit'>('dashboard');
   const [dashboardResetTrigger, setDashboardResetTrigger] = useState(0);
+  const [inspectionInitialInvoice, setInspectionInitialInvoice] = useState<any | null>(null);
 
   const goToDashboard = () => {
     setActiveTab('dashboard');
     setVaultInitialProps(null);
+    setInspectionInitialInvoice(null);
     setDashboardResetTrigger(prev => prev + 1);
     window.dispatchEvent(new CustomEvent('reset-dashboard-counter'));
   };
@@ -305,6 +311,11 @@ export default function App() {
 
       if (state.activeTab === 'entry-exit' && state.entryExitView !== 'hub') {
         setEntryExitView('hub');
+        return;
+      }
+
+      if (state.activeTab === 'device-intake' || state.activeTab === 'device-exit') {
+        goToDashboard();
         return;
       }
 
@@ -1204,6 +1215,19 @@ export default function App() {
             resetTrigger={dashboardResetTrigger}
           />
         );
+      case 'device-intake':
+        return (
+          <DeviceIntakeHub 
+            user={user} 
+            onBack={goToDashboard} 
+            onNavigateToInspection={(inv) => {
+              setInspectionInitialInvoice(inv);
+              setActiveTab('inspection');
+            }} 
+          />
+        );
+      case 'device-exit':
+        return <DeviceExitHub user={user} onBack={goToDashboard} />;
       case 'entry-exit':
         return <EntryExit onBack={goToDashboard} user={user} view={entryExitView} setView={setEntryExitView} />;
       case 'device-movement':
@@ -1211,7 +1235,7 @@ export default function App() {
       case 'approval':
         return <ApprovalAndParts user={user} onBack={goToDashboard} />;
       case 'inspection':
-        return <Inspection user={user} onBack={goToDashboard} />;
+        return <Inspection user={user} onBack={goToDashboard} initialInvoice={inspectionInitialInvoice} />;
       case 'maintenance':
         return <Maintenance user={user} onBack={goToDashboard} />;
       case 'inventory':
@@ -1376,6 +1400,8 @@ export default function App() {
 
               <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest font-cairo">
                 {activeTab === 'other-services' ? 'الخدمات الإضافية' :
+                 activeTab === 'device-intake' ? (i18n.language === 'ar' ? 'صفحة الأجهزة الداخلة' : 'Device Intake') :
+                 activeTab === 'device-exit' ? (i18n.language === 'ar' ? 'صفحة خروج أجهزة' : 'Device Exit') :
                  activeTab === 'device-management' ? 'إدارة الأجهزة' : 
                  activeTab === 'entry-exit' ? (
                    entryExitView === 'entry' ? 'دخول وخروج أجهزة - دخول أجهزة' :
@@ -1500,8 +1526,8 @@ export default function App() {
           {/* Active Alerts Banner Area Removed */}
 
           {/* Tab Content */}
-          <div className={`flex-1 ${activeTab === 'dashboard' ? 'overflow-hidden' : 'overflow-y-auto'} ${['search', 'customers', 'inspection', 'maintenance', 'inventory', 'vault', 'device-movement', 'approval', 'entry-exit'].includes(activeTab) ? 'p-0 pb-28 md:pb-8' : 'p-4 md:p-8 pb-28 md:pb-8'}`}>
-            <div className={`${['search', 'customers', 'inspection', 'maintenance', 'inventory', 'vault', 'device-movement', 'approval', 'entry-exit'].includes(activeTab) ? 'w-full' : 'max-w-7xl mx-auto'} h-full`}>
+          <div className={`flex-1 ${activeTab === 'dashboard' ? 'overflow-hidden' : 'overflow-y-auto overscroll-contain'} ${['search', 'customers', 'inspection', 'maintenance', 'inventory', 'vault', 'device-movement', 'approval', 'entry-exit', 'device-intake', 'device-exit'].includes(activeTab) ? 'p-0 pb-28 md:pb-8' : 'p-4 md:p-8 pb-28 md:pb-8'}`}>
+            <div className={`${['search', 'customers', 'inspection', 'maintenance', 'inventory', 'vault', 'device-movement', 'approval', 'entry-exit', 'device-intake', 'device-exit'].includes(activeTab) ? 'w-full' : 'max-w-7xl mx-auto'} min-h-full`}>
               <AnimatePresence mode="wait">
                 <motion.div
                   key={activeTab}
@@ -1516,29 +1542,34 @@ export default function App() {
             </div>
           </div>
 
-          {/* Bottom Navigation - Mobile Only */}
-          <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-xl border-t border-gray-200 dark:border-white/5 py-2 px-6 flex items-center justify-around shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)] dark:shadow-2xl mobile-bottom-nav" dir="rtl">
-            <MobileNavItem 
-              active={activeTab === 'entry-exit'} 
-              onClick={() => setActiveTab('entry-exit')} 
-              icon={<ArrowRightLeft size={22} />} 
-              label="دخول وخروج أجهزة"
-              colorClass="text-orange-500"
-            />
-            <MobileNavItem 
-              active={activeTab === 'inspection'} 
-              onClick={() => setActiveTab('inspection')} 
-              icon={<ClipboardCheck size={22} />} 
-              label="فحص"
-              colorClass="text-purple-500"
-            />
-            <div className="relative -top-3">
+          {/* Bottom Navigation - Mobile Toolbar */}
+          <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-xl border-t border-gray-200 dark:border-white/5 py-1 px-1 sm:px-2 flex items-center justify-between shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)] dark:shadow-2xl mobile-bottom-nav" dir="rtl">
+            {/* Right Group (2 items): دخول أجهزة + فحص */}
+            <div className="flex-1 flex items-center justify-around min-w-0">
+              <MobileNavItem 
+                active={activeTab === 'device-intake'} 
+                onClick={() => setActiveTab('device-intake')} 
+                icon={<ArrowDownToLine size={20} />} 
+                label="دخول أجهزة"
+                colorClass="text-orange-500"
+              />
+              <MobileNavItem 
+                active={activeTab === 'inspection'} 
+                onClick={() => setActiveTab('inspection')} 
+                icon={<ClipboardCheck size={20} />} 
+                label="فحص"
+                colorClass="text-purple-500"
+              />
+            </div>
+
+            {/* Exact Center: Main Dashboard Button */}
+            <div className="relative -top-2.5 shrink-0 px-1 sm:px-2 z-10 flex flex-col items-center">
               <button 
                 onClick={goToDashboard}
-                className="w-14 h-14 bg-white dark:bg-[#1a1a1a] rounded-full flex flex-col items-center justify-center shadow-xl ring-4 ring-gray-100 dark:ring-[#0f0f0f] mobile-center-btn border border-gray-200 dark:border-white/5 cursor-pointer active:scale-95 transition-transform"
+                className="w-13 h-13 bg-white dark:bg-[#1a1a1a] rounded-full flex flex-col items-center justify-center shadow-xl ring-4 ring-gray-100 dark:ring-[#0f0f0f] mobile-center-btn border border-gray-200 dark:border-white/5 cursor-pointer active:scale-95 transition-transform"
                 title="الصفحة الرئيسية / العداد الرئيسي"
               >
-                <div className="grid grid-cols-2 gap-[2px] w-[20px] h-[20px]">
+                <div className="grid grid-cols-2 gap-[2px] w-[18px] h-[18px]">
                   <div className="bg-orange-600 rounded-[3px]"></div>
                   <div className="bg-blue-600 rounded-[3px]"></div>
                   <div className="bg-amber-500 rounded-[3px]"></div>
@@ -1546,20 +1577,31 @@ export default function App() {
                 </div>
               </button>
             </div>
-            <MobileNavItem 
-              active={activeTab === 'approval'} 
-              onClick={() => setActiveTab('approval')} 
-              icon={<Clock size={22} />} 
-              label="انتظار الموافقة والقطع"
-              colorClass="text-amber-500"
-            />
-            <MobileNavItem 
-              active={activeTab === 'maintenance'} 
-              onClick={() => setActiveTab('maintenance')} 
-              icon={<Wrench size={22} />} 
-              label="صيانة"
-              colorClass="text-emerald-500"
-            />
+
+            {/* Left Group (3 items): الموافقة + صيانة + خروج أجهزة */}
+            <div className="flex-1 flex items-center justify-around min-w-0">
+              <MobileNavItem 
+                active={activeTab === 'approval'} 
+                onClick={() => setActiveTab('approval')} 
+                icon={<Clock size={20} />} 
+                label="الموافقة"
+                colorClass="text-amber-500"
+              />
+              <MobileNavItem 
+                active={activeTab === 'maintenance'} 
+                onClick={() => setActiveTab('maintenance')} 
+                icon={<Wrench size={20} />} 
+                label="صيانة"
+                colorClass="text-blue-500"
+              />
+              <MobileNavItem 
+                active={activeTab === 'device-exit'} 
+                onClick={() => setActiveTab('device-exit')} 
+                icon={<ArrowUpFromLine size={20} />} 
+                label="خروج أجهزة"
+                colorClass="text-emerald-500"
+              />
+            </div>
           </nav>
         </main>
       </div>
@@ -2129,12 +2171,12 @@ function MobileNavItem({ active, onClick, icon, label, colorClass }: { active: b
   return (
     <button 
       onClick={onClick}
-      className={`flex flex-col items-center gap-1 transition-all ${active ? colorClass : 'text-gray-400 dark:text-gray-500 hover:' + colorClass}`}
+      className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all min-w-0 flex-1 cursor-pointer ${active ? colorClass : 'text-gray-400 dark:text-gray-500 hover:' + colorClass}`}
     >
-      <div className={`p-1.5 rounded-lg transition-colors ${active ? 'bg-gray-100 dark:bg-white/10 shadow-inner' : ''}`}>
+      <div className={`p-1 sm:p-1.5 rounded-lg transition-colors ${active ? 'bg-gray-100 dark:bg-white/10 shadow-inner' : ''}`}>
         {icon}
       </div>
-      <span className={`text-[9px] font-black uppercase tracking-tighter opacity-80`}>{label}</span>
+      <span className="text-[8.5px] sm:text-[9px] font-black uppercase tracking-tighter opacity-80 whitespace-nowrap text-center">{label}</span>
     </button>
   );
 }

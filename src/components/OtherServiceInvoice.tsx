@@ -203,9 +203,7 @@ export default function OtherServiceInvoice({
       return;
     }
     if (activeTab !== 'hub') {
-      resetAllForms();
-      setActiveTab('hub');
-      localStorage.setItem('otherServicesTab', 'hub');
+      handleGoBackToMain();
     }
   }, [showPreview, showAddCustomerModal, successInfo, activeTab, resetAllForms]);
 
@@ -1462,7 +1460,7 @@ export default function OtherServiceInvoice({
 
           <button
             type="button"
-            onClick={() => handleSwitchTab('hub')}
+            onClick={handleGoBackToMain}
             className="p-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all border border-white/5 flex items-center gap-2 cursor-pointer"
           >
             <span className="text-sm font-bold">العودة للخدمات</span>
