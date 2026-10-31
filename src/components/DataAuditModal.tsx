@@ -911,6 +911,22 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
 
       for (const item of itemsToFix) {
         if (item.amountInLedger === 0 && item.amountPaidOnInvoice > 0) {
+          // If the invoice is not delivered (e.g. returned to ready/entry) and has no vouchers in ledger,
+          // do NOT create an artificial voucher! Reset the invoice's amountPaid to 0 to eliminate legacy inflation.
+          if (item.status !== '60' && item.status !== 'delivered') {
+            const nowIso = new Date().toISOString();
+            try {
+              await FirebaseProviderInstance.updateDoc('invoices', item.id, { amountPaid: 0, updatedAt: nowIso });
+            } catch (e) {}
+            try {
+              await updateDoc(doc(db, 'invoices', item.id), { amountPaid: 0, updatedAt: serverTimestamp() });
+            } catch (e) {}
+            try {
+              await localDb.run("UPDATE invoices SET amountPaid = 0, updatedAt = ? WHERE id = ?", [nowIso, item.id]);
+            } catch (e) {}
+            continue;
+          }
+
           currentVoucherNum++;
           const txId = `tx_audit_${item.invoiceNumber}_${Math.random().toString(36).substring(2, 6)}`;
           const isPurchase = !!item.isPurchase;
@@ -1302,18 +1318,29 @@ export default function DataAuditModal({ isOpen, onClose, user }: DataAuditModal
         setRepairProgress({ status: 'running', message: `[${step}/${totalSteps}] تدقيق ومطابقة فواتير المدفوعات لـ ${auditResults.paymentImbalances.length} حالة...` });
         
         for (const item of auditResults.paymentImbalances) {
-          if (item.amountInLedger > 0 && item.amountPaidOnInvoice !== item.amountInLedger) {
+          if (item.amountPaidOnInvoice !== item.amountInLedger) {
+            const targetPaid = Number(item.amountInLedger || 0);
             let newStatus = item.status;
-            if (!item.isPurchase && item.amountInLedger >= item.totalCost) {
+            if (!item.isPurchase && targetPaid > 0 && targetPaid >= item.totalCost) {
               newStatus = 'delivered';
             }
-            await updateDoc(doc(db, 'invoices', item.id), { 
-              amountPaid: item.amountInLedger,
-              status: newStatus
-            });
+            try {
+              await updateDoc(doc(db, 'invoices', item.id), { 
+                amountPaid: targetPaid,
+                status: newStatus
+              });
+            } catch (e) {}
         
             try {
-              await localDb.run("UPDATE invoices SET amountPaid = ?, status = ? WHERE id = ?", [item.amountInLedger, newStatus, item.id]);
+              await localDb.run("UPDATE invoices SET amountPaid = ?, status = ? WHERE id = ?", [targetPaid, newStatus, item.id]);
+            } catch (e) {}
+
+            try {
+              await FirebaseProviderInstance.updateDoc('invoices', item.id, {
+                amountPaid: targetPaid,
+                status: newStatus,
+                updatedAt: new Date().toISOString()
+              });
             } catch (e) {}
           }
         }

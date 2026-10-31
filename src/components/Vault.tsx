@@ -65,7 +65,8 @@ import {
   RefreshCw,
   CloudDownload,
   Download,
-  Share2
+  Share2,
+  AlertTriangle
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
@@ -1629,54 +1630,192 @@ export default function Vault({
           if (t.isReversed || t.isReversal) continue;
           currentNextNum += 1;
 
+          const rawType = String(t.type || '');
+          const isOriginalReceipt = rawType === 'receipt' || rawType === 'invoice_payment' || rawType === 'deposit' || rawType === 'income';
           const reverseAmount = -Number(t.amount);
           const originalVoucherNotes = t.notes || '';
           const updatedOriginalNotes = `${originalVoucherNotes} [تم عكس القيد بواسطة القيد رقم ${currentNextNum}]`;
           const reversalNotes = `[قيد عكسي] للمستند رقم ${t.voucherNumber} - ${originalVoucherNotes}`;
           const reversalTxId = `vtx-${Math.random().toString(36).substring(2, 8)}`;
 
+          // 1. Resolve linked invoice properly
           let reversalInvId = t.invoiceId || '';
-          if (t.invoiceNumber && !reversalInvId) {
-            const cleanNo = String(t.invoiceNumber).replace('#', '').trim();
-            const invs = await localDb.query("SELECT id FROM invoices WHERE invoiceNumber = ? OR invoiceNumber = ?", [cleanNo, `#${cleanNo}`]);
-            if (invs.values && invs.values.length > 0) {
-              reversalInvId = invs.values[0].id;
+          const cleanInvNo = t.invoiceNumber ? String(t.invoiceNumber).replace('#', '').trim() : '';
+          if (!reversalInvId && cleanInvNo) {
+            const matchedInv = invoices.find(inv => String(inv.invoiceNumber || '').replace('#', '').trim() === cleanInvNo);
+            if (matchedInv) {
+              reversalInvId = matchedInv.id;
+            } else {
+              const invs = await localDb.query("SELECT id FROM invoices WHERE invoiceNumber = ? OR invoiceNumber = ?", [cleanInvNo, `#${cleanInvNo}`]);
+              if (invs.values && invs.values.length > 0) {
+                reversalInvId = invs.values[0].id;
+              }
             }
           }
 
-          // 1. Update original transaction in SQLite
-          await ProviderFactory.getProvider().updateDoc('vault_transactions', t.id, { isReversed: 1, notes: updatedOriginalNotes, updatedAt: timestampIso });
+          // Compute liability amount in invoice currency
+          let reversalLiability = -Math.abs(Number(t.amount));
+          if (t.liabilityAmount !== undefined && t.liabilityAmount !== null && !isNaN(Number(t.liabilityAmount))) {
+            reversalLiability = -Math.abs(Number(t.liabilityAmount));
+          }
 
-          // 2. Insert reversal counter-transaction
-          await ProviderFactory.getProvider().setDoc('vault_transactions', reversalTxId, {
-            id: reversalTxId, currency: t.currency, amount: reverseAmount, customerName: t.customerName, invoiceNumber: t.invoiceNumber || '',
-            invoiceId: reversalInvId,
-            userName: user.name || 'المدير العام', userNumber: user.userNumber || 1, userId: user.id || 'none', timestamp: timestampIso,
-            type: t.type === 'receipt' ? 'payment' : 'receipt', notes: reversalNotes, updatedAt: timestampIso, voucherNumber: currentNextNum,
-            transactionCategory: 'عكس قيد مال', fundId: t.fundId || '', fundName: t.fundName || '', customerId: t.customerId || '',
-            isReversed: 0, isReversal: 1, reversalOf: t.id
+          // Compute fund currency amount
+          const fundAmount = Math.abs(Number(
+            t.receiptAmount !== undefined && t.receiptAmount !== null && !isNaN(Number(t.receiptAmount))
+              ? t.receiptAmount
+              : (t.amount || 0)
+          ));
+
+          // 2. Resolve target fund
+          let targetFundId = t.fundId || '';
+          if (!targetFundId && t.fundName) {
+            const matchedF = funds.find(f => f.name === t.fundName || f.id === t.fundId);
+            if (matchedF) targetFundId = matchedF.id;
+          }
+          if (!targetFundId && funds.length > 0) {
+            targetFundId = funds[0].id;
+          }
+
+          // 3. Update original transaction in LocalProvider, SQLite, and Firestore
+          await ProviderFactory.getProvider().updateDoc('vault_transactions', t.id, { 
+            isReversed: 1, 
+            status: 'reversed',
+            notes: updatedOriginalNotes, 
+            updatedAt: timestampIso 
           });
+          await localDb.run("UPDATE vault_transactions SET isReversed = 1, status = 'reversed', notes = ?, updatedAt = ? WHERE id = ?", [updatedOriginalNotes, timestampIso, t.id]);
 
-          // 3. Update SQLite fund balance
-          if (t.fundId) {
-            await ProviderFactory.getProvider().updateDoc('fin_funds', t.fundId, { balance: { type: 'increment', value: reverseAmount } });
-          }
+          // 4. Insert reversal counter-transaction across LocalProvider, SQLite, and Firestore
+          const reversalTxPayload = {
+            id: reversalTxId, 
+            currency: t.currency, 
+            amount: reverseAmount, 
+            customerName: t.customerName, 
+            invoiceNumber: t.invoiceNumber || '',
+            invoiceId: reversalInvId,
+            userName: user.name || 'المدير العام', 
+            userNumber: user.userNumber || 1, 
+            userId: user.id || 'none', 
+            timestamp: timestampIso,
+            type: isOriginalReceipt ? 'payment' : 'receipt', 
+            notes: reversalNotes, 
+            updatedAt: timestampIso, 
+            voucherNumber: currentNextNum,
+            transactionCategory: 'عكس قيد مال', 
+            fundId: targetFundId, 
+            fundName: t.fundName || '', 
+            customerId: t.customerId || '',
+            isReversed: 0, 
+            isReversal: 1, 
+            reversalOf: t.id,
+            status: 'reversal',
+            liabilityAmount: reversalLiability,
+            liabilityCurrency: t.liabilityCurrency || t.currency,
+            receiptAmount: fundAmount,
+            receiptCurrency: t.receiptCurrency || t.currency
+          };
 
-          // 3b. Update invoice if linked
-          if (t.invoiceNumber) {
-            // Find invoice
-            const invs = await localDb.query("SELECT id FROM invoices WHERE invoiceNumber = ?", [t.invoiceNumber]);
-            if (invs.values && invs.values.length > 0) {
-              const invId = invs.values[0].id;
-              // If it's a receipt being reversed, we decrease amountPaid. (reverseAmount is negative)
-              // Wait, reverseAmount logic:
-              // If original was receipt (amount > 0), reverseAmount = -t.amount
-              // To update amountPaid, we add reverseAmount
-              await ProviderFactory.getProvider().updateDoc('invoices', invId, { amountPaid: { type: 'increment', value: reverseAmount } });
+          await ProviderFactory.getProvider().setDoc('vault_transactions', reversalTxId, reversalTxPayload);
+
+          // 5. Adjust target Fund Balance immediately across all layers:
+          // Reversing a receipt decreases fund balance (-fundAmount); reversing a payment increases fund balance (+fundAmount)
+          if (targetFundId && fundAmount > 0) {
+            const fundDelta = isOriginalReceipt ? -fundAmount : fundAmount;
+
+            try {
+              await ProviderFactory.getProvider().updateDoc('fin_funds', targetFundId, { balance: { type: 'increment', value: fundDelta } });
+            } catch (e) {}
+
+            try {
+              await localDb.run("UPDATE fin_funds SET balance = balance + ? WHERE id = ?", [fundDelta, targetFundId]);
+            } catch (e) {}
+
+            try {
+              const fundDocRef = doc(db, 'fin_funds', targetFundId);
+              const fSnap = await getDoc(fundDocRef);
+              if (fSnap.exists()) {
+                const curBal = Number(fSnap.data().balance || 0);
+                await updateDoc(fundDocRef, {
+                  balance: curBal + fundDelta,
+                  updatedAt: serverTimestamp()
+                });
+              }
+            } catch (e) {
+              console.warn("Direct firestore fund balance update error:", e);
             }
+
+            // Immediately update React state funds
+            setFunds(prevFunds => prevFunds.map(f => {
+              if (f.id === targetFundId) {
+                const cur = parseFundBalance(f.balance);
+                return { ...f, balance: cur + fundDelta };
+              }
+              return f;
+            }));
           }
 
-          // 4. Update Firestore if the transaction can be found there
+          // 6. Recalculate linked Invoice amountPaid cleanly from remaining valid receipts
+          if (reversalInvId) {
+            let newPaid = 0;
+            try {
+              const otherTxsRes = await localDb.query(
+                `SELECT * FROM vault_transactions 
+                 WHERE (invoiceId = ? OR invoiceNumber = ? OR invoiceNumber = ?) 
+                   AND id != ? AND id != ?
+                   AND isDeleted != 1 AND deleted != 1
+                   AND isReversed != 1 AND isReversal != 1
+                   AND (type = 'receipt' OR type = 'invoice_payment' OR type = 'deposit')`,
+                [reversalInvId, cleanInvNo, `#${cleanInvNo}`, t.id, reversalTxId]
+              );
+              const remainingTxs = otherTxsRes.values || [];
+              newPaid = remainingTxs.reduce((sum: number, r: any) => {
+                const liability = (r.liabilityAmount !== undefined && r.liabilityAmount !== null && !isNaN(Number(r.liabilityAmount)))
+                  ? Math.abs(Number(r.liabilityAmount))
+                  : Math.abs(Number(r.amount || 0));
+                return sum + liability;
+              }, 0);
+            } catch (e) {
+              const remainingMem = transactions.filter(txItem => {
+                if (txItem.id === t.id || txItem.id === reversalTxId) return false;
+                const match = (txItem.invoiceId && txItem.invoiceId === reversalInvId) ||
+                              (cleanInvNo && String(txItem.invoiceNumber || '').replace('#', '').trim() === cleanInvNo);
+                if (!match) return false;
+                if (txItem.isReversed === 1 || txItem.isReversal === 1 || txItem.reversalOf || txItem.status === 'reversed' || txItem.status === 'reversal') return false;
+                return txItem.type === 'receipt' || txItem.type === 'invoice_payment' || txItem.type === 'deposit';
+              });
+              newPaid = remainingMem.reduce((sum: number, r: any) => {
+                const liability = (r.liabilityAmount !== undefined && r.liabilityAmount !== null && !isNaN(Number(r.liabilityAmount)))
+                  ? Math.abs(Number(r.liabilityAmount))
+                  : Math.abs(Number(r.amount || 0));
+                return sum + liability;
+              }, 0);
+            }
+
+            try {
+              await ProviderFactory.getProvider().updateDoc('invoices', reversalInvId, { amountPaid: newPaid });
+            } catch (e) {}
+
+            try {
+              await localDb.run("UPDATE invoices SET amountPaid = ? WHERE id = ?", [newPaid, reversalInvId]);
+            } catch (e) {}
+
+            try {
+              const invDocRef = doc(db, 'invoices', reversalInvId);
+              await updateDoc(invDocRef, {
+                amountPaid: newPaid,
+                updatedAt: serverTimestamp()
+              });
+            } catch (e) {}
+
+            setInvoices(prevInvs => prevInvs.map(inv => {
+              if (inv.id === reversalInvId) {
+                return { ...inv, amountPaid: newPaid };
+              }
+              return inv;
+            }));
+          }
+
+          // 7. Update Firestore for both original and reversal transactions
           try {
             const originalDocRef = doc(db, 'vault_transactions', t.id);
             const origSnap = await getDoc(originalDocRef);
@@ -1692,36 +1831,24 @@ export default function Vault({
 
             const reversalDocRef = doc(db, 'vault_transactions', reversalTxId);
             await setDoc(reversalDocRef, {
-              id: reversalTxId,
-              currency: t.currency,
-              amount: reverseAmount,
-              customerName: t.customerName,
-              invoiceNumber: t.invoiceNumber || '',
-              invoiceId: reversalInvId,
-              userName: user.name || 'المدير العام',
-              userNumber: user.userNumber || 1,
-              userId: user.id || 'none',
-              timestamp: timestampIso,
-              type: t.type === 'receipt' ? 'payment' : 'receipt',
-              notes: reversalNotes,
-              updatedAt: timestampIso,
-              voucherNumber: currentNextNum,
-              transactionCategory: 'عكس قيد مال',
-              fundId: t.fundId || '',
-              fundName: t.fundName || '',
-              customerId: t.customerId || '',
-              isReversed: 0,
-              isReversal: 1,
-              reversalOf: t.id,
-              status: 'reversal'
+              ...reversalTxPayload,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
             });
           } catch (e) {
             console.error("Firestore sync error for reversal", e);
           }
       }
 
-      setSuccessMsg('تم عكس القيد بنجاح');
-      setTimeout(() => setSuccessMsg(null), 3000);
+      // 8. Auto reconcile fund balances as a final safeguard to guarantee 100% ledger harmony
+      try {
+        await repairAllFundBalances();
+      } catch (e) {
+        console.warn("Auto repair fund balances error:", e);
+      }
+
+      setSuccessMsg('تم عكس القيد بنجاح وخفض رصيد الصندوق وتحديث مدفوعات الفاتورة فوراً');
+      setTimeout(() => setSuccessMsg(null), 3500);
       
       await loadDatabaseData();
       await calculateNextVoucherNumber();
@@ -1738,96 +1865,212 @@ export default function Vault({
     if (!tx || !tx.id) return;
     setIsDeletingTx(true);
     try {
-      // 1. Delete from Provider (Firestore / Firebase / Local sync)
-      try {
-        await ProviderFactory.getProvider().deleteDoc('vault_transactions', tx.id);
-      } catch (e) {
-        console.warn("Provider deleteDoc error:", e);
+      // 1. Identify all linked transactions in the pair (Original + Reversal counterpart)
+      const txGroupMap = new Map<string, any>();
+      txGroupMap.set(tx.id, tx);
+
+      // A. If tx is a reversal entry, find its original
+      if (tx.reversalOf) {
+        const origFromState = transactions.find(t => t.id === tx.reversalOf);
+        if (origFromState) txGroupMap.set(origFromState.id, origFromState);
+        else txGroupMap.set(tx.reversalOf, { id: tx.reversalOf });
       }
 
-      // 2. Direct Firestore delete if available
-      try {
-        const firestoreDocRef = doc(db, 'vault_transactions', tx.id);
-        const snap = await getDoc(firestoreDocRef);
-        if (snap.exists()) {
-          await deleteDoc(firestoreDocRef);
+      // B. If tx is an original entry that was reversed, find all counterpart reversals
+      transactions.forEach(t => {
+        if (t.reversalOf === tx.id || (tx.reversalOf && t.id === tx.reversalOf)) {
+          txGroupMap.set(t.id, t);
         }
-      } catch (e) {
-        console.warn("Direct Firestore delete error:", e);
-      }
+      });
 
-      // 3. SQLite delete if available
+      // C. Also query SQLite to discover any counterpart record not in current memory state
       try {
-        await localDb.run("DELETE FROM vault_transactions WHERE id = ?", [tx.id]);
+        const dbLinks = await localDb.query(
+          `SELECT * FROM vault_transactions 
+           WHERE id = ? OR reversalOf = ? OR id = ? OR (reversalOf IS NOT NULL AND reversalOf = ?)`,
+          [tx.reversalOf || '___none___', tx.id, tx.id, tx.reversalOf || '___none___']
+        );
+        (dbLinks.values || []).forEach((row: any) => {
+          if (row && row.id) {
+            if (!txGroupMap.has(row.id) || !txGroupMap.get(row.id).fundId) {
+              txGroupMap.set(row.id, row);
+            }
+            if (row.reversalOf && !txGroupMap.has(row.reversalOf)) {
+              txGroupMap.set(row.reversalOf, { id: row.reversalOf });
+            }
+          }
+        });
       } catch (e) {
-        console.warn("SQLite delete error:", e);
+        console.warn("SQLite lookup for linked counterparts:", e);
       }
 
-      // 4. Adjust linked invoice amountPaid if applicable
-      const invNo = tx.invoiceNumber ? String(tx.invoiceNumber).replace('#', '').trim() : '';
-      let targetInvId = tx.invoiceId;
-      if (!targetInvId && invNo) {
-        const matched = invoices.find((i: any) => String(i.invoiceNumber).replace('#', '').trim() === invNo);
-        if (matched) targetInvId = matched.id;
+      const allTxsToDelete = Array.from(txGroupMap.values());
+      const allIdsToDelete = Array.from(txGroupMap.keys());
+
+      // 2. Adjust Fund Balance(s) based on net effect of deleting the set
+      // When deleting both an original receipt and its reversal payment in the same fund,
+      // the net effect is (+amt - amt) = 0, perfectly preserving the physical fund balance!
+      const fundAdjustments = new Map<string, number>();
+
+      for (const item of allTxsToDelete) {
+        if (!item.fundId) continue;
+        const fundAmt = Math.abs(Number(
+          item.receiptAmount !== undefined && item.receiptAmount !== null && !isNaN(Number(item.receiptAmount))
+            ? item.receiptAmount
+            : (item.amount || 0)
+        ));
+        if (fundAmt <= 0) continue;
+
+        const isReceipt = item.type === 'receipt' || item.type === 'invoice_payment' || item.type === 'deposit';
+        // Deleting receipt decreases fund balance (-fundAmt); deleting payment increases fund balance (+fundAmt)
+        const delta = isReceipt ? -fundAmt : fundAmt;
+
+        const currentAdj = fundAdjustments.get(item.fundId) || 0;
+        fundAdjustments.set(item.fundId, currentAdj + delta);
       }
 
-      if (targetInvId) {
-        const txLiabilityVal = Math.abs(Number(tx.liabilityAmount !== undefined && tx.liabilityAmount !== null ? tx.liabilityAmount : tx.amount || 0));
-        
-        if (tx.type === 'receipt' || tx.type === 'invoice_payment') {
-          const reduceVal = -txLiabilityVal;
+      for (const [fId, adj] of fundAdjustments.entries()) {
+        if (Math.abs(adj) > 0.0001) {
           try {
-            await ProviderFactory.getProvider().updateDoc('invoices', targetInvId, {
-              amountPaid: { type: 'increment', value: reduceVal }
+            await ProviderFactory.getProvider().updateDoc('fin_funds', fId, {
+              balance: { type: 'increment', value: adj }
             });
-          } catch (e) {}
-
-          try {
-            await localDb.run("UPDATE invoices SET amountPaid = MAX(0, COALESCE(amountPaid, 0) - ?) WHERE id = ?", [txLiabilityVal, targetInvId]);
-          } catch (e) {}
-
-          setInvoices(prevInvs => prevInvs.map(i => {
-            if (i.id === targetInvId) {
-              return { ...i, amountPaid: Math.max(0, Number(i.amountPaid || 0) - txLiabilityVal) };
-            }
-            return i;
-          }));
-        } else if (tx.type === 'payment') {
-          try {
-            await ProviderFactory.getProvider().updateDoc('invoices', targetInvId, {
-              amountPaid: { type: 'increment', value: txLiabilityVal }
-            });
-          } catch (e) {}
-
-          try {
-            await localDb.run("UPDATE invoices SET amountPaid = COALESCE(amountPaid, 0) + ? WHERE id = ?", [txLiabilityVal, targetInvId]);
-          } catch (e) {}
-
-          setInvoices(prevInvs => prevInvs.map(i => {
-            if (i.id === targetInvId) {
-              return { ...i, amountPaid: Number(i.amountPaid || 0) + txLiabilityVal };
-            }
-            return i;
-          }));
+            await localDb.run("UPDATE fin_funds SET balance = balance + ? WHERE id = ?", [adj, fId]);
+          } catch (e) {
+            console.warn(`Fund ${fId} balance adjustment error:`, e);
+          }
         }
       }
 
-      // 5. Adjust fund balance if fundId is set
-      if (tx.fundId) {
-        const balanceAdj = (tx.type === 'receipt' || tx.type === 'invoice_payment')
-          ? -Math.abs(Number(tx.amount || 0))
-          : Math.abs(Number(tx.amount || 0));
+      // 3. Collect targeted invoices and recalculate amountPaid accurately from remaining valid receipts
+      const targetInvoiceIds = new Set<string>();
+      const targetInvoiceNumbers = new Set<string>();
+
+      allTxsToDelete.forEach(item => {
+        if (item.invoiceId) targetInvoiceIds.add(item.invoiceId);
+        if (item.invoiceNumber) {
+          const clean = String(item.invoiceNumber).replace('#', '').trim();
+          if (clean) targetInvoiceNumbers.add(clean);
+        }
+      });
+
+      invoices.forEach(inv => {
+        const invClean = String(inv.invoiceNumber || '').replace('#', '').trim();
+        if (targetInvoiceNumbers.has(invClean) && inv.id) {
+          targetInvoiceIds.add(inv.id);
+        }
+      });
+
+      for (const invId of targetInvoiceIds) {
+        const matchedInv = invoices.find(i => i.id === invId);
+        const cleanInvNo = matchedInv?.invoiceNumber ? String(matchedInv.invoiceNumber).replace('#', '').trim() : '';
+        let newPaid = 0;
+
         try {
-          await ProviderFactory.getProvider().updateDoc('fin_funds', tx.fundId, {
-            balance: { type: 'increment', value: balanceAdj }
+          const placeholders = allIdsToDelete.map(() => '?').join(',');
+          const otherTxsRes = await localDb.query(
+            `SELECT * FROM vault_transactions 
+             WHERE (invoiceId = ? OR invoiceNumber = ? OR invoiceNumber = ?) 
+               AND id NOT IN (${placeholders}) 
+               AND isDeleted != 1 AND deleted != 1
+               AND isReversed != 1 AND isReversal != 1
+               AND (type = 'receipt' OR type = 'invoice_payment' OR type = 'deposit')`,
+            [invId, cleanInvNo, `#${cleanInvNo}`, ...allIdsToDelete]
+          );
+          const remainingTxs = otherTxsRes.values || [];
+          newPaid = remainingTxs.reduce((sum: number, r: any) => {
+            const liability = (r.liabilityAmount !== undefined && r.liabilityAmount !== null && !isNaN(Number(r.liabilityAmount)))
+              ? Math.abs(Number(r.liabilityAmount))
+              : Math.abs(Number(r.amount || 0));
+            return sum + liability;
+          }, 0);
+        } catch (e) {
+          const remainingMem = transactions.filter(t => {
+            if (allIdsToDelete.includes(t.id)) return false;
+            const match = (t.invoiceId && t.invoiceId === invId) ||
+                          (cleanInvNo && String(t.invoiceNumber || '').replace('#', '').trim() === cleanInvNo);
+            if (!match) return false;
+            if (t.isReversed === 1 || t.isReversal === 1 || t.reversalOf || t.status === 'reversed' || t.status === 'reversal') return false;
+            return t.type === 'receipt' || t.type === 'invoice_payment' || t.type === 'deposit';
           });
-          await localDb.run("UPDATE fin_funds SET balance = balance + ? WHERE id = ?", [balanceAdj, tx.fundId]);
+          newPaid = remainingMem.reduce((sum: number, r: any) => {
+            const liability = (r.liabilityAmount !== undefined && r.liabilityAmount !== null && !isNaN(Number(r.liabilityAmount)))
+              ? Math.abs(Number(r.liabilityAmount))
+              : Math.abs(Number(r.amount || 0));
+            return sum + liability;
+          }, 0);
+        }
+
+        try {
+          await ProviderFactory.getProvider().updateDoc('invoices', invId, { amountPaid: newPaid });
+        } catch (e) {}
+
+        try {
+          await localDb.run("UPDATE invoices SET amountPaid = ? WHERE id = ?", [newPaid, invId]);
+        } catch (e) {}
+
+        try {
+          const invDocRef = doc(db, 'invoices', invId);
+          await updateDoc(invDocRef, {
+            amountPaid: newPaid,
+            updatedAt: serverTimestamp()
+          });
+        } catch (e) {}
+
+        setInvoices(prevInvs => prevInvs.map(i => {
+          if (i.id === invId) {
+            return { ...i, amountPaid: newPaid };
+          }
+          return i;
+        }));
+      }
+
+      // 4. Delete all linked records from Provider, Firestore, SQLite, and write tombstones
+      const nowIso = new Date().toISOString();
+      for (const id of allIdsToDelete) {
+        // Provider
+        try {
+          await ProviderFactory.getProvider().deleteDoc('vault_transactions', id);
+        } catch (e) {
+          console.warn("Provider deleteDoc error:", e);
+        }
+
+        // Firestore
+        try {
+          const firestoreDocRef = doc(db, 'vault_transactions', id);
+          const snap = await getDoc(firestoreDocRef);
+          if (snap.exists()) {
+            await deleteDoc(firestoreDocRef);
+          }
+        } catch (e) {
+          console.warn("Direct Firestore delete error:", e);
+        }
+
+        // SQLite
+        try {
+          await localDb.run("DELETE FROM vault_transactions WHERE id = ?", [id]);
+        } catch (e) {
+          console.warn("SQLite delete error:", e);
+        }
+
+        // Tombstone in deleted_records to prevent resurrection
+        try {
+          await localDb.run(
+            "INSERT OR REPLACE INTO deleted_records (id, collectionName, deletedAt) VALUES (?, 'vault_transactions', ?)",
+            [id, nowIso]
+          );
         } catch (e) {}
       }
 
-      // 6. Update local state
-      setTransactions(prev => prev.filter(t => t.id !== tx.id));
-      setSuccessMsg('تم حذف السند وتحديث المبالغ والحسابات المرتبطة بنجاح');
+      // 5. Update local state
+      setTransactions(prev => prev.filter(t => !allIdsToDelete.includes(t.id)));
+
+      const wasPair = allIdsToDelete.length > 1;
+      setSuccessMsg(
+        wasPair
+          ? 'تم حذف القيد ومعكوسه المرتبط به معاً وتصفية أرصدة الصناديق وحسابات العميل بدقة تامة'
+          : 'تم حذف السند وتحديث المبالغ والحسابات المرتبطة بنجاح'
+      );
       setTimeout(() => setSuccessMsg(null), 3000);
 
       setTxToDelete(null);
@@ -4883,70 +5126,93 @@ export default function Vault({
       )}
 
       {/* Delete Transaction Confirmation Modal */}
-      {txToDelete && (
-        <div className="fixed inset-0 z-[160] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" dir="rtl">
-          <div className="bg-[#121212] border border-white/10 rounded-2xl w-full max-w-md p-6 space-y-6 shadow-2xl">
-            <div className="flex items-center gap-3 border-b border-white/5 pb-4">
-              <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-xl">
-                <Trash2 size={22} />
-              </div>
-              <div className="text-right">
-                <h3 className="text-sm font-black text-white font-cairo">تأكيد حذف السند نهائياً</h3>
-                <p className="text-[10px] text-gray-400 font-cairo mt-0.5">سيتم حذف هذا السند وتعديل الفواتير والحسابات المربوطة فوراً</p>
-              </div>
-            </div>
+      {txToDelete && (() => {
+        const isLinkedToReversal = Boolean(
+          txToDelete.isReversal === 1 || 
+          txToDelete.isReversal === true ||
+          txToDelete.isReversed === 1 || 
+          txToDelete.isReversed === true ||
+          txToDelete.reversalOf || 
+          txToDelete.status === 'reversal' ||
+          txToDelete.status === 'reversed' ||
+          transactions.some(t => t.reversalOf === txToDelete.id || (txToDelete.reversalOf && t.id === txToDelete.reversalOf))
+        );
 
-            <div className="space-y-3 bg-white/5 p-4 rounded-xl text-right">
-              <div className="flex justify-between items-center text-xs font-cairo">
-                <span className="text-gray-400">رقم السند:</span>
-                <span className="font-mono font-bold text-amber-500">#{txToDelete.voucherNumber}</span>
+        return (
+          <div className="fixed inset-0 z-[160] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" dir="rtl">
+            <div className="bg-[#121212] border border-white/10 rounded-2xl w-full max-w-md p-6 space-y-5 shadow-2xl">
+              <div className="flex items-center gap-3 border-b border-white/5 pb-4">
+                <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 text-rose-500 rounded-xl">
+                  <Trash2 size={22} />
+                </div>
+                <div className="text-right">
+                  <h3 className="text-sm font-black text-white font-cairo">تأكيد حذف السند نهائياً</h3>
+                  <p className="text-[10px] text-gray-400 font-cairo mt-0.5">سيتم حذف هذا السند وتعديل الفواتير والحسابات المربوطة فوراً</p>
+                </div>
               </div>
-              <div className="flex justify-between items-center text-xs font-cairo">
-                <span className="text-gray-400">اسم العميل / الجهة:</span>
-                <span className="font-bold text-white">{txToDelete.customerName}</span>
-              </div>
-              <div className="flex justify-between items-center text-xs font-cairo">
-                <span className="text-gray-400">نوع العملية:</span>
-                <span className="font-bold text-gray-200">{txToDelete.transactionCategory || (txToDelete.type === 'receipt' ? 'قبض' : 'صرف')}</span>
-              </div>
-              <div className="flex justify-between items-center text-xs font-cairo">
-                <span className="text-gray-400">المبلغ:</span>
-                <span className="font-mono font-black text-rose-500">{Math.abs(txToDelete.amount).toLocaleString('en-US')} {txToDelete.currency}</span>
-              </div>
-              {txToDelete.invoiceNumber && (
-                <div className="flex justify-between items-center text-xs font-cairo">
-                  <span className="text-gray-400">مربوط بالفاتورة رقم:</span>
-                  <span className="font-mono font-bold text-blue-400">#{txToDelete.invoiceNumber}</span>
+
+              {isLinkedToReversal && (
+                <div className="bg-amber-500/10 border border-amber-500/20 p-3 rounded-xl flex items-start gap-2.5 text-right">
+                  <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+                  <div className="text-[11px] text-amber-300 font-cairo leading-relaxed">
+                    <strong className="block text-amber-200 mb-0.5">ربط القيد ومعكوسه:</strong>
+                    هذا السند جزء من عملية قيد عكسي. حرصاً على توازن الصناديق وسلامة كشف الحساب، سيتم حذف القيد ومعكوسه معاً بنظام القيد المزدوج.
+                  </div>
                 </div>
               )}
-              <div className="flex justify-between items-start text-xs font-cairo border-t border-white/5 pt-2 mt-2" dir="rtl">
-                <span className="text-gray-400 shrink-0 ml-4">البيان / الملاحظات:</span>
-                <span className="text-slate-300 font-medium break-all">{txToDelete.notes || 'لا يوجد'}</span>
+
+              <div className="space-y-3 bg-white/5 p-4 rounded-xl text-right">
+                <div className="flex justify-between items-center text-xs font-cairo">
+                  <span className="text-gray-400">رقم السند:</span>
+                  <span className="font-mono font-bold text-amber-500">#{txToDelete.voucherNumber}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs font-cairo">
+                  <span className="text-gray-400">اسم العميل / الجهة:</span>
+                  <span className="font-bold text-white">{txToDelete.customerName}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs font-cairo">
+                  <span className="text-gray-400">نوع العملية:</span>
+                  <span className="font-bold text-gray-200">{txToDelete.transactionCategory || (txToDelete.type === 'receipt' ? 'قبض' : 'صرف')}</span>
+                </div>
+                <div className="flex justify-between items-center text-xs font-cairo">
+                  <span className="text-gray-400">المبلغ:</span>
+                  <span className="font-mono font-black text-rose-500">{Math.abs(txToDelete.amount).toLocaleString('en-US')} {txToDelete.currency}</span>
+                </div>
+                {txToDelete.invoiceNumber && (
+                  <div className="flex justify-between items-center text-xs font-cairo">
+                    <span className="text-gray-400">مربوط بالفاتورة رقم:</span>
+                    <span className="font-mono font-bold text-blue-400">#{txToDelete.invoiceNumber}</span>
+                  </div>
+                )}
+                <div className="flex justify-between items-start text-xs font-cairo border-t border-white/5 pt-2 mt-2" dir="rtl">
+                  <span className="text-gray-400 shrink-0 ml-4">البيان / الملاحظات:</span>
+                  <span className="text-slate-300 font-medium break-all">{txToDelete.notes || 'لا يوجد'}</span>
+                </div>
+              </div>
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  type="button"
+                  disabled={isDeletingTx}
+                  onClick={() => handleDeleteTransaction(txToDelete)}
+                  className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold font-cairo transition-all cursor-pointer shadow-lg shadow-rose-600/20 active:scale-95 flex items-center justify-center gap-2"
+                >
+                  {isDeletingTx ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+                  <span>{isLinkedToReversal ? 'تأكيد حذف القيد ومعكوسه' : 'تأكيد الحذف النهائي'}</span>
+                </button>
+                <button
+                  type="button"
+                  disabled={isDeletingTx}
+                  onClick={() => setTxToDelete(null)}
+                  className="flex-1 py-3 bg-[#1e1e1e] hover:bg-[#252525] border border-white/5 disabled:opacity-50 text-gray-300 rounded-xl text-xs font-bold font-cairo transition-all cursor-pointer text-center"
+                >
+                  إلغاء
+                </button>
               </div>
             </div>
-
-            <div className="flex gap-3 pt-2">
-              <button
-                type="button"
-                disabled={isDeletingTx}
-                onClick={() => handleDeleteTransaction(txToDelete)}
-                className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold font-cairo transition-all cursor-pointer shadow-lg shadow-rose-600/20 active:scale-95 flex items-center justify-center gap-2"
-              >
-                {isDeletingTx ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                <span>تأكيد الحذف النهائي</span>
-              </button>
-              <button
-                type="button"
-                disabled={isDeletingTx}
-                onClick={() => setTxToDelete(null)}
-                className="flex-1 py-3 bg-[#1e1e1e] hover:bg-[#252525] border border-white/5 disabled:opacity-50 text-gray-300 rounded-xl text-xs font-bold font-cairo transition-all cursor-pointer text-center"
-              >
-                إلغاء
-              </button>
-            </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
       {/* Delete Discount Confirmation Modal */}
       {discountToDelete && (() => {
