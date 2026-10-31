@@ -105,9 +105,9 @@ function parseEngineerReport(reportStr: string) {
 function normalizeCurrency(curr: string): string {
   if (!curr) return 'USD';
   const c = curr.trim().toUpperCase();
-  if (c === 'USD' || c === 'دولار' || c === '$') return 'USD';
-  if (c === 'SAR' || c === 'ريال سعودي' || c === 'سعودي' || c === 'ر.س') return 'SAR';
-  if (c === 'YER' || c === 'ريال يمني' || c === 'يمني' || c === 'ر.ي') return 'YER';
+  if (c === 'USD' || c === 'دولار' || c === 'دولار أمريكي' || c === '$') return 'USD';
+  if (c === 'SAR' || c === 'ريال سعودي' || c === 'سعودي' || c === 'ر.س' || c === 'ر.س.') return 'SAR';
+  if (c === 'YER' || c === 'ريال يمني' || c === 'يمني' || c === 'ر.ي' || c === 'ر.ي.') return 'YER';
   return c;
 }
 
@@ -904,7 +904,11 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         date: new Date().toLocaleDateString('ar-EG'),
         timestamp: timestampIso,
         userName: user?.name || user?.username || 'مدير النظام',
-        fundName: otherPayment?.isActive ? otherPayment.fundName : (funds.find(f => f.type === 'cash')?.name || 'الصندوق الرئيسي'),
+        fundName: otherPayment?.isActive 
+          ? otherPayment.fundName 
+          : (funds.find(f => f.type === 'cash' && normalizeCurrency(f.currency) === normalizeCurrency(selectedInvoice.currency || 'USD'))?.name 
+             || funds.find(f => f.type === 'cash')?.name 
+             || 'الصندوق الرئيسي'),
         discountAmount: discountAmt
       };
 
@@ -1060,7 +1064,10 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
             balance: { type: 'increment', value: otherPayment.amount } 
           });
         } else {
-          const defaultFund = funds.find(f => f.type === 'cash' && f.currency === (selectedInvoice.currency || 'USD')) || funds.find(f => f.type === 'cash');
+          const defaultFund = funds.find(f => 
+            f.type === 'cash' && 
+            normalizeCurrency(f.currency) === normalizeCurrency(selectedInvoice.currency || 'USD')
+          ) || funds.find(f => f.type === 'cash');
           if (defaultFund) {
             await ProviderFactory.getProvider().setDoc('vault_transactions', txId, {
               id: txId,
@@ -1298,7 +1305,10 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
           }
         } else {
           // 2. Standard Cash Payment - Automatic routing to default cash fund for the invoice's currency
-          const defaultFund = funds.find(f => f.type === 'cash' && f.currency === (selectedInvoice.currency || 'USD')) || funds.find(f => f.type === 'cash');
+          const defaultFund = funds.find(f => 
+            f.type === 'cash' && 
+            normalizeCurrency(f.currency) === normalizeCurrency(selectedInvoice.currency || 'USD')
+          ) || funds.find(f => f.type === 'cash');
           if (defaultFund) {
             try {
               const txId = `vtx-${selectedInvoice.id}-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
@@ -2415,8 +2425,9 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                           } else {
                             setModalPaymentType('cash');
                             const cashFunds = funds.filter(f => f.type === 'cash');
-                            if (cashFunds.length > 0) {
-                              setModalSelectedFundId(cashFunds[0].id);
+                            const matchingFund = cashFunds.find(f => normalizeCurrency(f.currency) === normalizeCurrency(selectedInvoice?.currency || 'USD')) || cashFunds[0];
+                            if (matchingFund) {
+                              setModalSelectedFundId(matchingFund.id);
                             } else if (funds.length > 0) {
                               setModalSelectedFundId(funds[0].id);
                             }
@@ -2801,8 +2812,9 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                     onClick={() => {
                       setModalPaymentType('cash');
                       const cashFunds = funds.filter(f => f.type === 'cash');
-                      if (cashFunds.length > 0) {
-                        setModalSelectedFundId(cashFunds[0].id);
+                      const matchingFund = cashFunds.find(f => normalizeCurrency(f.currency) === normalizeCurrency(selectedInvoice?.currency || 'USD')) || cashFunds[0];
+                      if (matchingFund) {
+                        setModalSelectedFundId(matchingFund.id);
                       }
                       // Clear and reset values to prevent incorrect data transfer
                       setModalAmount(0);
