@@ -299,7 +299,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
                           {isApplicable ? (
                             <button
                               type="button"
-                              disabled={!canManageUsers}
+                              disabled={!canManageUsers || (section === 'invoices' && action === 'add')}
                               onClick={() => togglePermission(section, action, isEditing)}
                               className={`w-5 h-5 mx-auto rounded-md border flex items-center justify-center transition-all ${
                                 !canManageUsers ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'

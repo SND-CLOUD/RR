@@ -28,7 +28,8 @@ import {
   ClipboardCheck,
   FileOutput,
   ArrowDownToLine,
-  ArrowUpFromLine
+  ArrowUpFromLine,
+  FileText
 } from 'lucide-react';
 import { collection, query, where, getDocs, onSnapshot, orderBy } from '../firebase';
 import { db } from '../firebase';
@@ -481,6 +482,18 @@ export default function Dashboard({
               >
                 <span className="font-bold font-cairo text-base">المخزون</span>
                 <Package size={22} />
+              </button>
+
+              {/* Option 4: الفواتير */}
+              <button 
+                onClick={() => {
+                  setShowInventoryReportsModal(false);
+                  onNavigate('invoices');
+                }}
+                className="w-full flex items-center justify-between bg-emerald-600 hover:bg-emerald-700 text-white p-4 rounded-xl transition-all shadow-lg active:scale-95"
+              >
+                <span className="font-bold font-cairo text-base">الفواتير</span>
+                <FileText size={22} />
               </button>
             </div>
           </div>

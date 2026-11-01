@@ -35,7 +35,8 @@ import {
   Search,
   AlertCircle,
   ArrowDownToLine,
-  ArrowUpFromLine
+  ArrowUpFromLine,
+  FileText
 } from 'lucide-react';
 import { collection, query, where, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, onSnapshot, writeBatch, deleteDoc, serverTimestamp } from './firebase';
 import { db } from './firebase';
@@ -61,6 +62,7 @@ import Reports from './components/Reports';
 import Customers from './components/Customers';
 import Settings from './components/Settings';
 import SearchInvoice from './components/SearchInvoice';
+import Invoices from './components/Invoices';
 import DeviceManagement from './components/DeviceManagement';
 import OtherServiceInvoice from './components/OtherServiceInvoice';
 import Login from './components/Login';
@@ -86,7 +88,7 @@ export default function App() {
   const [shopConfig, setShopConfig] = useState<ShopConfig | null>(null);
   const [loading, setLoading] = useState(true);
   const [showSetup, setShowSetup] = useState(false);
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'entry-exit' | 'device-movement' | 'inspection' | 'maintenance' | 'inventory' | 'reports' | 'customers' | 'settings' | 'search' | 'vault' | 'device-management' | 'approval' | 'other-services' | 'advanced-database-maintenance' | 'device-intake' | 'device-exit'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'entry-exit' | 'device-movement' | 'inspection' | 'maintenance' | 'inventory' | 'reports' | 'customers' | 'settings' | 'search' | 'vault' | 'device-management' | 'approval' | 'other-services' | 'advanced-database-maintenance' | 'device-intake' | 'device-exit' | 'invoices'>('dashboard');
   const [dashboardResetTrigger, setDashboardResetTrigger] = useState(0);
   const [inspectionInitialInvoice, setInspectionInitialInvoice] = useState<any | null>(null);
 
@@ -1291,6 +1293,8 @@ export default function App() {
         return <SearchInvoice onBack={goToDashboard} user={user} />;
       case 'device-management':
         return <DeviceManagement user={user} onBack={goToDashboard} shopConfig={shopConfig} />;
+      case 'invoices':
+        return <Invoices user={user} onBack={goToDashboard} shopConfig={shopConfig} />;
       case 'other-services':
         const storedTab = localStorage.getItem('otherServicesTab');
         let type: 'hub' | 'software' | 'maintenance' | 'parts' | 'purchase' | 'catalog' | 'stock' = 'hub';
@@ -1328,6 +1332,7 @@ export default function App() {
             <NavItem active={activeTab === 'entry-exit'} onClick={() => { setVaultInitialProps(null); setActiveTab('entry-exit'); }} icon={<FilePlus size={22} />} label={t('common.entryExit')} />
             <NavItem active={activeTab === 'vault'} onClick={() => { setVaultInitialProps(null); setActiveTab('vault'); }} icon={<CircleDollarSign size={22} />} label={t('common.vault')} />
             <NavItem active={activeTab === 'customers'} onClick={() => { setVaultInitialProps(null); setActiveTab('customers'); }} icon={<Users size={22} />} label={t('common.customers')} />
+
             <NavItem active={activeTab === 'device-movement'} onClick={() => { setVaultInitialProps(null); setActiveTab('device-movement'); }} icon={<SettingsIcon size={22} />} label={t('common.deviceMovement')} />
             <NavItem active={activeTab === 'inspection'} onClick={() => { setVaultInitialProps(null); setActiveTab('inspection'); }} icon={<ClipboardCheck size={22} />} label="فحص" />
             <NavItem active={activeTab === 'maintenance'} onClick={() => { setVaultInitialProps(null); setActiveTab('maintenance'); }} icon={<Wrench size={22} />} label="صيانة" />
@@ -1399,7 +1404,8 @@ export default function App() {
               )}
 
               <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest font-cairo">
-                {activeTab === 'other-services' ? 'الخدمات الإضافية' :
+                {activeTab === 'invoices' ? 'صفحة الفواتير' :
+                 activeTab === 'other-services' ? 'الخدمات الإضافية' :
                  activeTab === 'device-intake' ? (i18n.language === 'ar' ? 'صفحة الأجهزة الداخلة' : 'Device Intake') :
                  activeTab === 'device-exit' ? (i18n.language === 'ar' ? 'صفحة خروج أجهزة' : 'Device Exit') :
                  activeTab === 'device-management' ? 'إدارة الأجهزة' : 
@@ -1423,6 +1429,8 @@ export default function App() {
             </div>
             
             <div className="flex items-center gap-2 md:gap-4">
+
+
               <div className="relative inline-flex items-center">
                 <button
                   onClick={handleSyncClick}
@@ -1526,8 +1534,8 @@ export default function App() {
           {/* Active Alerts Banner Area Removed */}
 
           {/* Tab Content */}
-          <div className={`flex-1 ${activeTab === 'dashboard' ? 'overflow-hidden' : 'overflow-y-auto overscroll-contain'} ${['search', 'customers', 'inspection', 'maintenance', 'inventory', 'vault', 'device-movement', 'approval', 'entry-exit', 'device-intake', 'device-exit'].includes(activeTab) ? 'p-0 pb-28 md:pb-8' : 'p-4 md:p-8 pb-28 md:pb-8'}`}>
-            <div className={`${['search', 'customers', 'inspection', 'maintenance', 'inventory', 'vault', 'device-movement', 'approval', 'entry-exit', 'device-intake', 'device-exit'].includes(activeTab) ? 'w-full' : 'max-w-7xl mx-auto'} min-h-full`}>
+          <div className={`flex-1 ${activeTab === 'dashboard' ? 'overflow-hidden' : 'overflow-y-auto overscroll-contain'} ${['search', 'customers', 'invoices', 'inspection', 'maintenance', 'inventory', 'vault', 'device-movement', 'approval', 'entry-exit', 'device-intake', 'device-exit'].includes(activeTab) ? 'p-0 pb-28 md:pb-8' : 'p-4 md:p-8 pb-28 md:pb-8'}`}>
+            <div className={`${['search', 'customers', 'invoices', 'inspection', 'maintenance', 'inventory', 'vault', 'device-movement', 'approval', 'entry-exit', 'device-intake', 'device-exit'].includes(activeTab) ? 'w-full' : 'max-w-7xl mx-auto'} min-h-full`}>
               <AnimatePresence mode="wait">
                 <motion.div
                   key={activeTab}
