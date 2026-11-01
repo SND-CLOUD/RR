@@ -36,7 +36,8 @@ import {
   AlertCircle,
   ArrowDownToLine,
   ArrowUpFromLine,
-  FileText
+  FileText,
+  Layers
 } from 'lucide-react';
 import { collection, query, where, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, onSnapshot, writeBatch, deleteDoc, serverTimestamp } from './firebase';
 import { db } from './firebase';
@@ -1327,15 +1328,19 @@ export default function App() {
             <span className="font-black text-xl tracking-tighter text-white hidden lg:block truncate">{shopConfig?.shopName || 'SND SYSTEM'}</span>
           </div>
 
-          <nav className="flex-1 px-4 py-8 space-y-2 overflow-hidden">
-            <NavItem active={activeTab === 'dashboard'} onClick={goToDashboard} icon={<LayoutDashboard size={22} />} label={t('common.dashboard')} />
-            <NavItem active={activeTab === 'entry-exit'} onClick={() => { setVaultInitialProps(null); setActiveTab('entry-exit'); }} icon={<FilePlus size={22} />} label={t('common.entryExit')} />
-            <NavItem active={activeTab === 'vault'} onClick={() => { setVaultInitialProps(null); setActiveTab('vault'); }} icon={<CircleDollarSign size={22} />} label={t('common.vault')} />
-            <NavItem active={activeTab === 'customers'} onClick={() => { setVaultInitialProps(null); setActiveTab('customers'); }} icon={<Users size={22} />} label={t('common.customers')} />
-
-            <NavItem active={activeTab === 'device-movement'} onClick={() => { setVaultInitialProps(null); setActiveTab('device-movement'); }} icon={<SettingsIcon size={22} />} label={t('common.deviceMovement')} />
+          <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
+            <NavItem active={activeTab === 'dashboard'} onClick={goToDashboard} icon={<LayoutDashboard size={22} />} label="الرئيسية" />
+            <NavItem active={activeTab === 'settings'} onClick={() => { setVaultInitialProps(null); setActiveTab('settings'); }} icon={<SettingsIcon size={22} />} label="اعدادات" />
+            <NavItem active={activeTab === 'device-intake'} onClick={() => { setVaultInitialProps(null); setActiveTab('device-intake'); }} icon={<ArrowDownToLine size={22} />} label="دخول أجهزة" />
             <NavItem active={activeTab === 'inspection'} onClick={() => { setVaultInitialProps(null); setActiveTab('inspection'); }} icon={<ClipboardCheck size={22} />} label="فحص" />
-            <NavItem active={activeTab === 'maintenance'} onClick={() => { setVaultInitialProps(null); setActiveTab('maintenance'); }} icon={<Wrench size={22} />} label="صيانة" />
+            <NavItem active={activeTab === 'approval'} onClick={() => { setVaultInitialProps(null); setActiveTab('approval'); }} icon={<Clock size={22} />} label="الموافقة" />
+            <NavItem active={activeTab === 'maintenance'} onClick={() => { setVaultInitialProps(null); setActiveTab('maintenance'); }} icon={<Wrench size={22} />} label="صيانه" />
+            <NavItem active={activeTab === 'device-exit'} onClick={() => { setVaultInitialProps(null); setActiveTab('device-exit'); }} icon={<ArrowUpFromLine size={22} />} label="خروج" />
+            <NavItem active={activeTab === 'vault'} onClick={() => { setVaultInitialProps(null); setActiveTab('vault'); }} icon={<CircleDollarSign size={22} />} label="حسابات" />
+            <NavItem active={activeTab === 'customers'} onClick={() => { setVaultInitialProps(null); setActiveTab('customers'); }} icon={<Users size={22} />} label="عملاء" />
+            <NavItem active={activeTab === 'invoices'} onClick={() => { setVaultInitialProps(null); setActiveTab('invoices'); }} icon={<FileText size={22} />} label="فواتير" />
+            <NavItem active={activeTab === 'other-services'} onClick={() => { setVaultInitialProps(null); setActiveTab('other-services'); }} icon={<Layers size={22} />} label="خدمات اخرى" />
+            <NavItem active={activeTab === 'inventory'} onClick={() => { setVaultInitialProps(null); setActiveTab('inventory'); }} icon={<Package size={22} />} label="تقارير مخزون" />
           </nav>
 
           <div className="p-4 border-t border-white/5 space-y-2">

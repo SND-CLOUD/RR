@@ -104,10 +104,13 @@ export default function Invoices({
   } | null>(null);
 
   const [deleteConfirmData, setDeleteConfirmData] = useState<{
-    invoiceId: string;
+    invoice: Invoice;
     invoiceNumber: string;
     customerName: string;
+    itemCount?: number;
   } | null>(null);
+
+  const [activeAutocomplete, setActiveAutocomplete] = useState<{ type: 'deviceType' | 'deviceName' } | null>(null);
 
   const showToast = (msg: string) => {
     setToastMessage(msg);
@@ -709,15 +712,16 @@ export default function Invoices({
     }
   };
 
-  // Delete invoice
   const executeDeleteInvoice = async () => {
     if (!deleteConfirmData || !canDeleteInvoices) return;
     setSaveLoading(true);
     try {
-      await deleteInvoiceWithCascade(deleteConfirmData.invoiceId);
+      // Pass the full invoice object as required by the service
+      await deleteInvoiceWithCascade(deleteConfirmData.invoice);
       showToast(`تم حذف الفاتورة #${deleteConfirmData.invoiceNumber} بالكامل مع بنودها وسنداتها`);
       setDeleteConfirmData(null);
       setSubview('list');
+      setSelectedInvoice(null);
     } catch (err: any) {
       showToast(`فشل حذف الفاتورة: ${err?.message || err}`);
     } finally {
@@ -1103,57 +1107,93 @@ export default function Invoices({
               <div className="space-y-3 pt-2 border-t border-white/5">
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-400">نوع الجهاز (الصنف / الفئة):</label>
-                  <div className="space-y-1.5">
-                    <div className="relative">
-                      <select
-                        onChange={(e) => {
-                          if (e.target.value) setDetailedDeviceType(e.target.value);
-                        }}
-                        className="w-full bg-black/40 border border-white/10 rounded-xl pr-4 pl-10 py-2.5 text-xs font-bold text-gray-300 focus:border-emerald-500 outline-none transition-all appearance-none cursor-pointer"
-                        value=""
-                      >
-                        <option value="" disabled>📋 اختيار من الأنواع المسجلة</option>
-                        {registeredCategoryNames.map((name, i) => (
-                          <option key={`cat-sel-${i}`} value={name} className="bg-[#121212]">{name}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="absolute left-3 top-2.5 text-gray-500" size={16} />
-                    </div>
+                  <div className="relative">
                     <input
                       type="text"
-                      placeholder="أو اكتب النوع يدوياً..."
+                      placeholder="ابحث عن نوع أو اكتب جديداً..."
                       value={detailedDeviceType}
-                      onChange={(e) => setDetailedDeviceType(e.target.value)}
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-xs font-bold text-white focus:border-emerald-500 outline-none"
+                      onChange={(e) => {
+                        setDetailedDeviceType(e.target.value);
+                        setActiveAutocomplete({ type: 'deviceType' });
+                      }}
+                      onFocus={() => setActiveAutocomplete({ type: 'deviceType' })}
+                      onBlur={() => setTimeout(() => setActiveAutocomplete(null), 200)}
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-xs font-bold text-white focus:border-emerald-500 outline-none transition-all"
                     />
+                    <div className="absolute left-3 top-2.5 text-gray-500 pointer-events-none">
+                      <SearchIcon size={16} />
+                    </div>
+                    
+                    {activeAutocomplete?.type === 'deviceType' && (
+                      <div className="absolute top-full left-0 w-full mt-1 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl z-50 max-h-40 overflow-y-auto py-1">
+                        {registeredCategoryNames
+                          .filter(name => name.toLowerCase().includes(detailedDeviceType.toLowerCase()))
+                          .map((name, i) => (
+                            <button
+                              key={`cat-opt-${i}`}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setDetailedDeviceType(name);
+                                setActiveAutocomplete(null);
+                              }}
+                              className="w-full text-right px-4 py-2 text-xs text-gray-300 hover:bg-white/5 hover:text-white transition-colors"
+                            >
+                              {name}
+                            </button>
+                          ))}
+                        {detailedDeviceType && !registeredCategoryNames.some(n => n.toLowerCase() === detailedDeviceType.toLowerCase()) && (
+                          <div className="px-4 py-2 text-[10px] text-emerald-500 font-bold bg-emerald-500/5">
+                            سيتم إضافة النوع "{detailedDeviceType}" كجديد
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
                 <div className="space-y-2">
                   <label className="text-xs font-bold text-gray-400">موديل / اسم الجهاز:</label>
-                  <div className="space-y-1.5">
-                    <div className="relative">
-                      <select
-                        onChange={(e) => {
-                          if (e.target.value) setDetailedDeviceName(e.target.value);
-                        }}
-                        className="w-full bg-black/40 border border-white/10 rounded-xl pr-4 pl-10 py-2.5 text-xs font-bold text-gray-300 focus:border-emerald-500 outline-none transition-all appearance-none cursor-pointer"
-                        value=""
-                      >
-                        <option value="" disabled>📋 اختيار من الموديلات</option>
-                        {filteredModelNames.map((name, i) => (
-                          <option key={`mod-sel-${i}`} value={name} className="bg-[#121212]">{name}</option>
-                        ))}
-                      </select>
-                      <ChevronDown className="absolute left-3 top-2.5 text-gray-500" size={16} />
-                    </div>
+                  <div className="relative">
                     <input
                       type="text"
-                      placeholder="أو اكتب الموديل يدوياً..."
+                      placeholder="ابحث عن موديل أو اكتب جديداً..."
                       value={detailedDeviceName}
-                      onChange={(e) => setDetailedDeviceName(e.target.value)}
-                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-xs font-bold text-white focus:border-emerald-500 outline-none"
+                      onChange={(e) => {
+                        setDetailedDeviceName(e.target.value);
+                        setActiveAutocomplete({ type: 'deviceName' });
+                      }}
+                      onFocus={() => setActiveAutocomplete({ type: 'deviceName' })}
+                      onBlur={() => setTimeout(() => setActiveAutocomplete(null), 200)}
+                      className="w-full bg-black/40 border border-white/10 rounded-xl px-4 py-2.5 text-xs font-bold text-white focus:border-emerald-500 outline-none transition-all"
                     />
+                    <div className="absolute left-3 top-2.5 text-gray-500 pointer-events-none">
+                      <SearchIcon size={16} />
+                    </div>
+
+                    {activeAutocomplete?.type === 'deviceName' && (
+                      <div className="absolute top-full left-0 w-full mt-1 bg-[#1a1a1a] border border-white/10 rounded-xl shadow-2xl z-50 max-h-40 overflow-y-auto py-1">
+                        {filteredModelNames
+                          .filter(name => name.toLowerCase().includes(detailedDeviceName.toLowerCase()))
+                          .map((name, i) => (
+                            <button
+                              key={`mod-opt-${i}`}
+                              onMouseDown={(e) => {
+                                e.preventDefault();
+                                setDetailedDeviceName(name);
+                                setActiveAutocomplete(null);
+                              }}
+                              className="w-full text-right px-4 py-2 text-xs text-gray-300 hover:bg-white/5 hover:text-white transition-colors"
+                            >
+                              {name}
+                            </button>
+                          ))}
+                        {detailedDeviceName && !filteredModelNames.some(n => n.toLowerCase() === detailedDeviceName.toLowerCase()) && (
+                          <div className="px-4 py-2 text-[10px] text-emerald-500 font-bold bg-emerald-500/5">
+                            سيتم إضافة الموديل "{detailedDeviceName}" كجديد
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
 
@@ -1376,7 +1416,7 @@ export default function Invoices({
                       disabled={saveLoading}
                       onClick={() => {
                         setDeleteConfirmData({
-                          invoiceId: selectedInvoice.id!,
+                          invoice: selectedInvoice,
                           invoiceNumber: selectedInvoice.invoiceNumber,
                           customerName: selectedInvoice.customerName || 'عميل'
                         });

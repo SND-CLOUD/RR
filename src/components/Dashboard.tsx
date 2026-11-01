@@ -308,7 +308,7 @@ export default function Dashboard({
       gradient: 'from-emerald-600 to-teal-700',
       icon: <CheckCircle2 size={36} className="text-emerald-100" />,
       faintIcon: <CheckCircle2 size={140} />,
-      onClick: () => onNavigate('entry-exit', 'exit')
+      onClick: () => onNavigate('device-exit')
     }
   ];
 
