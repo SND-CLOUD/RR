@@ -94,6 +94,17 @@ export default function Invoices({
     status: string;
   }>>([]);
 
+  // Staged item IDs marked for deletion when saving invoice
+  const [deletedItemIds, setDeletedItemIds] = useState<string[]>([]);
+
+  // Format numbers in Western Arabic / English digits (0, 1, 2, 3...)
+  const formatEnglishNumber = (val: number | string | undefined | null): string => {
+    if (val === null || val === undefined || val === '') return '0';
+    const num = typeof val === 'number' ? val : Number(val);
+    if (isNaN(num)) return String(val);
+    return new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(num);
+  };
+
   const [saveLoading, setSaveLoading] = useState(false);
   const [reversalConfirmData, setReversalConfirmData] = useState<{
     invoice: Invoice;
@@ -223,8 +234,8 @@ export default function Invoices({
       )
     : registeredModelNames;
 
-  // Status mapping
-  const ALL_STATUSES = [
+  // Maintenance statuses (10 - 60)
+  const MAINTENANCE_STATUSES = [
     { value: '10', label: '10 - دخول جديد (استلام)' },
     { value: '20', label: '20 - فحص (تشخيص العطل)' },
     { value: '30', label: '30 - انتظار الموافقة والقطع' },
@@ -233,9 +244,65 @@ export default function Invoices({
     { value: '60', label: '60 - تم التسليم (خروج نهائي)' }
   ];
 
+  // Other services statuses
+  const OTHER_SERVICES_STATUSES = [
+    { value: 'purchase_parts', label: 'فاتورة شراء ملحقات وقطع' },
+    { value: 'sale_parts', label: 'فاتورة بيع ملحقات وقطع' },
+    { value: 'sale_maintenance', label: 'فاتورة صيانة خارجية' },
+    { value: 'sale_software', label: 'فاتورة خدمات برمجية' }
+  ];
+
+  // Combined statuses
+  const ALL_STATUSES = [
+    ...MAINTENANCE_STATUSES,
+    ...OTHER_SERVICES_STATUSES
+  ];
+
+  const DEVICE_STATUSES = MAINTENANCE_STATUSES;
+
+  // Smart helper to detect if an invoice belongs to other services
+  const isOtherServiceInvoice = (inv: Invoice | null | undefined): boolean => {
+    if (!inv) return false;
+    const rawStatus = String(inv.status || '').trim();
+    if (['purchase_parts', 'sale_parts', 'sale_maintenance', 'sale_software'].includes(rawStatus)) {
+      return true;
+    }
+    if (isPurchaseInvoice(inv) || checkIsPurchase(inv)) {
+      return true;
+    }
+    if (isSaleInvoice(inv) || checkIsSale(inv)) {
+      return true;
+    }
+    const explicitType = String(inv.invoiceType || (inv as any).templateType || (inv as any).type || '').trim().toLowerCase();
+    if (['purchase', 'sale_software', 'sale_maintenance', 'sale_parts', 'software', 'parts'].includes(explicitType)) {
+      return true;
+    }
+    const invNo = String(inv.invoiceNumber || '').trim().toUpperCase();
+    if (invNo.startsWith('PUR-') || invNo.startsWith('DIS-') || invNo.startsWith('O-')) {
+      return true;
+    }
+    return false;
+  };
+
+  // Smart function to determine available statuses for an invoice
+  const getAvailableStatusesForInvoice = (inv: Invoice | null | undefined): Array<{ value: string; label: string }> => {
+    if (!inv) return ALL_STATUSES;
+    if (isOtherServiceInvoice(inv)) {
+      const currentResolved = resolveInvoiceStatus(inv);
+      const matched = OTHER_SERVICES_STATUSES.filter(s => s.value === currentResolved);
+      if (matched.length > 0) return matched;
+      return OTHER_SERVICES_STATUSES;
+    }
+    return MAINTENANCE_STATUSES;
+  };
+
   const getStatusLabel = (st: string) => {
     const found = ALL_STATUSES.find(s => s.value === st);
     if (found) return found.label;
+    if (st === 'purchase_parts') return 'فاتورة شراء ملحقات وقطع';
+    if (st === 'sale_parts') return 'فاتورة بيع ملحقات وقطع';
+    if (st === 'sale_maintenance') return 'فاتورة صيانة خارجية';
+    if (st === 'sale_software') return 'فاتورة خدمات برمجية';
     if (st === 'new') return '10 - دخول جديد';
     if (st === 'testing') return '20 - فحص';
     if (st === 'awaiting_approval') return '30 - انتظار موافقة';
@@ -245,7 +312,49 @@ export default function Invoices({
     return st || '10 - دخول جديد';
   };
 
-  const computeInvoiceStatusFromItems = (itemsList: Array<{ status: string }>): string => {
+  const getStatusSelectStyle = (val: string) => {
+    switch (val) {
+      case 'purchase_parts':
+        return 'text-sky-300 border-sky-500/40 bg-sky-950/50';
+      case 'sale_parts':
+        return 'text-emerald-300 border-emerald-500/40 bg-emerald-950/50';
+      case 'sale_maintenance':
+        return 'text-amber-300 border-amber-500/40 bg-amber-950/50';
+      case 'sale_software':
+        return 'text-purple-300 border-purple-500/40 bg-purple-950/50';
+      case '60':
+        return 'text-emerald-300 border-emerald-500/30 bg-emerald-950/30';
+      case '50':
+        return 'text-cyan-300 border-cyan-500/30 bg-cyan-950/30';
+      case '40':
+        return 'text-yellow-300 border-yellow-500/30 bg-yellow-950/30';
+      case '30':
+        return 'text-orange-300 border-orange-500/30 bg-orange-950/30';
+      case '20':
+        return 'text-blue-300 border-blue-500/30 bg-blue-950/30';
+      case '10':
+      default:
+        return 'text-white border-white/10 bg-black/60';
+    }
+  };
+
+  const computeInvoiceStatusFromItems = (itemsList: Array<{ status: string }>, currentInvoice?: Invoice | null): string => {
+    // 1. If any item has explicit other-services status, it takes precedence
+    const itemWithOtherStatus = itemsList?.find(it => 
+      ['purchase_parts', 'sale_parts', 'sale_maintenance', 'sale_software'].includes(String(it.status || ''))
+    );
+    if (itemWithOtherStatus) {
+      return String(itemWithOtherStatus.status);
+    }
+
+    // 2. If current invoice has explicit other-services status, keep it directly without calling resolveInvoiceStatus
+    if (currentInvoice) {
+      const curRaw = String(currentInvoice.status || '').trim();
+      if (['purchase_parts', 'sale_parts', 'sale_maintenance', 'sale_software'].includes(curRaw)) {
+        return curRaw;
+      }
+    }
+
     if (!itemsList || itemsList.length === 0) return '10';
     const numStatuses = itemsList.map(it => {
       const s = String(it.status || '10');
@@ -268,13 +377,93 @@ export default function Invoices({
     return '10';
   };
 
-  const getDevicesCount = (invoiceNumber?: string) => {
+  const resolveInvoiceStatus = (inv: Invoice): string => {
+    // 1. Direct match with new other-services status values
+    const rawStatus = String(inv.status || '').trim();
+    if (rawStatus === 'purchase_parts' || rawStatus === 'sale_parts' || rawStatus === 'sale_maintenance' || rawStatus === 'sale_software') {
+      return rawStatus;
+    }
+
+    // 2. Check Purchase invoice from Other Services
+    if (
+      isPurchaseInvoice(inv) ||
+      checkIsPurchase(inv) ||
+      inv.invoiceType === 'purchase' ||
+      (inv as any).templateType === 'purchase' ||
+      (inv as any).isPurchase === 1 ||
+      (inv as any).isPurchase === true ||
+      (inv as any).type === 'purchase' ||
+      String(inv.invoiceNumber || '').trim().startsWith('PUR-') ||
+      String(inv.invoiceNumber || '').trim().startsWith('DIS-')
+    ) {
+      return 'purchase_parts';
+    }
+
+    // 3. Check Other Services Sales invoices by explicit type
+    const invType = String(inv.invoiceType || (inv as any).templateType || (inv as any).type || '').trim().toLowerCase();
+    if (invType === 'sale_software' || invType === 'software') {
+      return 'sale_software';
+    }
+    if (invType === 'sale_maintenance' || invType === 'maintenance_external' || invType === 'external_maintenance') {
+      return 'sale_maintenance';
+    }
+    if (invType === 'sale_parts' || invType === 'parts') {
+      return 'sale_parts';
+    }
+
+    // 4. Check if marked as other sale (e.g. 'O-' or checkIsSale) but sub-category needs deduction
+    const isOtherSale = isSaleInvoice(inv) || checkIsSale(inv) || String(inv.invoiceNumber || '').trim().startsWith('O-');
+    if (isOtherSale) {
+      const cleanNo = String(inv.invoiceNumber || '').replace('#', '').trim();
+      const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo);
+      const combinedText = [
+        inv.notes || '',
+        ...invItems.map(it => `${it.deviceName || ''} ${it.deviceType || ''} ${(it as any).category || ''} ${it.faultType || ''}`)
+      ].join(' ').toLowerCase();
+
+      if (combinedText.includes('برمج') || combinedText.includes('سوفت') || combinedText.includes('software')) {
+        return 'sale_software';
+      }
+      if (combinedText.includes('صيانة') || combinedText.includes('خارجية') || combinedText.includes('external')) {
+        return 'sale_maintenance';
+      }
+      return 'sale_parts';
+    }
+
+    // 5. Standard workshop maintenance invoice
+    const manualStatus = invoiceStatuses[inv.id!];
+    if (manualStatus) return manualStatus;
+
+    if (rawStatus === 'new') return '10';
+    if (rawStatus === 'testing') return '20';
+    if (rawStatus === 'awaiting_approval' || rawStatus === 'awaiting_parts') return '30';
+    if (rawStatus === 'repairing') return '40';
+    if (['ready', 'intact', 'unrepairable', 'refused'].includes(rawStatus)) return '50';
+    if (rawStatus === 'delivered') return '60';
+
+    if (['10', '20', '30', '40', '50', '60'].includes(rawStatus)) {
+      return rawStatus;
+    }
+
+    // Check items if available
+    const cleanNo = String(inv.invoiceNumber || '').replace('#', '').trim();
+    const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo);
+    if (invItems.length > 0) {
+      return computeInvoiceStatusFromItems(invItems);
+    }
+
+    return '10';
+  };
+
+  const getItemsPiecesCount = (invoiceNumber?: string) => {
     if (!invoiceNumber) return 0;
     const cleanNo = String(invoiceNumber).replace('#', '').trim();
-    return items.filter(it => {
-      const itClean = String(it.invoiceNumber || '').replace('#', '').trim();
-      return itClean === cleanNo;
-    }).length;
+    return items
+      .filter(it => {
+        const itClean = String(it.invoiceNumber || '').replace('#', '').trim();
+        return itClean === cleanNo;
+      })
+      .reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
   };
 
   // Filtered Invoices
@@ -508,6 +697,7 @@ export default function Invoices({
   // Detailed select item change
   const handleDetailedSelectChange = (val: string) => {
     setDetailedSelectType(val);
+    const fallbackStatus = selectedInvoice ? resolveInvoiceStatus(selectedInvoice) : '10';
     if (val === 'NEW_DEVICE') {
       setDetailedDeviceType('');
       setDetailedDeviceName('');
@@ -516,7 +706,7 @@ export default function Invoices({
       setDetailedEngineerReport('');
       setDetailedQuantity(1);
       setDetailedPrice(0);
-      setDetailedStatus('10');
+      setDetailedStatus(fallbackStatus);
       return;
     }
 
@@ -529,7 +719,7 @@ export default function Invoices({
       setDetailedEngineerReport((found as any).engineerReport || (found as any).technicalNotes || '');
       setDetailedQuantity(Number(found.quantity) || 1);
       setDetailedPrice(Number(found.unitCost) || Number(found.cost) || 0);
-      setDetailedStatus(found.status || '10');
+      setDetailedStatus(found.status || fallbackStatus);
     }
   };
 
@@ -583,6 +773,9 @@ export default function Invoices({
       const finalItemsToSave: any[] = [];
 
       originalItems.forEach(orig => {
+        // Skip items marked for deletion
+        if (deletedItemIds.includes(orig.id!)) return;
+
         const staged = stagedChanges.find(s => s.id === orig.id);
         if (staged) {
           finalItemsToSave.push({
@@ -622,7 +815,7 @@ export default function Invoices({
       });
 
       const totalCost = calculateInvoiceBillableTotal(selectedInvoice, finalItemsToSave);
-      const computedStatus = computeInvoiceStatusFromItems(finalItemsToSave);
+      const computedStatus = computeInvoiceStatusFromItems(finalItemsToSave, selectedInvoice);
 
       const txs = await checkReversalNeeded(selectedInvoice.invoiceNumber, selectedInvoice.status, computedStatus, selectedInvoice.id);
       if (txs.length > 0) {
@@ -631,12 +824,12 @@ export default function Invoices({
           newStatus: computedStatus,
           transactionsToReverse: txs,
           isDetailed: true,
-          onConfirm: () => executeDetailedSave(finalItemsToSave, computedStatus, totalCost, txs)
+          onConfirm: () => executeDetailedSave(finalItemsToSave, computedStatus, totalCost, txs, deletedItemIds)
         });
         return;
       }
 
-      await executeDetailedSave(finalItemsToSave, computedStatus, totalCost, []);
+      await executeDetailedSave(finalItemsToSave, computedStatus, totalCost, [], deletedItemIds);
     } catch (err: any) {
       handleFirestoreError(err, OperationType.WRITE, 'InvoicesManagement');
     } finally {
@@ -644,7 +837,7 @@ export default function Invoices({
     }
   };
 
-  const executeDetailedSave = async (finalItems: any[], computedStatus: string, totalCost: number, txs: any[]) => {
+  const executeDetailedSave = async (finalItems: any[], computedStatus: string, totalCost: number, txs: any[], itemsToDelete: string[] = []) => {
     try {
       if (txs.length > 0) {
         await processDeleteReceiptTransactions(selectedInvoice!, computedStatus, txs);
@@ -652,6 +845,36 @@ export default function Invoices({
 
       const batch = writeBatch(db);
 
+      // 1. Delete items marked for deletion from Firestore & SQLite
+      for (const delId of itemsToDelete) {
+        if (!delId) continue;
+        const itemRef = doc(db, 'invoice_items', delId);
+        batch.delete(itemRef);
+        await localDb.run("DELETE FROM invoice_items WHERE id = ?", [delId]);
+
+        // Cascade delete related actions
+        try {
+          const mRes = await localDb.query("SELECT id FROM maintenance_actions WHERE itemId = ?", [delId]);
+          for (const m of (mRes?.values || [])) {
+            if (m.id) {
+              try { batch.delete(doc(db, 'maintenance_actions', m.id)); } catch (e) {}
+              try { await localDb.run("DELETE FROM maintenance_actions WHERE id = ?", [m.id]); } catch (e) {}
+            }
+          }
+        } catch (e) {}
+
+        try {
+          const aRes = await localDb.query("SELECT id FROM approval_actions WHERE itemId = ?", [delId]);
+          for (const a of (aRes?.values || [])) {
+            if (a.id) {
+              try { batch.delete(doc(db, 'approval_actions', a.id)); } catch (e) {}
+              try { await localDb.run("DELETE FROM approval_actions WHERE id = ?", [a.id]); } catch (e) {}
+            }
+          }
+        } catch (e) {}
+      }
+
+      // 2. Insert new devices or update existing devices
       for (const item of finalItems) {
         if (item.isNewDevice) {
           const newDocRef = doc(collection(db, 'invoice_items'));
@@ -704,6 +927,7 @@ export default function Invoices({
 
       showToast(`تم حفظ وتحديث الفاتورة #${selectedInvoice!.invoiceNumber} بنجاح`);
       setStagedChanges([]);
+      setDeletedItemIds([]);
       setSubview('list');
     } catch (err: any) {
       handleFirestoreError(err, OperationType.WRITE, 'InvoicesManagement');
@@ -813,7 +1037,7 @@ export default function Invoices({
                   }`}
                 >
                   <span>كافة الأنواع</span>
-                  <span className={`text-[9px] mt-0.5 opacity-80 ${typeFilter === 'all' ? 'text-white' : 'text-gray-500'}`}>{totalInvoicesCount}</span>
+                  <span className={`text-[10px] font-mono mt-0.5 opacity-90 ${typeFilter === 'all' ? 'text-white' : 'text-gray-400'}`}>{formatEnglishNumber(totalInvoicesCount)}</span>
                 </button>
                 <button
                   onClick={() => setTypeFilter('maintenance')}
@@ -824,7 +1048,7 @@ export default function Invoices({
                   }`}
                 >
                   <span>صيانة أجهزة</span>
-                  <span className={`text-[9px] mt-0.5 opacity-80 ${typeFilter === 'maintenance' ? 'text-white' : 'text-gray-500'}`}>{maintenanceInvoicesCount}</span>
+                  <span className={`text-[10px] font-mono mt-0.5 opacity-90 ${typeFilter === 'maintenance' ? 'text-white' : 'text-gray-400'}`}>{formatEnglishNumber(maintenanceInvoicesCount)}</span>
                 </button>
                 <button
                   onClick={() => setTypeFilter('other')}
@@ -835,7 +1059,7 @@ export default function Invoices({
                   }`}
                 >
                   <span>خدمات ومبيعات</span>
-                  <span className={`text-[9px] mt-0.5 opacity-80 ${typeFilter === 'other' ? 'text-white' : 'text-gray-500'}`}>{otherInvoicesCount}</span>
+                  <span className={`text-[10px] font-mono mt-0.5 opacity-90 ${typeFilter === 'other' ? 'text-white' : 'text-gray-400'}`}>{formatEnglishNumber(otherInvoicesCount)}</span>
                 </button>
               </div>
             </div>
@@ -920,7 +1144,7 @@ export default function Invoices({
                   <tr>
                     <th className="p-4 whitespace-nowrap">رقم الفاتورة</th>
                     <th className="p-4 whitespace-nowrap">العميل</th>
-                    <th className="p-4 whitespace-nowrap text-center">الأجهزة</th>
+                    <th className="p-4 whitespace-nowrap text-center">عدد القطع</th>
                     <th className="p-4 whitespace-nowrap text-right">حالة الفاتورة</th>
                     {canEditInvoices && <th className="p-4 whitespace-nowrap text-center">تعديل</th>}
                     {canPrintInvoices && <th className="p-4 whitespace-nowrap text-center">طباعة</th>}
@@ -930,90 +1154,156 @@ export default function Invoices({
                 <tbody className="divide-y divide-white/5">
                   {filteredInvoices.map((inv, idx) => {
                     const isDetailed = detailedModes[inv.id!] !== false;
-                    const currentStatusVal = invoiceStatuses[inv.id!] || inv.status;
+                    const currentStatusVal = resolveInvoiceStatus(inv);
                     const isOther = isPurchaseInvoice(inv) || isSaleInvoice(inv) || checkIsPurchase(inv) || checkIsSale(inv);
 
                     return (
-                      <tr key={inv.id ? `inv-${inv.id}` : `inv-idx-${idx}`} className="hover:bg-white/[0.02] transition-colors whitespace-nowrap">
-                        <td className="p-4 font-mono text-white font-bold whitespace-nowrap">
-                          #{inv.invoiceNumber}
-                        </td>
+                      <React.Fragment key={inv.id ? `inv-frag-${inv.id}` : `inv-frag-idx-${idx}`}>
+                        <tr className="hover:bg-white/[0.02] transition-colors whitespace-nowrap">
+                          <td className="p-4 font-mono text-white font-bold whitespace-nowrap">
+                            #{inv.invoiceNumber}
+                          </td>
 
-                        <td className="p-4 font-bold text-rose-300 whitespace-nowrap">
-                          {String(inv.customerName || 'عميل نقدي').substring(0, 32)}
-                        </td>
-                        <td className="p-4 text-center text-gray-300 font-mono font-bold whitespace-nowrap">
-                          {getDevicesCount(inv.invoiceNumber)}
-                        </td>
-
-                        {/* Invoice Status Dropdown (Frozen) */}
-                        <td className="p-4 whitespace-nowrap">
-                          <select
-                            disabled
-                            value={currentStatusVal}
-                            className="bg-black/60 border border-white/5 rounded-xl px-3 py-1.5 text-xs font-bold text-white font-cairo outline-none opacity-60 cursor-not-allowed"
-                          >
-                            {ALL_STATUSES.map((st, stIdx) => (
-                              <option key={`st-opt-${st.value}-${stIdx}`} value={st.value} className="bg-[#121212] text-white">
-                                {st.label}
-                              </option>
-                            ))}
-                          </select>
-                        </td>
-
-                        {/* Edit Button */}
-                        {canEditInvoices && (
+                          <td className="p-4 font-bold text-rose-300 whitespace-nowrap">
+                            {String(inv.customerName || 'عميل نقدي').substring(0, 32)}
+                          </td>
                           <td className="p-4 text-center whitespace-nowrap">
-                            <button
-                              onClick={async () => {
-                                setSelectedInvoice(inv);
-                                setStagedChanges([]);
-                                const cleanNo = String(inv.invoiceNumber).replace('#', '').trim();
-                                const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo);
-                                if (invItems.length > 0) {
-                                  handleDetailedSelectChange(invItems[0].id!);
-                                } else if (canAddInvoices) {
-                                  handleDetailedSelectChange('NEW_DEVICE');
-                                }
-                                setSubview('detail_action');
-                              }}
-                              className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-xl text-xs font-bold transition-all border border-white/5 cursor-pointer"
+                            <div className="flex items-center justify-center gap-2">
+                              <span className="font-mono font-bold text-gray-200">
+                                {formatEnglishNumber(getItemsPiecesCount(inv.invoiceNumber))}
+                              </span>
+                              <button
+                                type="button"
+                                onClick={() => setDetailedModes(prev => ({ ...prev, [inv.id!]: !prev[inv.id!] }))}
+                                className={`p-1.5 rounded-lg transition-all cursor-pointer ${
+                                  detailedModes[inv.id!]
+                                    ? 'bg-orange-500 text-black font-bold shadow-md'
+                                    : 'bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white'
+                                }`}
+                                title={detailedModes[inv.id!] ? 'إخفاء تفاصيل بنود وقطع الفاتورة' : 'عرض تفاصيل قطع وبنود الفاتورة (معاينة سريعة)'}
+                              >
+                                <Eye size={15} />
+                              </button>
+                            </div>
+                          </td>
+
+                          {/* Invoice Status Display (Permanently frozen in main table for display only to avoid multi-device desync) */}
+                          <td className="p-4 whitespace-nowrap">
+                            <select
+                              disabled={true}
+                              value={currentStatusVal}
+                              className={`border rounded-xl px-3 py-1.5 text-xs font-bold font-cairo outline-none shadow-sm transition-all cursor-default disabled:opacity-100 ${getStatusSelectStyle(currentStatusVal)}`}
+                              title="حالة الفاتورة (للتعديل يرجى فتح صفحة تعديل الفاتورة لمتابعة كل جهاز على انفراد)"
                             >
-                              تعديل
-                            </button>
+                              {getAvailableStatusesForInvoice(inv).map((st, stIdx) => (
+                                <option key={`st-opt-${st.value}-${stIdx}`} value={st.value} className="bg-[#121212] text-white">
+                                  {st.label}
+                                </option>
+                              ))}
+                            </select>
                           </td>
-                        )}
 
-                        {/* Print Button (Placeholder) */}
-                        {canPrintInvoices && (
-                          <td className="p-4 text-center whitespace-nowrap">
-                            <button className="p-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg transition-all cursor-pointer">
-                              <Printer size={16} />
-                            </button>
-                          </td>
-                        )}
+                          {/* Edit Button */}
+                          {canEditInvoices && (
+                            <td className="p-4 text-center whitespace-nowrap">
+                              <button
+                                onClick={async () => {
+                                  setSelectedInvoice(inv);
+                                  setStagedChanges([]);
+                                  setDeletedItemIds([]);
+                                  const cleanNo = String(inv.invoiceNumber).replace('#', '').trim();
+                                  const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo);
+                                  const resolvedSt = resolveInvoiceStatus(inv);
+                                  if (invItems.length > 0) {
+                                    handleDetailedSelectChange(invItems[0].id!);
+                                    setDetailedStatus(invItems[0].status || resolvedSt || '10');
+                                  } else {
+                                    if (canAddInvoices) {
+                                      handleDetailedSelectChange('NEW_DEVICE');
+                                    }
+                                    setDetailedStatus(resolvedSt || '10');
+                                  }
+                                  setSubview('detail_action');
+                                }}
+                                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-white rounded-xl text-xs font-bold transition-all border border-white/5 cursor-pointer"
+                              >
+                                تعديل
+                              </button>
+                            </td>
+                          )}
 
-                        {/* Delete Button */}
-                        {canDeleteInvoices && (
-                          <td className="p-4 text-center whitespace-nowrap">
-                            <button
-                              onClick={() => {
-                                const cleanNo = String(inv.invoiceNumber).replace('#', '').trim();
-                                const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo);
-                                setDeleteConfirmData({
-                                  invoice: inv,
-                                  invoiceNumber: inv.invoiceNumber,
-                                  customerName: inv.customerName || 'عميل نقدي',
-                                  itemCount: invItems.length
-                                });
-                              }}
-                              className="p-2 bg-rose-500/10 hover:bg-rose-600 text-rose-500 hover:text-white rounded-lg transition-all cursor-pointer"
-                            >
-                              <Trash2 size={16} />
-                            </button>
-                          </td>
+                          {/* Print Button (Placeholder) */}
+                          {canPrintInvoices && (
+                            <td className="p-4 text-center whitespace-nowrap">
+                              <button className="p-2 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-lg transition-all cursor-pointer">
+                                <Printer size={16} />
+                              </button>
+                            </td>
+                          )}
+
+                          {/* Delete Button */}
+                          {canDeleteInvoices && (
+                            <td className="p-4 text-center whitespace-nowrap">
+                              <button
+                                onClick={() => {
+                                  const cleanNo = String(inv.invoiceNumber).replace('#', '').trim();
+                                  const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo);
+                                  setDeleteConfirmData({
+                                    invoice: inv,
+                                    invoiceNumber: inv.invoiceNumber,
+                                    customerName: inv.customerName || 'عميل نقدي',
+                                    itemCount: invItems.length
+                                  });
+                                }}
+                                className="p-2 bg-rose-500/10 hover:bg-rose-600 text-rose-500 hover:text-white rounded-lg transition-all cursor-pointer"
+                              >
+                                <Trash2 size={16} />
+                              </button>
+                            </td>
+                          )}
+                        </tr>
+
+                        {/* Expandable Devices Preview Row via Eye button */}
+                        {detailedModes[inv.id!] && (
+                          <tr className="bg-white/[0.015]">
+                            <td colSpan={4 + (canEditInvoices ? 1 : 0) + (canPrintInvoices ? 1 : 0) + (canDeleteInvoices ? 1 : 0)} className="p-4 bg-black/40 border-y border-white/5">
+                              <div className="space-y-3">
+                                <div className="text-xs font-black text-orange-400 flex items-center gap-1.5">
+                                  <Eye size={15} />
+                                  <span>معاينة تفاصيل قطع وبنود الفاتورة #{inv.invoiceNumber}:</span>
+                                </div>
+                                {(() => {
+                                  const cleanNo = String(inv.invoiceNumber || '').replace('#', '').trim();
+                                  const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo || it.invoiceId === inv.id);
+                                  if (invItems.length === 0) {
+                                    return <div className="text-xs text-gray-500 py-2">لا توجد قطع أو بنود مسجلة في هذه الفاتورة.</div>;
+                                  }
+                                  return (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                                      {invItems.map((item, itemIdx) => (
+                                        <div key={item.id ? `sub-it-${item.id}` : `sub-it-${itemIdx}`} className="p-3 bg-[#131313] border border-white/5 rounded-2xl text-xs space-y-2 shadow-inner">
+                                          <div className="flex items-center justify-between">
+                                            <span className="font-bold text-white">{item.deviceType} {item.deviceName ? `- ${item.deviceName}` : ''}</span>
+                                            <span className="font-mono text-emerald-400 font-bold">{formatEnglishNumber(item.cost || item.unitCost || 0)} {inv.currency || 'USD'}</span>
+                                          </div>
+                                          <div className="flex items-center justify-between text-[11px] text-gray-400">
+                                            <span>العطل: {item.faultType || '-'}</span>
+                                            <span className="font-mono">الكمية: {formatEnglishNumber(item.quantity || 1)}</span>
+                                          </div>
+                                          <div className="pt-2 border-t border-white/5 flex items-center justify-between text-[10px]">
+                                            <span className="text-gray-400">حالة الجهاز:</span>
+                                            <span className="text-gray-200 font-bold">{getStatusLabel(item.status || '10')}</span>
+                                          </div>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  );
+                                })()}
+                              </div>
+                            </td>
+                          </tr>
                         )}
-                      </tr>
+                      </React.Fragment>
                     );
                   })}
 
@@ -1056,13 +1346,20 @@ export default function Invoices({
               </div>
             </div>
 
-            <button
-              onClick={() => setSubview('list')}
-              className="px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl transition-all border border-white/5 flex items-center gap-2 text-xs font-bold cursor-pointer"
-            >
-              <ArrowRight size={16} />
-              <span>العودة لجدول الفواتير</span>
-            </button>
+            <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-white/5">
+              <div className="text-xs text-gray-400 flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 inline-block"></span>
+                <span>تعديل ومتابعة حالات وبيانات كل جهاز على حدة في الفاتورة</span>
+              </div>
+
+              <button
+                onClick={() => setSubview('list')}
+                className="px-4 py-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl transition-all border border-white/5 flex items-center gap-2 text-xs font-bold cursor-pointer"
+              >
+                <ArrowRight size={16} />
+                <span>العودة لجدول الفواتير</span>
+              </button>
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
@@ -1093,11 +1390,11 @@ export default function Invoices({
                     .filter(it => {
                       const cleanInv = String(selectedInvoice.invoiceNumber).replace('#', '').trim();
                       const itClean = String(it.invoiceNumber || '').replace('#', '').trim();
-                      return itClean === cleanInv || it.invoiceId === selectedInvoice.id;
+                      return (itClean === cleanInv || it.invoiceId === selectedInvoice.id) && !deletedItemIds.includes(it.id!);
                     })
                     .map((it, itIdx) => (
                       <option key={it.id ? `dev-${it.id}` : `dev-idx-${itIdx}`} value={it.id}>
-                        🛠️ {it.deviceType} {it.deviceName ? `- ${it.deviceName}` : ''} ({it.quantity || 1} حبة)
+                        🛠️ {it.deviceType} {it.deviceName ? `- ${it.deviceName}` : ''} ({formatEnglishNumber(it.quantity || 1)} حبة)
                       </option>
                     ))}
                 </select>
@@ -1244,14 +1541,31 @@ export default function Invoices({
                 </div>
 
                 <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-gray-400 block">الحالة التشغيلية للجهاز:</label>
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-bold text-gray-400 block">الحالة التشغيلية للجهاز / حالة الفاتورة:</label>
+                    {isOtherServiceInvoice(selectedInvoice) && (
+                      <span className="text-[10px] text-amber-400 bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 rounded-md font-bold">
+                        🔒 مجمدة لحماية نوع الفاتورة
+                      </span>
+                    )}
+                  </div>
                   <select
+                    disabled={isOtherServiceInvoice(selectedInvoice)}
                     value={detailedStatus}
                     onChange={(e) => setDetailedStatus(e.target.value)}
-                    className="w-full bg-black/40 border border-white/10 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none focus:border-emerald-500"
+                    className={`w-full border rounded-xl px-3 py-2 text-xs font-bold outline-none transition-all ${
+                      isOtherServiceInvoice(selectedInvoice) ? 'cursor-not-allowed opacity-80' : 'cursor-pointer'
+                    } ${getStatusSelectStyle(detailedStatus)}`}
+                    title={
+                      isOtherServiceInvoice(selectedInvoice)
+                        ? 'الحالة مجمدة لمنع حدوث خلل في النظام والتحويل بين الأنواع'
+                        : 'تحديد حالة الجهاز'
+                    }
                   >
-                    {ALL_STATUSES.map((st, stIdx) => (
-                      <option key={`st-opt2-${st.value}-${stIdx}`} value={st.value} className="bg-[#121212]">{st.label}</option>
+                    {getAvailableStatusesForInvoice(selectedInvoice).map((st, stIdx) => (
+                      <option key={`st-opt2-${st.value}-${stIdx}`} value={st.value} className="bg-[#121212] text-white">
+                        {st.label}
+                      </option>
                     ))}
                   </select>
                 </div>
@@ -1281,14 +1595,32 @@ export default function Invoices({
             {/* Right Review & Save Migration (7 cols) */}
             <div className="lg:col-span-7 bg-[#161616] border border-white/5 rounded-3xl p-6 space-y-5 shadow-xl flex flex-col justify-between">
               <div className="space-y-4">
-                <div>
-                  <h3 className="text-lg font-black text-white flex items-center gap-2">
-                    <CheckCircle className="text-emerald-500" size={20} />
-                    مراجعة الفاتورة قبل الحفظ النهائي
-                  </h3>
-                  <p className="text-xs text-gray-400 mt-1">
-                    الأجهزة الأصلية والمعدلة والمضافة حديثاً في هذه الفاتورة
-                  </p>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-lg font-black text-white flex items-center gap-2">
+                      <CheckCircle className="text-emerald-500" size={20} />
+                      مراجعة الفاتورة قبل الحفظ النهائي
+                    </h3>
+                    <p className="text-xs text-gray-400 mt-1">
+                      الأجهزة الأصلية والمعدلة والمضافة حديثاً في هذه الفاتورة
+                    </p>
+                  </div>
+                  {(() => {
+                    const cleanInvNo = String(selectedInvoice.invoiceNumber || '').replace('#', '');
+                    const origSurviving = items.filter(it => {
+                      const itClean = String(it.invoiceNumber || '').replace('#', '');
+                      return (itClean === cleanInvNo || it.invoiceId === selectedInvoice.id) && !deletedItemIds.includes(it.id!);
+                    });
+                    const newItemsCount = stagedChanges.filter(s => s.isNew).length;
+                    const totalDevs = origSurviving.length + newItemsCount;
+                    return (
+                      <div className="flex items-center gap-2 text-xs">
+                        <span className="bg-black/40 border border-white/10 px-3 py-1.5 rounded-xl font-bold text-gray-300">
+                          الأجهزة المعتمدة: <span className="font-mono text-emerald-400 font-black">{formatEnglishNumber(totalDevs)}</span>
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 <div className="overflow-x-auto rounded-xl border border-white/5 bg-black/20">
@@ -1315,6 +1647,7 @@ export default function Invoices({
                         const displayList: any[] = [];
 
                         originalItems.forEach(orig => {
+                          const isMarkedDeleted = deletedItemIds.includes(orig.id!);
                           const stagedIdx = stagedChanges.findIndex(s => s.id === orig.id);
                           if (stagedIdx !== -1) {
                             const staged = stagedChanges[stagedIdx];
@@ -1322,6 +1655,7 @@ export default function Invoices({
                               id: orig.id,
                               stagedIndex: stagedIdx,
                               isModified: true,
+                              isDeleted: isMarkedDeleted,
                               deviceType: staged.deviceType,
                               deviceName: staged.deviceName,
                               faultType: staged.faultType,
@@ -1334,6 +1668,7 @@ export default function Invoices({
                             displayList.push({
                               id: orig.id,
                               isModified: false,
+                              isDeleted: isMarkedDeleted,
                               deviceType: orig.deviceType,
                               deviceName: orig.deviceName,
                               faultType: orig.faultType || (orig as any).customerProblem || '',
@@ -1350,6 +1685,7 @@ export default function Invoices({
                             displayList.push({
                               stagedIndex: idx,
                               isNew: true,
+                              isDeleted: false,
                               deviceType: st.deviceType,
                               deviceName: st.deviceName,
                               faultType: st.faultType,
@@ -1362,41 +1698,112 @@ export default function Invoices({
                         });
 
                         return displayList.map((item, index) => (
-                          <tr key={index} className="hover:bg-white/[0.02]">
+                          <tr key={index} className={`transition-colors ${item.isDeleted ? 'bg-rose-950/25 opacity-60' : 'hover:bg-white/[0.02]'}`}>
                             <td className="p-3">
-                              <div className="font-bold text-white">{item.deviceType}</div>
+                              <div className={`font-bold text-white ${item.isDeleted ? 'line-through text-rose-300' : ''}`}>{item.deviceType}</div>
                               {item.deviceName && <div className="text-[10px] text-gray-400">{item.deviceName}</div>}
                             </td>
                             <td className="p-3 text-gray-300">{item.faultType || '-'}</td>
-                            <td className="p-3 text-center font-mono font-bold text-white">{item.quantity}</td>
+                            <td className="p-3 text-center font-mono font-bold text-white">
+                              {formatEnglishNumber(item.quantity)}
+                            </td>
                             <td className="p-3 text-right font-mono font-bold text-emerald-400">
-                              {item.cost.toLocaleString()} {selectedInvoice.currency || 'USD'}
+                              {formatEnglishNumber(item.cost)} {selectedInvoice.currency || 'USD'}
                             </td>
                             <td className="p-3">
-                              <span className="text-[10px] bg-white/5 px-2 py-0.5 rounded text-gray-300 font-bold">
+                              {/* Clean unshaded status label for high contrast and readability */}
+                              <span className="text-xs font-bold text-gray-100 tracking-wide">
                                 {getStatusLabel(item.status)}
                               </span>
                             </td>
                             <td className="p-3">
-                              {item.isNew ? (
-                                <span className="text-[10px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded font-bold">جديد مؤقت</span>
+                              {item.isDeleted ? (
+                                <span className="text-[10px] text-rose-400 bg-rose-500/10 border border-rose-500/30 px-1.5 py-0.5 rounded font-bold">
+                                  سيحذف عند الحفظ
+                                </span>
+                              ) : item.isNew ? (
+                                <span className="text-[10px] text-emerald-400 bg-emerald-400/10 px-1.5 py-0.5 rounded font-bold">
+                                  جديد مؤقت
+                                </span>
                               ) : item.isModified ? (
-                                <span className="text-[10px] text-yellow-400 bg-yellow-400/10 px-1.5 py-0.5 rounded font-bold">تعديل مؤقت</span>
+                                <span className="text-[10px] text-yellow-400 bg-yellow-400/10 px-1.5 py-0.5 rounded font-bold">
+                                  تعديل مؤقت
+                                </span>
                               ) : (
-                                <span className="text-[10px] text-gray-400 bg-white/5 px-1.5 py-0.5 rounded font-bold">أصلي محفوظ</span>
+                                <span className="text-[10px] text-gray-400 bg-white/5 px-1.5 py-0.5 rounded font-bold">
+                                  أصلي محفوظ
+                                </span>
                               )}
                             </td>
-                            <td className="p-3 text-center">
-                              {item.stagedIndex !== undefined && (
-                                <button
-                                  type="button"
-                                  onClick={() => setStagedChanges(prev => prev.filter((_, i) => i !== item.stagedIndex))}
-                                  className="p-1 hover:bg-red-500/10 text-red-400 rounded transition-colors cursor-pointer"
-                                  title="إلغاء التعديل"
-                                >
-                                  <Trash2 size={14} />
-                                </button>
-                              )}
+                            <td className="p-3 text-center whitespace-nowrap">
+                              <div className="flex items-center justify-center gap-1.5">
+                                {item.isDeleted ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setDeletedItemIds(prev => prev.filter(id => id !== item.id))}
+                                    className="px-2 py-1 bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                                    title="تراجع عن حذف هذا الجهاز"
+                                  >
+                                    <RotateCcw size={12} />
+                                    <span>تراجع</span>
+                                  </button>
+                                ) : (
+                                  <>
+                                    {/* Revert modified stage */}
+                                    {item.isModified && item.stagedIndex !== undefined && (
+                                      <button
+                                        type="button"
+                                        onClick={() => setStagedChanges(prev => prev.filter((_, i) => i !== item.stagedIndex))}
+                                        className="px-2 py-1 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-300 border border-yellow-500/20 rounded-lg text-[10px] font-bold flex items-center gap-1 transition-colors cursor-pointer"
+                                        title="إلغاء التعديل المؤقت والعودة للحالة الأصلية"
+                                      >
+                                        <RotateCcw size={11} />
+                                        <span>إلغاء التعديل</span>
+                                      </button>
+                                    )}
+
+                                    {/* Edit button to load device into the form */}
+                                    {!item.isNew && item.id && (
+                                      <button
+                                        type="button"
+                                        onClick={() => handleDetailedSelectChange(item.id)}
+                                        className="px-2 py-1 bg-white/5 hover:bg-white/10 text-gray-300 rounded-lg text-[10px] font-bold transition-colors cursor-pointer"
+                                        title="اختيار هذا الجهاز لتعديل بياناته"
+                                      >
+                                        تعديل
+                                      </button>
+                                    )}
+
+                                    {/* Permanent Delete Button: Always visible for deleting devices entered by mistake */}
+                                    {item.isNew ? (
+                                      <button
+                                        type="button"
+                                        onClick={() => setStagedChanges(prev => prev.filter((_, i) => i !== item.stagedIndex))}
+                                        className="p-1.5 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 rounded-lg transition-colors cursor-pointer"
+                                        title="حذف هذا الجهاز الجديد"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    ) : (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          if (item.id) {
+                                            setDeletedItemIds(prev => [...prev, item.id]);
+                                            if (item.stagedIndex !== undefined) {
+                                              setStagedChanges(prev => prev.filter((_, i) => i !== item.stagedIndex));
+                                            }
+                                          }
+                                        }}
+                                        className="p-1.5 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 rounded-lg transition-colors cursor-pointer"
+                                        title="حذف هذا الجهاز من الفاتورة (يطبق عند الحفظ النهائي)"
+                                      >
+                                        <Trash2 size={14} />
+                                      </button>
+                                    )}
+                                  </>
+                                )}
+                              </div>
                             </td>
                           </tr>
                         ));
@@ -1433,6 +1840,7 @@ export default function Invoices({
                       type="button"
                       onClick={() => {
                         setStagedChanges([]);
+                        setDeletedItemIds([]);
                         setSubview('list');
                       }}
                       className="px-4 py-2.5 bg-white/5 hover:bg-white/10 text-gray-400 rounded-xl text-xs font-bold transition-all cursor-pointer"
