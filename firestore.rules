@@ -118,6 +118,9 @@ service cloud.firestore {
     match /parts_catalog/{id} {
       allow read, write: if true;
     }
+    match /electronic_part_groups/{id} {
+      allow read, write: if true;
+    }
     match /shop_parts_inventory/{id} {
       allow read, write: if true;
     }

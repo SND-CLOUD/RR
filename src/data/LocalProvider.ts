@@ -18,7 +18,12 @@ export class LocalProvider implements IDataProvider {
       return { id, exists: () => false, data: () => undefined };
     }
 
-    const res = await localDb.query(`SELECT * FROM ${collectionName} WHERE id = ?`, [id]);
+    const res = await localDb.query(`SELECT * FROM ${collectionName} WHERE id = ?`, [id]).catch(err => {
+      if (String(err?.message || err).toLowerCase().includes('no such table')) {
+        return { values: [] };
+      }
+      throw err;
+    });
     if (res.values && res.values.length > 0) {
       const data = { ...res.values[0] };
       this.wrapDatesInObject(data);
@@ -54,7 +59,12 @@ export class LocalProvider implements IDataProvider {
       sql += ` LIMIT ${lim.value}`;
     }
 
-    const res = await localDb.query(sql, params);
+    const res = await localDb.query(sql, params).catch(err => {
+      if (String(err?.message || err).toLowerCase().includes('no such table')) {
+        return { values: [] };
+      }
+      throw err;
+    });
     const docs = (res.values || []).map(rawDoc => {
       const docData = { ...rawDoc };
       if (docData.updates && typeof docData.updates === 'string') {

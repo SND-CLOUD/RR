@@ -109,6 +109,7 @@ export interface InvoiceItem {
   customerId?: string;
   isWarrantyReturn?: boolean | number;
   previousInvoiceNumber?: string;
+  sparePartsCost?: number; // تكلفة قطع الغيار المستخدمة للجهاز (افتراضياً 0)
 }
 
 export interface Currency {
@@ -471,10 +472,23 @@ export function getItemSubStatus(item: any): string {
   return status || 'new';
 }
 
+export interface ElectronicPartGroup {
+  id: string;
+  name: string;
+  orderIndex?: number;
+  description?: string;
+  createdAt?: any;
+  updatedAt?: any;
+}
+
 export interface PartCatalogItem {
   id?: string;
   name: string;
   category?: string;
+  itemType?: 'electronic_part' | 'accessory_part' | 'disassembly_part' | string;
+  groupId?: string;
+  groupName?: string;
+  orderIndex?: number;
   defaultCost?: number;
   defaultSalePrice?: number;
   notes?: string;
@@ -487,7 +501,11 @@ export interface ShopPartItem {
   partId?: string;
   name: string;
   category?: string;
+  itemType?: 'electronic_part' | 'accessory_part' | 'disassembly_part' | string;
+  groupId?: string;
+  groupName?: string;
   quantity: number;
+  usedQuantity?: number;
   unitCost: number;
   salePrice: number;
   isDisassemblyBatch?: boolean;
@@ -524,7 +542,7 @@ export interface PartPurchaseInvoice {
   id?: string;
   purchaseNumber: string;
   supplierName: string;
-  purchaseType: 'direct' | 'batch';
+  purchaseType: 'direct' | 'batch' | 'electronic';
   currency: string;
   totalCost: number;
   amountPaid: number;
@@ -540,6 +558,9 @@ export interface PartPurchaseInvoice {
     unitCost: number;
     salePrice: number;
     category?: string;
+    itemType?: string;
+    groupId?: string;
+    groupName?: string;
   }[];
   batchName?: string;
   createdAt: any;

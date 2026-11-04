@@ -475,7 +475,11 @@ class LocalDatabase {
         CREATE TABLE IF NOT EXISTS parts_catalog (
           id TEXT PRIMARY KEY,
           name TEXT,
+          itemType TEXT DEFAULT 'accessory_part',
           category TEXT,
+          groupId TEXT,
+          groupName TEXT,
+          orderIndex INTEGER DEFAULT 0,
           defaultCost REAL,
           defaultSalePrice REAL,
           notes TEXT,
@@ -487,7 +491,10 @@ class LocalDatabase {
           id TEXT PRIMARY KEY,
           partId TEXT,
           name TEXT,
+          itemType TEXT DEFAULT 'accessory_part',
           category TEXT,
+          groupId TEXT,
+          groupName TEXT,
           quantity INTEGER,
           unitCost REAL,
           salePrice REAL,
@@ -516,6 +523,15 @@ class LocalDatabase {
           itemsCount INTEGER DEFAULT 0,
           fundId TEXT,
           purchaseDate TEXT,
+          notes TEXT,
+          createdAt TEXT,
+          updatedAt TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS electronic_part_groups (
+          id TEXT PRIMARY KEY,
+          name TEXT,
+          orderIndex INTEGER DEFAULT 0,
           notes TEXT,
           createdAt TEXT,
           updatedAt TEXT
@@ -779,6 +795,45 @@ class LocalDatabase {
           );
         `);
       } catch (err) {}
+
+      // Ensure electronic_part_groups table is created for existing databases
+      try {
+        await this.db.run(`
+          CREATE TABLE IF NOT EXISTS electronic_part_groups (
+            id TEXT PRIMARY KEY,
+            name TEXT,
+            orderIndex INTEGER DEFAULT 0,
+            notes TEXT,
+            createdAt TEXT,
+            updatedAt TEXT
+          );
+        `);
+      } catch (err) {}
+
+      // Ensure parts_catalog columns exist for electronic parts
+      const partCatalogCols = [
+        'itemType TEXT DEFAULT "accessory_part"',
+        'groupId TEXT',
+        'groupName TEXT',
+        'orderIndex INTEGER DEFAULT 0'
+      ];
+      for (const col of partCatalogCols) {
+        try {
+          await this.db.run(`ALTER TABLE parts_catalog ADD COLUMN ${col}`);
+        } catch (e) {}
+      }
+
+      // Ensure shop_parts_inventory columns exist for electronic parts
+      const shopPartsCols = [
+        'itemType TEXT DEFAULT "accessory_part"',
+        'groupId TEXT',
+        'groupName TEXT'
+      ];
+      for (const col of shopPartsCols) {
+        try {
+          await this.db.run(`ALTER TABLE shop_parts_inventory ADD COLUMN ${col}`);
+        } catch (e) {}
+      }
 
       // Attempt to add extra financial columns to existing vault_transactions table if needed
       try {
@@ -1185,7 +1240,7 @@ class LocalDatabase {
           'company_details', 'settings', 'document_outputs',
           'fin_transaction_types', 'fin_funds', 'fin_currencies',
           'fin_payment_methods', 'parts_catalog', 'shop_parts_inventory',
-          'disassembly_batches'
+          'disassembly_batches', 'electronic_part_groups'
         ];
         for (const table of tablesToClear) {
           try {
@@ -1465,9 +1520,14 @@ class LocalDatabase {
     this.observers.get(table)!.add(callback);
     
     // Initial fetch
-    this.query(`SELECT * FROM ${table}`).then(res => {
-      callback(res.values || []);
-    });
+    this.query(`SELECT * FROM ${table}`)
+      .then(res => {
+        callback(res.values || []);
+      })
+      .catch(err => {
+        console.warn(`[localDb.subscribe] Query failed on table ${table}:`, err);
+        callback([]);
+      });
 
     return () => {
       this.observers.get(table)?.delete(callback);

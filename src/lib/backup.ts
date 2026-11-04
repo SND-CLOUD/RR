@@ -18,6 +18,7 @@ const TABLES_TO_BACKUP = [
   'parts_catalog',
   'shop_parts_inventory',
   'disassembly_batches',
+  'electronic_part_groups',
   'device_categories',
   'device_models',
   'engineers',

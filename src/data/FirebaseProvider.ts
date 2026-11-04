@@ -479,7 +479,8 @@ export class FirebaseProvider implements IDataProvider {
       'approval_actions',
       'parts_catalog',
       'shop_parts_inventory',
-      'disassembly_batches'
+      'disassembly_batches',
+      'electronic_part_groups'
     ];
     const missing: Array<{ collection: string; id: string; name?: string }> = [];
     const database = this.getDb();

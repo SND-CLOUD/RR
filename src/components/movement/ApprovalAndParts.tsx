@@ -237,10 +237,10 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
           body * {
             visibility: hidden !important;
           }
-          #print-report-area, #print-report-area * {
+          #print-report-area, #print-report-area *, #print-preview-area, #print-preview-area * {
             visibility: visible !important;
           }
-          #print-report-area {
+          #print-report-area, #print-preview-area {
             position: absolute;
             left: 0;
             top: 0;
@@ -288,7 +288,7 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
     let restore: (() => void) | null = null;
 
     try {
-      const element = document.getElementById('print-report-area');
+      const element = document.getElementById('print-report-area') || document.getElementById('print-preview-area');
       if (!element) {
         setIsGeneratingPDF(false);
         return;

@@ -29,7 +29,7 @@ import { calculateInvoiceBillableTotal, getInvoiceFinancialBreakdown } from '../
 
 const STATIC_HYBRID_TABLES = [
   'company_details', 'settings', 'users', 'engineers', 'user_devices',
-  'device_categories', 'device_models', 'parts_catalog', 'fin_transaction_types', 'fin_funds',
+  'device_categories', 'device_models', 'parts_catalog', 'electronic_part_groups', 'fin_transaction_types', 'fin_funds',
   'fin_currencies', 'fin_payment_methods', 'job_titles'
 ];
 
@@ -53,6 +53,7 @@ const TABLE_ARABIC_NAMES: Record<string, string> = {
   device_categories: 'أنواع وتصنيفات الأجهزة',
   device_models: 'موديلات الماركات والأجهزة',
   parts_catalog: 'دليل وأصناف قطع الغيار',
+  electronic_part_groups: 'مجموعات قطع الغيار الإلكترونية',
   fin_transaction_types: 'أنواع الحركات المالية',
   fin_funds: 'الخزائن والحسابات البنكية',
   fin_currencies: 'العملات وأسعار الصرف',
@@ -1332,7 +1333,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
             'invoices', 'invoice_items', 'customers', 'maintenance_actions', 
             'approval_actions', 'vault_transactions', 
             'inventory_items', 'document_outputs', 'saved_pdfs', 'parts_catalog',
-            'shop_parts_inventory', 'disassembly_batches', 'fin_transaction_types',
+            'shop_parts_inventory', 'disassembly_batches', 'electronic_part_groups', 'fin_transaction_types',
             'fin_funds', 'fin_currencies', 'fin_payment_methods', 'user_devices',
             'job_titles', 'device_categories', 'device_models', 'engineers',
             'deleted_records'
@@ -1397,7 +1398,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
           'invoices', 'invoice_items', 'customers', 'maintenance_actions', 
           'approval_actions', 'vault_transactions', 
           'inventory_items', 'document_outputs', 'saved_pdfs', 'parts_catalog',
-          'shop_parts_inventory', 'disassembly_batches', 'fin_transaction_types',
+          'shop_parts_inventory', 'disassembly_batches', 'electronic_part_groups', 'fin_transaction_types',
           'fin_funds', 'fin_currencies', 'fin_payment_methods', 'user_devices',
           'job_titles', 'device_categories', 'device_models', 'engineers',
           'deleted_records'
@@ -1699,6 +1700,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         'parts_catalog',
         'shop_parts_inventory',
         'disassembly_batches',
+        'electronic_part_groups',
         'fin_transaction_types',
         'fin_funds',
         'fin_currencies',
@@ -1732,6 +1734,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         'parts_catalog',
         'shop_parts_inventory',
         'disassembly_batches',
+        'electronic_part_groups',
         'document_outputs',
         'saved_pdfs',
         'job_titles'

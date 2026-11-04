@@ -371,6 +371,12 @@ export default function PrintPreviewOverlay({
             <span className="font-mono text-gray-900" dir="ltr">{getOverlayCustomerDetails().phone}</span>
           </div>
         )}
+        {templateType === 'quotation' && (
+          <div className="font-black text-gray-900 border-r border-gray-300 pr-3 flex items-center mr-auto">
+            <span className="text-[10px] text-gray-600 ml-1.5 whitespace-nowrap">العملة:</span>
+            <span className="text-gray-900 font-bold">{getCurrencySymbol(invoice?.currency || items.find((i: any) => i?.currency)?.currency || 'USD')}</span>
+          </div>
+        )}
       </div>
     </>
   );
@@ -2356,6 +2362,9 @@ export default function PrintPreviewOverlay({
                 return getWeight(a) - getWeight(b);
               });
 
+              const rawQuotationCurrency = invoice?.currency || items.find((i: any) => i?.currency)?.currency || 'USD';
+              const quotationCurrencySymbol = getCurrencySymbol(rawQuotationCurrency);
+
               return (
                 <>
                   <div className="w-full border-2 border-black rounded-lg overflow-hidden mb-2 text-black font-bold font-cairo">
@@ -2365,9 +2374,13 @@ export default function PrintPreviewOverlay({
                           <th className="py-1.5 px-2 border-l border-black text-center w-10 font-bold">م</th>
                           <th className="py-1.5 px-2 border-l border-black text-right w-44 font-bold">النوع / الجهاز</th>
                           <th className="py-1.5 px-2 border-l border-black text-right min-w-[120px] font-bold">تقرير الفحص / نتيجة الصيانة</th>
-                          <th className="py-1.5 px-2 border-l border-black text-center w-32 font-bold">تكلفة صيانة الجهاز</th>
+                          <th className="py-1.5 px-2 border-l border-black text-center w-32 font-bold">
+                            تكلفة صيانة الجهاز ({quotationCurrencySymbol})
+                          </th>
                           <th className="py-1.5 px-2 border-l border-black text-center w-16 font-bold">العدد</th>
-                          <th className="py-1.5 px-2 text-center w-28 font-bold">اجمالي التكلفة</th>
+                          <th className="py-1.5 px-2 text-center w-28 font-bold">
+                            اجمالي التكلفة ({quotationCurrencySymbol})
+                          </th>
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-black">
@@ -2422,14 +2435,28 @@ export default function PrintPreviewOverlay({
                                   <span>{displayStatusReport}</span>
                                 </div>
                               </td>
-                              <td className="py-1 px-2 border-l border-black text-center font-mono" dir="ltr">
-                                {unitCost.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                              <td className="py-1 px-2 border-l border-black text-center font-mono whitespace-nowrap" dir="ltr">
+                                {isNonBillable ? (
+                                  <span className="text-gray-400 font-bold">-</span>
+                                ) : (
+                                  <span>
+                                    {unitCost.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}
+                                    <span className="text-[10px] font-sans font-bold text-gray-800 ml-1">{quotationCurrencySymbol}</span>
+                                  </span>
+                                )}
                               </td>
                               <td className="py-1 px-2 border-l border-black text-center font-mono" dir="ltr">
                                 {qty}
                               </td>
-                              <td className="py-1 px-2 text-center font-mono" dir="ltr">
-                                {totalCost.toLocaleString('en-US')}
+                              <td className="py-1 px-2 text-center font-mono whitespace-nowrap" dir="ltr">
+                                {isNonBillable ? (
+                                  <span className="text-gray-400 font-bold">0</span>
+                                ) : (
+                                  <span>
+                                    {totalCost.toLocaleString('en-US')}
+                                    <span className="text-[10px] font-sans font-bold text-gray-800 ml-1">{quotationCurrencySymbol}</span>
+                                  </span>
+                                )}
                               </td>
                             </tr>
                           );
@@ -2443,8 +2470,9 @@ export default function PrintPreviewOverlay({
                           <td className="py-1.5 px-2 border-l border-black text-center font-mono font-black" dir="ltr">
                             {sortedItems.reduce((sum: number, it: any) => sum + (Number(it.quantity) || 1), 0)}
                           </td>
-                          <td className="py-1.5 px-2 text-center font-mono font-black" dir="ltr">
+                          <td className="py-1.5 px-2 text-center font-mono font-black whitespace-nowrap" dir="ltr">
                             {sortedItems.reduce((sum: number, it: any) => sum + (getItemStatus(it) === 'لا يصلح' || getItemStatus(it) === 'سليم' || isItemRefusedOrFailed(it) ? 0 : Number(it.cost || 0)), 0).toLocaleString('en-US')}
+                            <span className="text-xs font-sans font-black text-gray-950 ml-1">{quotationCurrencySymbol}</span>
                           </td>
                         </tr>
                       </tfoot>

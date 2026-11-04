@@ -6,10 +6,12 @@ import { Tag, Plus, Search, Check, ChevronDown, Wrench } from 'lucide-react';
 interface PartsAutocompleteProps {
   value: string;
   onChange: (val: string) => void;
-  onSelectPart?: (part: PartCatalogItem | ShopPartItem) => void;
+  onSelectPart?: (part: any) => void;
   placeholder?: string;
   className?: string;
   showStockStatus?: boolean;
+  filterItemType?: 'electronic_part' | 'accessory_part' | 'all';
+  filterGroupId?: string;
 }
 
 export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
@@ -18,7 +20,9 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
   onSelectPart,
   placeholder = 'ابحث عن قطعة أو ادخل اسماً جديداً...',
   className = '',
-  showStockStatus = false
+  showStockStatus = false,
+  filterItemType,
+  filterGroupId
 }) => {
   const [catalogItems, setCatalogItems] = useState<PartCatalogItem[]>([]);
   const [shopParts, setShopParts] = useState<ShopPartItem[]>([]);
@@ -75,6 +79,9 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
         id: s.id || '',
         name: s.name,
         category: s.category || 'قطع غيار وملحقات',
+        itemType: (s as any).itemType || 'accessory_part',
+        groupId: (s as any).groupId || '',
+        groupName: (s as any).groupName || '',
         defaultCost: s.unitCost || 0,
         defaultSalePrice: s.salePrice || 0,
         inStockQty: qty,
@@ -88,6 +95,9 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
         isCatalogOnly: false,
         raw: {
           ...s,
+          itemType: (s as any).itemType || 'accessory_part',
+          groupId: (s as any).groupId || '',
+          groupName: (s as any).groupName || '',
           partInventoryId: s.id || '',
           batchId: s.batchId || '',
           batchName: s.batchName || '',
@@ -108,6 +118,9 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
       combinedItemsMap.set(String(c.name).trim().toLowerCase(), {
         name: c.name,
         category: c.category || 'عام',
+        itemType: (c as any).itemType || 'accessory_part',
+        groupId: (c as any).groupId || '',
+        groupName: (c as any).groupName || '',
         defaultCost: c.defaultCost || 0,
         defaultSalePrice: c.defaultSalePrice || 0,
         inStockQty: 0,
@@ -125,10 +138,16 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
         if (s.salePrice && !existing.defaultSalePrice) existing.defaultSalePrice = s.salePrice;
         if (s.unitCost && !existing.defaultCost) existing.defaultCost = s.unitCost;
         if (s.isDisassemblyBatch) existing.isBatch = true;
+        if ((s as any).itemType) existing.itemType = (s as any).itemType;
+        if ((s as any).groupId) existing.groupId = (s as any).groupId;
+        if ((s as any).groupName) existing.groupName = (s as any).groupName;
       } else {
         combinedItemsMap.set(key, {
           name: s.name,
           category: s.category || 'عام',
+          itemType: (s as any).itemType || 'accessory_part',
+          groupId: (s as any).groupId || '',
+          groupName: (s as any).groupName || '',
           defaultCost: s.unitCost || 0,
           defaultSalePrice: s.salePrice || 0,
           inStockQty: s.quantity || 0,
@@ -141,11 +160,21 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
     allList = Array.from(combinedItemsMap.values());
   }
 
-  const filtered = allList.filter(item =>
-    item.name.toLowerCase().includes((value || '').toLowerCase()) ||
-    (item.category && item.category.toLowerCase().includes((value || '').toLowerCase())) ||
-    (item.batchName && item.batchName.toLowerCase().includes((value || '').toLowerCase()))
-  );
+  const filtered = allList.filter(item => {
+    if (filterItemType && filterItemType !== 'all') {
+      const it = item.itemType || 'accessory_part';
+      if (it !== filterItemType) return false;
+    }
+    if (filterGroupId && filterGroupId.trim()) {
+      if (item.groupId !== filterGroupId) return false;
+    }
+    return (
+      item.name.toLowerCase().includes((value || '').toLowerCase()) ||
+      (item.category && item.category.toLowerCase().includes((value || '').toLowerCase())) ||
+      (item.groupName && item.groupName.toLowerCase().includes((value || '').toLowerCase())) ||
+      (item.batchName && item.batchName.toLowerCase().includes((value || '').toLowerCase()))
+    );
+  });
 
   return (
     <div ref={wrapperRef} className={`relative w-full ${className}`}>
