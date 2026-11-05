@@ -5,7 +5,7 @@ import {
   Package, Layers, CircleDollarSign, CheckCircle, TrendingUp, AlertTriangle, 
   Search, Trash2, Tag, Calendar, User, ShieldAlert, Sparkles, RefreshCw, X, 
   Check, ChevronDown, ChevronUp, DollarSign, ArrowUpRight, ShoppingCart, 
-  Boxes, Percent, HelpCircle
+  Boxes, Percent, HelpCircle, Cpu
 } from 'lucide-react';
 import { formatMoney } from '../lib/fundUtils';
 import { ProviderFactory } from '../data/ProviderFactory';
@@ -16,8 +16,9 @@ export default function ShopPartsStockView() {
   const [stockItems, setStockItems] = useState<ShopPartItem[]>([]);
   const [batches, setBatches] = useState<DisassemblyBatch[]>([]);
   const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
-  const [activeTab, setActiveTab] = useState<'inventory' | 'batches'>('inventory');
+  const [activeTab, setActiveTab] = useState<'all' | 'electronics' | 'accessories' | 'batches'>('all');
   const [stockFilter, setStockFilter] = useState<'available' | 'sold' | 'all'>('available');
+  const [selectedGroup, setSelectedGroup] = useState<string>('all');
   const [search, setSearch] = useState('');
 
   // Expanded batch cards for detailed breakdown
@@ -76,20 +77,42 @@ export default function ShopPartsStockView() {
     };
   }, []);
 
-  // Filter stock items according to user filter and search
-  const filteredStock = stockItems.filter(item => {
-    // Stock availability filter
+  // Get unique group names for filtering
+  const uniqueGroups = Array.from(new Set(stockItems.map(item => item.groupName).filter(Boolean))) as string[];
+
+  // Filter stock items according to user tab, group and search (The base for counters)
+  const baseFilteredStock = stockItems.filter(item => {
+    // 1. Tab Type Filter
+    if (activeTab === 'electronics') {
+      if (item.itemType !== 'electronic_part') return false;
+    } else if (activeTab === 'accessories') {
+      if (item.itemType !== 'accessory_part') return false;
+    }
+
+    // 2. Group Filter
+    if (selectedGroup !== 'all') {
+      if (item.groupName !== selectedGroup) return false;
+    }
+
+    // 3. Search query
+    const q = (search || '').toLowerCase();
+    if (q) {
+      const matchName = (item.name || '').toLowerCase().includes(q);
+      const matchSupplier = (item.supplierName || '').toLowerCase().includes(q);
+      const matchBatch = (item.batchName || '').toLowerCase().includes(q);
+      const matchGroupName = (item.groupName || '').toLowerCase().includes(q);
+      if (!(matchName || matchSupplier || matchBatch || matchGroupName)) return false;
+    }
+
+    return true;
+  });
+
+  // Final list for table display (adds the Stock Availability filter)
+  const filteredStock = baseFilteredStock.filter(item => {
     const qty = Number(item.quantity || 0);
     if (stockFilter === 'available' && qty <= 0) return false;
     if (stockFilter === 'sold' && qty > 0) return false;
-
-    // Search query
-    const q = (search || '').toLowerCase();
-    const matchName = (item.name || '').toLowerCase().includes(q);
-    const matchSupplier = (item.supplierName || '').toLowerCase().includes(q);
-    const matchBatch = (item.batchName || '').toLowerCase().includes(q);
-
-    return matchName || matchSupplier || matchBatch;
+    return true;
   });
 
   // Filter batches according to search
@@ -269,19 +292,19 @@ export default function ShopPartsStockView() {
     };
   };
 
-  // Inventory Totals
-  const availableItemsCount = stockItems.filter(i => Number(i.quantity || 0) > 0).length;
-  const soldItemsCount = stockItems.filter(i => Number(i.quantity || 0) <= 0).length;
-  const totalStockQuantity = stockItems.reduce((acc, i) => acc + Math.max(0, Number(i.quantity || 0)), 0);
-  const totalStockSaleValue = stockItems.reduce((acc, i) => acc + (Math.max(0, Number(i.quantity || 0)) * Number(i.salePrice || 0)), 0);
+  // Inventory Totals (Derived from baseFilteredStock to reflect current Tab/Group/Search)
+  const availableItemsCount = baseFilteredStock.filter(i => Number(i.quantity || 0) > 0).length;
+  const soldItemsCount = baseFilteredStock.filter(i => Number(i.quantity || 0) <= 0).length;
+  const totalStockQuantity = baseFilteredStock.reduce((acc, i) => acc + Math.max(0, Number(i.quantity || 0)), 0);
+  const totalStockSaleValue = baseFilteredStock.reduce((acc, i) => acc + (Math.max(0, Number(i.quantity || 0)) * Number(i.salePrice || 0)), 0);
 
-  // Batches Totals
-  const totalBatchesCost = batches.reduce((sum, b) => sum + Number(b.totalBatchCost || 0), 0);
-  const totalBatchesRecovered = batches.reduce((sum, b) => {
+  // Batches Totals (Derived from filteredBatches to reflect search)
+  const totalBatchesCost = filteredBatches.reduce((sum, b) => sum + Number(b.totalBatchCost || 0), 0);
+  const totalBatchesRecovered = filteredBatches.reduce((sum, b) => {
     const fin = getBatchFinancials(b);
     return sum + fin.recovered;
   }, 0);
-  const totalBatchesNetProfit = batches.reduce((sum, b) => {
+  const totalBatchesNetProfit = filteredBatches.reduce((sum, b) => {
     const fin = getBatchFinancials(b);
     return sum + fin.netProfit;
   }, 0);
@@ -290,25 +313,60 @@ export default function ShopPartsStockView() {
     <div className="space-y-6 font-cairo text-right pb-32 md:pb-16" dir="rtl">
       {/* Top Header & Navigation */}
       <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-[#141414] p-4 rounded-2xl border border-white/5 shadow-xl">
-        <div className="flex items-center gap-2 p-1 bg-[#1a1a1a] rounded-xl border border-white/5 w-full sm:w-auto">
+        <div className="flex items-center gap-2 p-1 bg-[#1a1a1a] rounded-xl border border-white/5 w-full sm:w-auto overflow-x-auto no-scrollbar">
           <button
-            onClick={() => setActiveTab('inventory')}
-            className={`flex-1 sm:flex-none px-4 py-2.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
-              activeTab === 'inventory' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'text-gray-400 hover:text-white'
+            onClick={() => {
+              setActiveTab('all');
+              setSelectedGroup('all');
+              setStockFilter('available');
+            }}
+            className={`px-4 py-2.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap ${
+              activeTab === 'all' ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-600/20' : 'text-gray-400 hover:text-white'
             }`}
           >
-            <Package size={16} />
-            <span>قطع الغيار والملحقات ({stockItems.length})</span>
+            <Boxes size={16} />
+            <span>كل القطع</span>
           </button>
 
           <button
-            onClick={() => setActiveTab('batches')}
-            className={`flex-1 sm:flex-none px-4 py-2.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer ${
-              activeTab === 'batches' ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/20' : 'text-gray-400 hover:text-white'
+            onClick={() => {
+              setActiveTab('electronics');
+              setSelectedGroup('all');
+              setStockFilter('available');
+            }}
+            className={`px-4 py-2.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap ${
+              activeTab === 'electronics' ? 'bg-purple-600 text-white shadow-lg shadow-purple-600/20' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <Cpu size={16} />
+            <span>قطع الكترونيه</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('accessories');
+              setSelectedGroup('all');
+              setStockFilter('available');
+            }}
+            className={`px-4 py-2.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap ${
+              activeTab === 'accessories' ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-600/20' : 'text-gray-400 hover:text-white'
+            }`}
+          >
+            <ShoppingCart size={16} />
+            <span>قطع غيار وملحقات</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setActiveTab('batches');
+              setSelectedGroup('all');
+            }}
+            className={`px-4 py-2.5 rounded-lg text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap ${
+              activeTab === 'batches' ? 'bg-amber-600 text-white shadow-lg shadow-amber-600/20' : 'text-gray-400 hover:text-white'
             }`}
           >
             <Layers size={16} />
-            <span>دفعة أجهزة التفكيك/التشليح ({batches.length})</span>
+            <span>أجهزة التفكيك</span>
           </button>
         </div>
 
@@ -366,7 +424,7 @@ export default function ShopPartsStockView() {
       )}
 
       {/* TAB 1: INVENTORY (قطع الغيار والملحقات) */}
-      {activeTab === 'inventory' && (
+      {activeTab !== 'batches' && (
         <div className="space-y-4">
           {/* Quick Metrics & Filter Bar */}
           <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
@@ -430,7 +488,7 @@ export default function ShopPartsStockView() {
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
                 }`}
               >
-                الكل ({stockItems.length})
+                الكل ({baseFilteredStock.length})
               </button>
             </div>
           </div>
@@ -440,6 +498,27 @@ export default function ShopPartsStockView() {
             <div className="overflow-x-auto">
               <table className="w-full text-right text-xs">
                 <thead className="bg-[#181818] text-gray-400 border-b border-white/5 font-bold">
+                  {/* Filter Row */}
+                  {activeTab === 'electronics' && (
+                    <tr className="bg-[#1a1a1a] border-b border-white/5">
+                      <td colSpan={2} className="p-2 pr-4">
+                        <div className="flex items-center gap-2">
+                          <span className="text-gray-400 font-bold whitespace-nowrap">عرض المجموعة:</span>
+                          <select 
+                            value={selectedGroup} 
+                            onChange={(e) => setSelectedGroup(e.target.value)}
+                            className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:border-emerald-500 outline-none transition-all cursor-pointer"
+                          >
+                            <option value="all">كل المجموعات</option>
+                            {uniqueGroups.map(g => (
+                              <option key={g} value={g}>{g}</option>
+                            ))}
+                          </select>
+                        </div>
+                      </td>
+                      <td colSpan={7}></td>
+                    </tr>
+                  )}
                   <tr>
                     <th className="p-3.5">#</th>
                     <th className="p-3.5">اسم القطعة / الملحق</th>
@@ -467,7 +546,12 @@ export default function ShopPartsStockView() {
                           <td className="p-3.5 font-bold text-white">
                             <div className="flex items-center gap-2">
                               <Tag size={14} className={isSoldOut ? 'text-blue-400' : 'text-emerald-400'} />
-                              <span>{item.name || 'صنف بدون اسم'}</span>
+                              <div>
+                                <span className="block">{item.name || 'صنف بدون اسم'}</span>
+                                {item.groupName && (
+                                  <span className="text-[10px] text-gray-500 font-bold block mt-0.5">المجموعة: {item.groupName}</span>
+                                )}
+                              </div>
                             </div>
                           </td>
                           <td className="p-3.5">
@@ -486,7 +570,12 @@ export default function ShopPartsStockView() {
                             {item.supplierName || 'غير محدد'}
                           </td>
                           <td className="p-3.5">
-                            {isSoldOut ? (
+                            {qty < 0 ? (
+                              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-rose-500/15 text-rose-300 border border-rose-500/25 flex items-center gap-1 w-fit">
+                                <AlertTriangle size={12} className="text-rose-400" />
+                                <span>رصيد سالب</span>
+                              </span>
+                            ) : isSoldOut ? (
                               <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-500/15 text-blue-300 border border-blue-500/25 flex items-center gap-1 w-fit">
                                 <CheckCircle size={12} className="text-blue-400" />
                                 <span>تم بيعها بالكامل</span>
@@ -499,15 +588,26 @@ export default function ShopPartsStockView() {
                             )}
                           </td>
                           <td className="p-3.5 font-mono font-black">
-                            <span className={`px-2.5 py-1 rounded-full text-xs font-mono font-bold ${
-                              isSoldOut 
-                                ? 'bg-white/5 text-gray-400 border border-white/10' 
-                                : qty > 5 
-                                  ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                                  : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                            }`}>
-                              {qty > 0 ? `${qty} قطعة` : '0 قطعة (منصرفة)'}
-                            </span>
+                            {qty < 0 ? (
+                              <div className="space-y-1">
+                                <span className="px-2.5 py-1 rounded-full text-xs font-mono font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 inline-block">
+                                  {qty} قطعة
+                                </span>
+                                <span className="text-[10px] text-rose-400 font-bold block whitespace-nowrap">
+                                  يجب إدخال القطع السالبة
+                                </span>
+                              </div>
+                            ) : (
+                              <span className={`px-2.5 py-1 rounded-full text-xs font-mono font-bold ${
+                                isSoldOut 
+                                  ? 'bg-white/5 text-gray-400 border border-white/10' 
+                                  : qty > 5 
+                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                              }`}>
+                                {qty > 0 ? `${qty} قطعة` : '0 قطعة (منصرفة)'}
+                              </span>
+                            )}
                           </td>
                           <td className="p-3.5 font-mono font-bold text-amber-400">
                             {formatMoney(item.unitCost ?? 0, item.currency || 'USD')}
@@ -560,7 +660,7 @@ export default function ShopPartsStockView() {
               <div>
                 <span className="text-xs text-gray-400 block font-bold">إجمالي تكلفة شراء الأجهزة</span>
                 <span className="text-xl font-mono font-black text-amber-400">{formatMoney(totalBatchesCost, 'USD')}</span>
-                <span className="text-[10px] text-gray-500 block mt-0.5">{batches.length} جهاز/دفعة مفككة</span>
+                <span className="text-[10px] text-gray-500 block mt-0.5">{filteredBatches.length} جهاز/دفعة مفككة</span>
               </div>
               <div className="p-3 bg-amber-500/10 text-amber-400 rounded-2xl">
                 <Layers size={22} />

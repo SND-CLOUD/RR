@@ -84,7 +84,7 @@ export default function OtherServiceInvoice({
   const [electronicGroups, setElectronicGroups] = useState<any[]>([]);
   const [showQuickAddGroupModal, setShowQuickAddGroupModal] = useState(false);
   const [quickGroupName, setQuickGroupName] = useState('');
-  const [salePartType, setSalePartType] = useState<'all' | 'electronic' | 'accessory'>('all');
+  const [salePartType, setSalePartType] = useState<'electronic' | 'accessory' | ''>('');
   const [saleSelectedGroupId, setSaleSelectedGroupId] = useState<string>('');
   
   // Batch Purchase Fields
@@ -128,7 +128,7 @@ export default function OtherServiceInvoice({
     setError(null);
     setShowPreview(false);
     setCurrentOutput(null);
-    setSalePartType('all');
+    setSalePartType('');
     setSaleSelectedGroupId('');
     setCurrency(shopConfig?.liabilityCurrency as any || 'USD');
   }, [shopConfig]);
@@ -171,9 +171,13 @@ export default function OtherServiceInvoice({
   }, [resetAllForms]);
 
   const handleGoBackToMain = useCallback(() => {
-    resetAllForms();
-    onBack();
-  }, [resetAllForms, onBack]);
+    if (activeTab !== 'hub') {
+      handleSwitchTab('hub');
+    } else {
+      resetAllForms();
+      onBack();
+    }
+  }, [activeTab, handleSwitchTab, resetAllForms, onBack]);
 
   useEffect(() => {
     resetAllForms();
@@ -209,12 +213,13 @@ export default function OtherServiceInvoice({
     }
     if (successInfo) {
       resetAllForms();
+      handleSwitchTab('hub');
       return;
     }
     if (activeTab !== 'hub') {
       handleGoBackToMain();
     }
-  }, [showPreview, showAddCustomerModal, successInfo, activeTab, resetAllForms]);
+  }, [showPreview, showAddCustomerModal, successInfo, activeTab, resetAllForms, handleGoBackToMain, handleSwitchTab]);
 
   useBackHandler(Boolean(showPreview || showAddCustomerModal || successInfo || activeTab !== 'hub'), handleInternalBack);
 
@@ -367,6 +372,16 @@ export default function OtherServiceInvoice({
 
   // Handlers for Sale Items
   const handleAddSaleItem = () => {
+    if (activeTab === 'parts') {
+      if (!salePartType) {
+        setError("الرجاء اختيار نوع العملية (قطع وملحقات أو قطع الكترونية) أولاً");
+        return;
+      }
+      if (salePartType === 'electronic' && !saleSelectedGroupId) {
+        setError("الرجاء اختيار مجموعة القطع الإلكترونية أولاً");
+        return;
+      }
+    }
     if (!currentItem.name.trim() || currentItem.quantity < 1 || currentItem.unitCost < 0) return;
     
     let itemToSave = { ...currentItem };
@@ -417,6 +432,10 @@ export default function OtherServiceInvoice({
 
   // Handlers for Purchase Items
   const handleAddPurchaseItem = () => {
+    if (purchaseType === 'electronic' && !currentPurchaseItem.groupId) {
+      setError("الرجاء اختيار مجموعة القطع الإلكترونية أولاً");
+      return;
+    }
     if (!currentPurchaseItem.name.trim() || currentPurchaseItem.quantity < 1) return;
 
     let nextItems = [...purchaseItems];
@@ -1687,7 +1706,13 @@ export default function OtherServiceInvoice({
                       setPurchaseType(val);
                       setCurrentPurchaseItem(prev => ({
                         ...prev,
-                        itemType: val === 'electronic' ? 'electronic_part' : 'accessory_part'
+                        itemType: val === 'electronic' ? 'electronic_part' : 'accessory_part',
+                        groupId: '',
+                        groupName: '',
+                        category: '',
+                        name: '',
+                        unitCost: 0,
+                        salePrice: 0
                       }));
                     }}
                     className="w-full bg-[#1a1a1a] border border-white/10 rounded-xl p-2.5 text-xs font-bold text-white focus:outline-none focus:border-purple-500"
@@ -1767,14 +1792,17 @@ export default function OtherServiceInvoice({
                             const foundGroup = electronicGroups.find(g => g.id === gId);
                             setCurrentPurchaseItem(prev => ({
                               ...prev,
+                              name: '',
                               groupId: gId,
                               groupName: foundGroup ? foundGroup.name : '',
-                              category: foundGroup ? foundGroup.name : prev.category
+                              category: foundGroup ? foundGroup.name : '',
+                              unitCost: 0,
+                              salePrice: 0
                             }));
                           }}
                           className="flex-1 bg-[#121212] border border-purple-500/30 rounded-xl p-2.5 text-xs font-bold text-white focus:outline-none focus:border-purple-500"
                         >
-                          <option value="">-- اختر المجموعة (أو الكل) --</option>
+                          <option value="">-- قم باختيار مجموعة محددة --</option>
                           {electronicGroups.map(g => (
                             <option key={g.id} value={g.id}>{g.name}</option>
                           ))}
@@ -1800,8 +1828,11 @@ export default function OtherServiceInvoice({
                     <div className="flex-1 min-w-0">
                       <PartsAutocomplete
                         value={currentPurchaseItem.name}
+                        disabled={purchaseType === 'electronic' && !currentPurchaseItem.groupId}
+                        requireGroup={purchaseType === 'electronic'}
                         filterItemType={purchaseType === 'electronic' ? 'electronic_part' : (purchaseType === 'direct' ? 'accessory_part' : undefined)}
                         filterGroupId={purchaseType === 'electronic' && currentPurchaseItem.groupId ? currentPurchaseItem.groupId : undefined}
+                        placeholder={purchaseType === 'electronic' && !currentPurchaseItem.groupId ? 'قم باختيار مجموعة محددة أولاً...' : (purchaseType === 'electronic' ? 'كود / اسم القطعة...' : 'اسم القطعة أو الملحق...')}
                         onChange={(val) => setCurrentPurchaseItem(prev => ({ ...prev, name: val }))}
                         onSelectPart={(part: any) => {
                           setCurrentPurchaseItem(prev => ({
@@ -1814,7 +1845,6 @@ export default function OtherServiceInvoice({
                             salePrice: part.defaultSalePrice || prev.salePrice
                           }));
                         }}
-                        placeholder={purchaseType === 'electronic' ? 'اختر كود القطعة أو اكتب كوداً جديداً (مثال: Z1212A)...' : 'اختر صنفاً أو اكتب اسماً جديداً...'}
                       />
                     </div>
                   </div>
@@ -2276,28 +2306,48 @@ export default function OtherServiceInvoice({
                     <select
                       value={salePartType}
                       onChange={(e) => {
-                        setSalePartType(e.target.value as any);
-                        if (e.target.value !== 'electronic') {
-                          setSaleSelectedGroupId('');
-                        }
+                        const newType = e.target.value as 'electronic' | 'accessory' | '';
+                        setSalePartType(newType);
+                        setSaleSelectedGroupId('');
+                        setCurrentItem(prev => ({
+                          ...prev,
+                          name: '',
+                          unitCost: 0,
+                          partInventoryId: '',
+                          batchId: '',
+                          batchName: '',
+                          batchTotalCost: 0
+                        }));
                       }}
                       className="w-full bg-[#121212] border border-white/10 rounded-xl p-2 text-xs font-bold text-white focus:outline-none focus:border-emerald-500"
                     >
-                      <option value="all">الكل (جميع القطع والملحقات المتوفرة)</option>
-                      <option value="electronic">قطع غيار إلكترونية (Electronic Parts)</option>
-                      <option value="accessory">قطع وملحقات تجارية (Accessories)</option>
+                      <option value="">-- قم باختيار نوع محدد --</option>
+                      <option value="accessory">قطع وملحقات</option>
+                      <option value="electronic">قطع الكترونية</option>
                     </select>
                   </div>
 
                   {salePartType === 'electronic' && (
                     <div className="space-y-1">
-                      <label className="text-[10px] text-purple-300 block font-bold">تصفية حسب المجموعة الإلكترونية:</label>
+                      <label className="text-[10px] text-purple-300 block font-bold">تحديد المجموعة الإلكترونية:</label>
                       <select
                         value={saleSelectedGroupId}
-                        onChange={(e) => setSaleSelectedGroupId(e.target.value)}
+                        onChange={(e) => {
+                          const newGId = e.target.value;
+                          setSaleSelectedGroupId(newGId);
+                          setCurrentItem(prev => ({
+                            ...prev,
+                            name: '',
+                            unitCost: 0,
+                            partInventoryId: '',
+                            batchId: '',
+                            batchName: '',
+                            batchTotalCost: 0
+                          }));
+                        }}
                         className="w-full bg-[#121212] border border-purple-500/30 rounded-xl p-2 text-xs font-bold text-white focus:outline-none focus:border-purple-500"
                       >
-                        <option value="">-- كل المجموعات الإلكترونية --</option>
+                        <option value="">-- قم باختيار مجموعة محددة --</option>
                         {electronicGroups.map(g => (
                           <option key={g.id} value={g.id}>{g.name}</option>
                         ))}
@@ -2318,8 +2368,17 @@ export default function OtherServiceInvoice({
                     <div>
                       <PartsAutocomplete
                         value={currentItem.name}
+                        disabled={!salePartType || (salePartType === 'electronic' && !saleSelectedGroupId)}
+                        requireGroup={salePartType === 'electronic'}
                         filterItemType={salePartType === 'electronic' ? 'electronic_part' : (salePartType === 'accessory' ? 'accessory_part' : undefined)}
                         filterGroupId={saleSelectedGroupId || undefined}
+                        placeholder={
+                          !salePartType 
+                            ? 'قم باختيار نوع محدد أولاً...' 
+                            : (salePartType === 'electronic' && !saleSelectedGroupId 
+                                ? 'قم باختيار مجموعة محددة أولاً...' 
+                                : 'ابحث أو اختر القطعة...')
+                        }
                         onChange={(val) => setCurrentItem(prev => ({ ...prev, name: val }))}
                         onSelectPart={(part: any) => {
                           setCurrentItem(prev => ({

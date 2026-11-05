@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { db, collection, onSnapshot, doc, setDoc, deleteDoc, serverTimestamp, writeBatch } from '../firebase';
-import { PartCatalogItem, ElectronicPartGroup } from '../types';
+import { PartCatalogItem, ElectronicPartGroup, ShopPartItem } from '../types';
 import { 
   Tag, Plus, Search, Edit2, Trash2, X, Check, Package, FolderPlus, DollarSign, 
   ArrowUp, ArrowDown, Cpu, Layers, FileSpreadsheet, RotateCcw, AlertTriangle, 
@@ -131,6 +131,7 @@ export default function PartsCatalogTable() {
   // Datasets
   const [items, setItems] = useState<PartCatalogItem[]>([]);
   const [groups, setGroups] = useState<ElectronicPartGroup[]>([]);
+  const [shopParts, setShopParts] = useState<ShopPartItem[]>([]);
   const [selectedGroupFilter, setSelectedGroupFilter] = useState<string>('all');
   const [search, setSearch] = useState('');
 
@@ -180,9 +181,15 @@ export default function PartsCatalogTable() {
       setGroups(list);
     });
 
+    const unsubStock = onSnapshot(collection(db, 'shop_parts_inventory'), (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ShopPartItem));
+      setShopParts(list);
+    });
+
     return () => {
       unsubItems();
       unsubGroups();
+      unsubStock();
     };
   }, []);
 
@@ -315,17 +322,9 @@ export default function PartsCatalogTable() {
     setEditingPartId(null);
     setPartItemType(type);
     setPartName('');
-    if (type === 'electronic_part') {
-      const defaultG = selectedGroupFilter !== 'all' ? selectedGroupFilter : (groups[0]?.name || 'عام');
-      const gObj = groups.find(g => g.name === defaultG || g.id === defaultG);
-      setPartGroupId(gObj?.id || defaultG);
-      setPartGroupName(gObj?.name || defaultG);
-      setPartCategory(gObj?.name || defaultG);
-    } else {
-      setPartGroupId('');
-      setPartGroupName('');
-      setPartCategory('ملحقات وقطع عامة');
-    }
+    setPartGroupId('');
+    setPartGroupName('');
+    setPartCategory(type === 'electronic_part' ? '' : 'ملحقات وقطع عامة');
     setPartDefaultCost('');
     setPartDefaultSalePrice('');
     setPartNotes('');
@@ -350,6 +349,11 @@ export default function PartsCatalogTable() {
   const handleSavePart = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!partName.trim()) return;
+
+    if (partItemType === 'electronic_part' && (!partGroupId || !partGroupId.trim())) {
+      setNotification({ text: 'الرجاء اختيار مجموعة محددة أولاً', type: 'error' });
+      return;
+    }
 
     setIsSaving(true);
     try {
@@ -725,9 +729,41 @@ export default function PartsCatalogTable() {
                         </td>
 
                         {/* Part Code */}
-                        <td className="p-3 font-bold text-white flex items-center gap-2">
-                          <Cpu size={14} className="text-emerald-400 shrink-0" />
-                          <span className="font-mono text-sm tracking-wide text-emerald-300 font-bold">{item.name}</span>
+                        <td className="p-3 font-bold text-white">
+                          <div className="flex items-center gap-2">
+                            <Cpu size={14} className="text-emerald-400 shrink-0" />
+                            <span className="font-mono text-sm tracking-wide text-emerald-300 font-bold">{item.name}</span>
+                          </div>
+                          {(() => {
+                            const stock = shopParts.find(s => 
+                              (s.partId && s.partId === item.id) ||
+                              s.name.trim().toLowerCase() === item.name.trim().toLowerCase() ||
+                              s.id === item.id
+                            );
+                            const qty = stock ? Number(stock.quantity ?? 0) : null;
+                            if (qty !== null && qty < 0) {
+                              return (
+                                <div className="mt-1 flex items-center gap-1.5 flex-wrap">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-rose-500/20 text-rose-300 border border-rose-500/30 font-mono">
+                                    الرصيد: {qty}
+                                  </span>
+                                  <span className="text-[10px] text-rose-400 font-bold">
+                                    يجب إدخال القطع السالبة
+                                  </span>
+                                </div>
+                              );
+                            }
+                            if (qty !== null && qty > 0) {
+                              return (
+                                <div className="mt-1">
+                                  <span className="px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 font-mono">
+                                    متوفر بالمخزن: {qty}
+                                  </span>
+                                </div>
+                              );
+                            }
+                            return null;
+                          })()}
                         </td>
 
                         {/* Group Name */}
@@ -1068,7 +1104,7 @@ export default function PartsCatalogTable() {
                         }}
                         className="flex-1 bg-[#1a1a1a] border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 font-bold"
                       >
-                        <option value="">اختر المجموعة...</option>
+                        <option value="">-- قم باختيار مجموعة محددة --</option>
                         {groups.map(g => (
                           <option key={g.id} value={g.name}>{g.name}</option>
                         ))}

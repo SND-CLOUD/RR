@@ -110,6 +110,22 @@ export interface InvoiceItem {
   isWarrantyReturn?: boolean | number;
   previousInvoiceNumber?: string;
   sparePartsCost?: number; // تكلفة قطع الغيار المستخدمة للجهاز (افتراضياً 0)
+  hasNoParts?: boolean; // هل الجهاز بدون قطع غيار (مفعل افتراضياً في الفحص)
+  partsUsed?: DevicePartUsageItem[]; // قائمة قطع الغيار الإلكترونية المحددة للجهاز
+}
+
+export interface DevicePartUsageItem {
+  id?: string;
+  partId?: string;
+  partName: string;
+  groupId?: string;
+  groupName?: string;
+  quantity: number;
+  unitCost: number;
+  unitSalePrice: number;
+  isScrap?: boolean; // خيار "تشليح" (صحيح = لا يخصم من المخزن ولا يحتسب كنفقات)
+  notes?: string;
+  addedInStage?: 'inspection' | 'maintenance';
 }
 
 export interface Currency {

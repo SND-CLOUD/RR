@@ -531,6 +531,9 @@ export class SyncEngine {
               if (action === 'SET') {
                 const { data, options } = parsedPayload || {};
                 await FirebaseProviderInstance.setDoc(tableName, recordId, data, options);
+                // Proactively clear any tombstone in Cloud to prevent pullAllFromCloud from deleting this new record
+                const tombstoneId = `del_${tableName}_${recordId}`;
+                await FirebaseProviderInstance.deleteDoc('deleted_records', tombstoneId).catch(() => {});
               } else if (action === 'UPDATE') {
                 await FirebaseProviderInstance.updateDoc(tableName, recordId, parsedPayload);
               } else if (action === 'DELETE') {

@@ -8,7 +8,9 @@ import { db } from '../../firebase';
 import { Invoice, InvoiceItem, User, Customer, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../../types';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useTranslation } from 'react-i18next';
-import { Search, ArrowLeft, ArrowUpRight, ArrowRight, Search as SearchIcon, User as UserIcon, ArrowDownCircle, Wrench, Plus, Save, Loader2, Info, X, Printer, MessageCircle, MapPin, Facebook, Phone, Smartphone, Edit2, Trash2 } from 'lucide-react';
+import { Search, ArrowLeft, ArrowUpRight, ArrowRight, Search as SearchIcon, User as UserIcon, ArrowDownCircle, Wrench, Plus, Save, Loader2, Info, X, Printer, MessageCircle, MapPin, Facebook, Phone, Smartphone, Edit2, Trash2, Cpu } from 'lucide-react';
+import { ElectronicPartsSelectionModal } from '../ElectronicPartsSelectionModal';
+import { DevicePartUsageItem, ShopPartItem } from '../../types';
 import BankAccountsFooter from '../BankAccountsFooter';
 import PrintPreviewOverlay from '../PrintPreviewOverlay';
 import jsPDF from 'jspdf';
@@ -51,8 +53,24 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
   
   // Form State
   const [engineerName, setEngineerName] = useState('');
-  const [actionItems, setActionItems] = useState<{ id: string, count: number, outcome: 'repaired'|'failed'|'refused', reason: string }[]>([]);
-  const [currentFormRow, setCurrentFormRow] = useState<{ id: string, count: number, outcome: 'repaired'|'failed'|'refused', reason: string }>({ id: '', count: 1, outcome: 'repaired', reason: 'جاهز' });
+  const [showPartsModal, setShowPartsModal] = useState(false);
+  const [shopPartsList, setShopPartsList] = useState<ShopPartItem[]>([]);
+  const [actionItems, setActionItems] = useState<{
+    id: string,
+    count: number,
+    outcome: 'repaired'|'failed'|'refused',
+    reason: string,
+    hasNoParts?: boolean,
+    partsUsed?: DevicePartUsageItem[]
+  }[]>([]);
+  const [currentFormRow, setCurrentFormRow] = useState<{
+    id: string,
+    count: number,
+    outcome: 'repaired'|'failed'|'refused',
+    reason: string,
+    hasNoParts?: boolean,
+    partsUsed?: DevicePartUsageItem[]
+  }>({ id: '', count: 1, outcome: 'repaired', reason: 'جاهز', hasNoParts: true, partsUsed: [] });
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [showPreview, setShowPreview] = useState(false);
   const [shopConfig, setShopConfig] = useState<any>(null);
@@ -61,12 +79,37 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
   const itemsPerPage = 10;
 
   useEffect(() => {
+    const unsubStock = onSnapshot(collection(db, 'shop_parts_inventory'), (snap) => {
+      setShopPartsList(snap.docs.map(d => ({ id: d.id, ...d.data() } as ShopPartItem)));
+    });
+    return () => unsubStock();
+  }, []);
+
+  useEffect(() => {
     if (initialInvoice && items.length > 0 && !selectedInvoice) {
       const MAINTENANCE_ELIGIBLE_STATUSES = ['40', 'repairing'];
       const avItems = items.filter(i => i.invoiceNumber === initialInvoice.invoiceNumber && MAINTENANCE_ELIGIBLE_STATUSES.includes(i.status));
       
       if (avItems.length > 0) {
-        setActionItems([{ id: avItems[0].id!, count: 1, outcome: 'repaired', reason: 'جاهز' }]);
+        const first = avItems[0];
+        const inspParts = first.partsUsed || [];
+        const noParts = first.hasNoParts !== undefined ? first.hasNoParts : (inspParts.length === 0);
+        setActionItems([{
+          id: first.id!,
+          count: 1,
+          outcome: 'repaired',
+          reason: 'جاهز',
+          hasNoParts: noParts,
+          partsUsed: [...inspParts]
+        }]);
+        setCurrentFormRow({
+          id: first.id!,
+          count: 1,
+          outcome: 'repaired',
+          reason: 'جاهز',
+          hasNoParts: noParts,
+          partsUsed: [...inspParts]
+        });
       }
       setSelectedInvoice(initialInvoice);
     }
@@ -185,6 +228,11 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
     if (field === 'id') {
       const maxAllowed = getAvailableQuantity(value, editingIndex !== null ? editingIndex : -1);
       row.count = maxAllowed > 0 ? maxAllowed : 1;
+      const orig = invoiceItems.find(it => it.id === value);
+      const inspParts = orig?.partsUsed || [];
+      const noParts = orig?.hasNoParts !== undefined ? orig.hasNoParts : (inspParts.length === 0);
+      row.hasNoParts = noParts;
+      row.partsUsed = inspParts ? [...inspParts] : [];
     }
     if (field === 'outcome') {
       if (value === 'repaired') row.reason = 'جاهز';
@@ -336,6 +384,9 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
             failureReason: isFailedOrRefused ? row.reason : null,
             engineerReport: originalItem.engineerReport,
             technician: engineerName,
+            hasNoParts: (row as any).hasNoParts !== undefined ? (row as any).hasNoParts : (((row as any).partsUsed && (row as any).partsUsed.length > 0) ? false : true),
+            partsUsed: (row as any).partsUsed || [],
+            sparePartsCost: ((row as any).partsUsed || []).reduce((sum: number, p: any) => sum + (p.isScrap ? 0 : (Number(p.unitCost) || 0) * (Number(p.quantity) || 1)), 0),
             createdAt: originalItem.createdAt || serverTimestamp(),
             updatedAt: serverTimestamp()
           });
@@ -362,10 +413,61 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
             failureReason: isFailedOrRefused ? row.reason : null,
             engineerReport: originalItem.engineerReport,
             technician: engineerName,
+            hasNoParts: (row as any).hasNoParts !== undefined ? (row as any).hasNoParts : (((row as any).partsUsed && (row as any).partsUsed.length > 0) ? false : true),
+            partsUsed: (row as any).partsUsed || [],
+            sparePartsCost: ((row as any).partsUsed || []).reduce((sum: number, p: any) => sum + (p.isScrap ? 0 : (Number(p.unitCost) || 0) * (Number(p.quantity) || 1)), 0),
             entryDate: resolvedEntryDate,
             updatedAt: serverTimestamp()
           });
           itemRemaining.set(originalItem.id!, 0);
+        }
+      }
+
+      // Deduct electronic parts from shop_parts_inventory for repaired devices
+      for (const row of actionItems) {
+        if (!row.id || Number(row.count) <= 0 || row.outcome !== 'repaired') continue;
+        const parts = (row as any).partsUsed || [];
+        for (const p of parts) {
+          if (p.isScrap) continue; // Scrap parts are NOT deducted and cost 0
+          const partQty = Number(p.quantity) || 1;
+          const cleanName = (p.partName || '').trim();
+          if (!cleanName) continue;
+
+          const existingStock = shopPartsList.find(s => 
+            (s.partId && s.partId === p.partId) ||
+            s.name.trim().toLowerCase() === cleanName.toLowerCase() ||
+            s.id === p.partId
+          );
+
+          if (existingStock && existingStock.id) {
+            const currentQty = Number(existingStock.quantity) || 0;
+            const newQty = currentQty - partQty; // allows negative stock!
+            const newUsed = (Number(existingStock.usedQuantity) || 0) + partQty;
+            batch.update(doc(db, 'shop_parts_inventory', existingStock.id), {
+              quantity: newQty,
+              usedQuantity: newUsed,
+              updatedAt: serverTimestamp()
+            });
+          } else {
+            // Negative stock item
+            const newStockRef = doc(collection(db, 'shop_parts_inventory'));
+            const newStockItem: ShopPartItem = {
+              id: newStockRef.id,
+              partId: p.partId || cleanName.replace(/[\/\\]/g, '_'),
+              name: cleanName,
+              itemType: 'electronic_part',
+              groupId: p.groupId || '',
+              groupName: p.groupName || 'عام',
+              category: p.groupName || 'عام',
+              quantity: 0 - partQty,
+              usedQuantity: partQty,
+              unitCost: Number(p.unitCost) || 0,
+              salePrice: Number(p.unitSalePrice) || 0,
+              createdAt: serverTimestamp(),
+              updatedAt: serverTimestamp()
+            };
+            batch.set(newStockRef, newStockItem);
+          }
         }
       }
       
@@ -1002,21 +1104,53 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                </div>
 
                {/* تقرير الصيانة */}
-               <div className="flex flex-row items-center gap-2.5 w-full">
-                 <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">تقرير الصيانة</label>
-                 <input 
-                   type="text"
-                   value={currentFormRow.reason}
-                   onChange={e => handleUpdateCurrentForm('reason', e.target.value)}
-                   onFocus={(e) => {
-                     e.target.select();
-                     e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                   }}
-                   onClick={(e) => {
-                     e.currentTarget.select();
-                   }}
-                   className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 focus:border-orange-500 outline-none transition-all text-xs text-right text-white box-border"
-                 />
+               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full">
+                 <div className="flex flex-row items-center gap-2.5 flex-1">
+                   <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">تقرير الصيانة</label>
+                   <input 
+                     type="text"
+                     value={currentFormRow.reason}
+                     onChange={e => handleUpdateCurrentForm('reason', e.target.value)}
+                     onFocus={(e) => {
+                       e.target.select();
+                       e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                     }}
+                     onClick={(e) => {
+                       e.currentTarget.select();
+                     }}
+                     className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 focus:border-orange-500 outline-none transition-all text-xs text-right text-white box-border"
+                   />
+                 </div>
+
+                 {/* مربع اختيار بدون قطع + زر عرض / تحديد القطع */}
+                 <div className="flex items-center gap-2 bg-white/5 border border-white/10 p-1.5 px-3 rounded-xl shrink-0">
+                   <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                     <input
+                       type="checkbox"
+                       checked={currentFormRow.hasNoParts ?? true}
+                       onChange={(e) => {
+                         const checked = e.target.checked;
+                         setCurrentFormRow(prev => ({
+                           ...prev,
+                           hasNoParts: checked,
+                           partsUsed: checked ? [] : prev.partsUsed
+                         }));
+                       }}
+                       className="w-4 h-4 rounded text-orange-600 focus:ring-0 cursor-pointer"
+                     />
+                     <span className="text-xs font-bold text-gray-300 whitespace-nowrap">بدون قطع</span>
+                   </label>
+
+                   <button
+                     type="button"
+                     disabled={currentFormRow.hasNoParts ?? true}
+                     onClick={() => setShowPartsModal(true)}
+                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border whitespace-nowrap ${(currentFormRow.hasNoParts ?? true) ? "bg-white/5 text-gray-600 border-white/5 cursor-not-allowed opacity-40" : "bg-orange-600/30 hover:bg-orange-600 text-orange-300 hover:text-white border-orange-500/40 cursor-pointer shadow-sm"}`}
+                   >
+                     <Cpu size={14} />
+                     <span>عرض / تعديل القطع {(currentFormRow.partsUsed && currentFormRow.partsUsed.length > 0) ? `(${currentFormRow.partsUsed.length})` : ""}</span>
+                   </button>
+                 </div>
                </div>
 
                {/* تقرير الفحص والمشكلة */}
@@ -1147,10 +1281,31 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
              معاينة للتعديل والترحيل
            </button>
         </div>
-      </div>
-    );
-  }
 
+      {/* Electronic Parts Selection Modal (Form View) */}
+      {showPartsModal && (() => {
+        const selectedItem = invoiceItems.find(i => i.id === currentFormRow.id);
+        return (
+          <ElectronicPartsSelectionModal
+            isOpen={showPartsModal}
+            mode="maintenance"
+            deviceName={selectedItem?.deviceName}
+            deviceType={selectedItem?.deviceType}
+            initialParts={currentFormRow.partsUsed || []}
+            onClose={() => setShowPartsModal(false)}
+            onConfirm={(parts) => {
+              setCurrentFormRow(prev => ({
+                ...prev,
+                partsUsed: parts,
+                hasNoParts: parts.length > 0 ? false : prev.hasNoParts
+              }));
+            }}
+          />
+        );
+      })()}
+    </div>
+  );
+}
   return (
     <div className="w-full max-w-full overflow-x-hidden space-y-4 pb-20 relative" dir="rtl">
 
@@ -1264,6 +1419,27 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
           </div>
         )}
       </div>
+      {/* Electronic Parts Selection Modal (List view fallback) */}
+      {showPartsModal && (() => {
+        const selectedItem = invoiceItems.find(i => i.id === currentFormRow.id);
+        return (
+          <ElectronicPartsSelectionModal
+            isOpen={showPartsModal}
+            mode="maintenance"
+            deviceName={selectedItem?.deviceName}
+            deviceType={selectedItem?.deviceType}
+            initialParts={currentFormRow.partsUsed || []}
+            onClose={() => setShowPartsModal(false)}
+            onConfirm={(parts) => {
+              setCurrentFormRow(prev => ({
+                ...prev,
+                partsUsed: parts,
+                hasNoParts: parts.length > 0 ? false : prev.hasNoParts
+              }));
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

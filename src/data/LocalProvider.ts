@@ -187,16 +187,22 @@ export class LocalProvider implements IDataProvider {
         }
       });
 
+      if (!finalData.id && id) {
+        finalData.id = id;
+      }
       const fields = Object.keys(finalData);
       
       if (fields.length > 0) {
         const placeholders = fields.map(() => '?').join(', ');
-        const updatePlaceholders = fields.map(f => `${f} = ?`).join(', ');
+        const updateFields = fields.filter(f => f !== 'id');
+        const updatePlaceholders = updateFields.map(f => `${f} = ?`).join(', ');
 
         if (existing.values && existing.values.length > 0) {
-          await localDb.run(`UPDATE ${collectionName} SET ${updatePlaceholders} WHERE id = ?`, [...Object.values(finalData), id]);
+          if (updateFields.length > 0) {
+            await localDb.run(`UPDATE ${collectionName} SET ${updatePlaceholders} WHERE id = ?`, [...updateFields.map(f => finalData[f]), id]);
+          }
         } else {
-          await localDb.run(`INSERT OR REPLACE INTO ${collectionName} (id, ${fields.join(', ')}) VALUES (?, ${placeholders})`, [id, ...Object.values(finalData)]);
+          await localDb.run(`INSERT OR REPLACE INTO ${collectionName} (${fields.join(', ')}) VALUES (${placeholders})`, fields.map(f => finalData[f]));
         }
       } else if (!existing.values || existing.values.length === 0) {
         // Just insert ID if no other valid fields exist

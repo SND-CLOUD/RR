@@ -7,8 +7,10 @@ import { db } from '../../firebase';
 import { Invoice, InvoiceItem, User, Customer, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../../types';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useTranslation } from 'react-i18next';
-import { Search, ArrowLeft, ArrowUpRight, ArrowRight, LogOut, Search as SearchIcon, ClipboardCheck, HardDrive, User as UserIcon, Settings, Plus, Save, Loader2, DollarSign, X, Check, AlertTriangle, Printer, Phone, Smartphone, MessageCircle, MapPin, Facebook } from 'lucide-react';
+import { Search, ArrowLeft, ArrowUpRight, ArrowRight, LogOut, Search as SearchIcon, ClipboardCheck, HardDrive, User as UserIcon, Settings, Plus, Save, Loader2, DollarSign, X, Check, AlertTriangle, Printer, Phone, Smartphone, MessageCircle, MapPin, Facebook, Cpu } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { ElectronicPartsSelectionModal } from '../ElectronicPartsSelectionModal';
+import { DevicePartUsageItem } from '../../types';
 import BankAccountsFooter from '../BankAccountsFooter';
 import PrintPreviewOverlay from '../PrintPreviewOverlay';
 import jsPDF from 'jspdf';
@@ -294,6 +296,8 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
     return c ? (c.name || c.companyName) : '---';
   };
 
+  const [showPartsModal, setShowPartsModal] = useState(false);
+
   const [currentActionItem, setCurrentActionItem] = useState<{
     id: string,
     count: number | '',
@@ -303,7 +307,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
     unitCost: number,
     cost: number,
     decision: 'repairing' | 'intact' | 'unrepairable',
-    isWarrantyReturn?: boolean
+    isWarrantyReturn?: boolean,
+    hasNoParts?: boolean,
+    partsUsed?: DevicePartUsageItem[]
   }>({
     id: '',
     count: 1,
@@ -313,7 +319,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
     unitCost: 0,
     cost: 0,
     decision: 'repairing',
-    isWarrantyReturn: false
+    isWarrantyReturn: false,
+    hasNoParts: true,
+    partsUsed: []
   });
 
   const setSyncedCurrentActionItem = (item: any) => {
@@ -329,7 +337,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
       report: finalReport,
       technical,
       outcome,
-      isWarrantyReturn: item.isWarrantyReturn !== undefined ? !!item.isWarrantyReturn : false
+      isWarrantyReturn: item.isWarrantyReturn !== undefined ? !!item.isWarrantyReturn : false,
+      hasNoParts: item.hasNoParts !== undefined ? item.hasNoParts : ((item.partsUsed && item.partsUsed.length > 0) ? false : true),
+      partsUsed: item.partsUsed || []
     });
   };
 
@@ -342,7 +352,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         report: actionItem.report,
         unitCost: actionItem.unitCost,
         cost: actionItem.cost,
-        isWarrantyReturn: actionItem.isWarrantyReturn
+        isWarrantyReturn: actionItem.isWarrantyReturn,
+        hasNoParts: actionItem.hasNoParts,
+        partsUsed: actionItem.partsUsed
       };
     }
     // Second, check the original items or invoiceItems list
@@ -357,7 +369,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         report: originalItem.engineerReport || (initialDecision === 'repairing' ? 'الجهاز بحاجة إلى صيانة | تشغيل كامل للجهاز' : initialDecision === 'intact' ? 'سليم' : 'لايصلح'),
         unitCost: isWarranty ? 0 : (originalItem.cost || 0),
         cost: isWarranty ? 0 : (originalItem.cost || 0),
-        isWarrantyReturn: isWarranty
+        isWarrantyReturn: isWarranty,
+        hasNoParts: originalItem.hasNoParts !== undefined ? originalItem.hasNoParts : (originalItem.partsUsed && originalItem.partsUsed.length > 0 ? false : true),
+        partsUsed: originalItem.partsUsed || []
       };
     }
     return null;
@@ -932,6 +946,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
             engineerReport: row.report,
             cost: resolvedCost,
             technician: engineerName,
+            hasNoParts: (row as any).hasNoParts !== undefined ? (row as any).hasNoParts : (((row as any).partsUsed && (row as any).partsUsed.length > 0) ? false : true),
+            partsUsed: (row as any).partsUsed || [],
+            sparePartsCost: ((row as any).partsUsed || []).reduce((sum: number, p: any) => sum + (p.isScrap ? 0 : (Number(p.unitCost) || 0) * (Number(p.quantity) || 1)), 0),
             createdAt: originalItem.createdAt || serverTimestamp(),
             updatedAt: serverTimestamp()
           });
@@ -955,6 +972,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
             engineerReport: row.report,
             cost: resolvedCost,
             technician: engineerName,
+            hasNoParts: (row as any).hasNoParts !== undefined ? (row as any).hasNoParts : (((row as any).partsUsed && (row as any).partsUsed.length > 0) ? false : true),
+            partsUsed: (row as any).partsUsed || [],
+            sparePartsCost: ((row as any).partsUsed || []).reduce((sum: number, p: any) => sum + (p.isScrap ? 0 : (Number(p.unitCost) || 0) * (Number(p.quantity) || 1)), 0),
             entryDate: resolvedEntryDate,
             updatedAt: serverTimestamp()
           });
@@ -1622,21 +1642,52 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                 <div className="space-y-4 w-full">
                   <div className="flex items-start gap-3 w-full">
                     <label className="text-xs text-gray-500 whitespace-nowrap w-20 mt-3">التقرير الفني</label>
-                    <textarea 
-                      value={currentActionItem.technical || ''}
-                      onChange={e => {
-                        handleUpdateCurrentField('technical', e.target.value);
-                      }}
-                      onFocus={(e) => {
-                        e.target.select();
-                        e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
-                      }}
-                      onClick={(e) => {
-                        (e.target as HTMLTextAreaElement).select();
-                      }}
-                      className="flex-1 bg-black/40 border border-white/10 px-4 py-2 focus:border-purple-500 outline-none transition-all h-12 resize-none rounded-xl text-right leading-relaxed"
-                      placeholder="أدخل التقرير الفني..."
-                    />
+                    <div className="flex-1 flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
+                      <textarea 
+                        value={currentActionItem.technical || ''}
+                        onChange={e => {
+                          handleUpdateCurrentField('technical', e.target.value);
+                        }}
+                        onFocus={(e) => {
+                          e.target.select();
+                          e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                        }}
+                        onClick={(e) => {
+                          (e.target as HTMLTextAreaElement).select();
+                        }}
+                        className="flex-1 bg-black/40 border border-white/10 px-4 py-2 focus:border-purple-500 outline-none transition-all h-12 resize-none rounded-xl text-right leading-relaxed"
+                        placeholder="أدخل التقرير الفني..."
+                      />
+
+                      {/* مربع اختيار بدون قطع + زر تحديد القطع بجوار التقرير الفني */}
+                      <div className="flex items-center gap-2 bg-white/5 border border-white/10 p-1.5 px-3 rounded-xl shrink-0">
+                        <label className="flex items-center gap-1.5 cursor-pointer select-none">
+                          <input
+                            type="checkbox"
+                            checked={currentActionItem.hasNoParts ?? true}
+                            onChange={(e) => {
+                              const checked = e.target.checked;
+                              handleUpdateCurrentField('hasNoParts', checked);
+                              if (checked) {
+                                handleUpdateCurrentField('partsUsed', []);
+                              }
+                            }}
+                            className="w-4 h-4 rounded text-purple-600 focus:ring-0 cursor-pointer"
+                          />
+                          <span className="text-xs font-bold text-gray-300 whitespace-nowrap">بدون قطع</span>
+                        </label>
+
+                        <button
+                          type="button"
+                          disabled={currentActionItem.hasNoParts ?? true}
+                          onClick={() => setShowPartsModal(true)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border whitespace-nowrap ${(currentActionItem.hasNoParts ?? true) ? 'bg-white/5 text-gray-600 border-white/5 cursor-not-allowed opacity-40' : 'bg-purple-600/30 hover:bg-purple-600 text-purple-300 hover:text-white border-purple-500/40 cursor-pointer shadow-sm'}`}
+                        >
+                          <Cpu size={14} />
+                          <span>تحديد القطع {(currentActionItem.partsUsed && currentActionItem.partsUsed.length > 0) ? `(${currentActionItem.partsUsed.length})` : ''}</span>
+                        </button>
+                      </div>
+                    </div>
                   </div>
                   <div className="flex items-start gap-3 w-full">
                     <label className="text-xs text-gray-500 whitespace-nowrap w-20 mt-3">نتيجة الصيانة</label>
@@ -1817,10 +1868,31 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
              </button>
           </div>
         </div>
-      </div>
-    );
-  }
 
+
+      {/* Electronic Parts Selection Modal (Form view) */}
+      {showPartsModal && (() => {
+        const selectedItem = items.find(i => i.id === currentActionItem.id) || invoiceItems.find(i => i.id === currentActionItem.id);
+        return (
+          <ElectronicPartsSelectionModal
+            isOpen={showPartsModal}
+            mode="inspection"
+            deviceName={selectedItem?.deviceName}
+            deviceType={selectedItem?.deviceType}
+            initialParts={currentActionItem.partsUsed || []}
+            onClose={() => setShowPartsModal(false)}
+            onConfirm={(parts) => {
+              handleUpdateCurrentField('partsUsed', parts);
+              if (parts.length > 0) {
+                handleUpdateCurrentField('hasNoParts', false);
+              }
+            }}
+          />
+        );
+      })()}
+    </div>
+  );
+}
   return (
     <div className="w-full max-w-full overflow-x-hidden space-y-6 pb-20 relative" dir="rtl">
       {/* Toast Alert Container */}
@@ -2250,6 +2322,26 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
           </div>
         )}
       </AnimatePresence>
+      {/* Electronic Parts Selection Modal (List view fallback) */}
+      {showPartsModal && (() => {
+        const selectedItem = items.find(i => i.id === currentActionItem.id) || invoiceItems.find(i => i.id === currentActionItem.id);
+        return (
+          <ElectronicPartsSelectionModal
+            isOpen={showPartsModal}
+            mode="inspection"
+            deviceName={selectedItem?.deviceName}
+            deviceType={selectedItem?.deviceType}
+            initialParts={currentActionItem.partsUsed || []}
+            onClose={() => setShowPartsModal(false)}
+            onConfirm={(parts) => {
+              handleUpdateCurrentField('partsUsed', parts);
+              if (parts.length > 0) {
+                handleUpdateCurrentField('hasNoParts', false);
+              }
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

@@ -300,7 +300,10 @@ class LocalDatabase {
           updatedAt TEXT,
           updatedBy TEXT,
           customerId TEXT,
-          customerName TEXT
+          customerName TEXT,
+          hasNoParts INTEGER DEFAULT 1,
+          partsUsed TEXT,
+          sparePartsCost REAL DEFAULT 0
         );
 
         CREATE TABLE IF NOT EXISTS vault_transactions (
@@ -532,6 +535,7 @@ class LocalDatabase {
           id TEXT PRIMARY KEY,
           name TEXT,
           orderIndex INTEGER DEFAULT 0,
+          description TEXT,
           notes TEXT,
           createdAt TEXT,
           updatedAt TEXT
@@ -803,12 +807,17 @@ class LocalDatabase {
             id TEXT PRIMARY KEY,
             name TEXT,
             orderIndex INTEGER DEFAULT 0,
+            description TEXT,
             notes TEXT,
             createdAt TEXT,
             updatedAt TEXT
           );
         `);
       } catch (err) {}
+
+      try {
+        await this.db.run(`ALTER TABLE electronic_part_groups ADD COLUMN description TEXT`);
+      } catch (e) {}
 
       // Ensure parts_catalog columns exist for electronic parts
       const partCatalogCols = [
@@ -931,6 +940,9 @@ class LocalDatabase {
       try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN batchTotalCost REAL'); } catch (err) {}
       try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN purchaseDate TEXT'); } catch (err) {}
       try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN partInventoryId TEXT'); } catch (err) {}
+      try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN hasNoParts INTEGER DEFAULT 1'); } catch (err) {}
+      try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN partsUsed TEXT'); } catch (err) {}
+      try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN sparePartsCost REAL DEFAULT 0'); } catch (err) {}
       try { await this.db.run('ALTER TABLE shop_parts_inventory ADD COLUMN purchaseInvoiceId TEXT'); } catch (err) {}
       try { await this.db.run('ALTER TABLE shop_parts_inventory ADD COLUMN purchaseInvoiceNumber TEXT'); } catch (err) {}
 

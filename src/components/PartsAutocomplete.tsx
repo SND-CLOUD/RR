@@ -12,6 +12,8 @@ interface PartsAutocompleteProps {
   showStockStatus?: boolean;
   filterItemType?: 'electronic_part' | 'accessory_part' | 'all';
   filterGroupId?: string;
+  requireGroup?: boolean;
+  disabled?: boolean;
 }
 
 export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
@@ -22,7 +24,9 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
   className = '',
   showStockStatus = false,
   filterItemType,
-  filterGroupId
+  filterGroupId,
+  requireGroup = false,
+  disabled = false
 }) => {
   const [catalogItems, setCatalogItems] = useState<PartCatalogItem[]>([]);
   const [shopParts, setShopParts] = useState<ShopPartItem[]>([]);
@@ -160,13 +164,16 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
     allList = Array.from(combinedItemsMap.values());
   }
 
-  const filtered = allList.filter(item => {
+  const isGroupMissing = requireGroup && (!filterGroupId || !filterGroupId.trim());
+
+  const filtered = isGroupMissing ? [] : allList.filter(item => {
     if (filterItemType && filterItemType !== 'all') {
       const it = item.itemType || 'accessory_part';
       if (it !== filterItemType) return false;
     }
     if (filterGroupId && filterGroupId.trim()) {
-      if (item.groupId !== filterGroupId) return false;
+      const match = item.groupId === filterGroupId || item.groupName === filterGroupId;
+      if (!match) return false;
     }
     return (
       item.name.toLowerCase().includes((value || '').toLowerCase()) ||
@@ -180,7 +187,7 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
     <div ref={wrapperRef} className={`relative w-full ${className}`}>
       <div className="relative flex items-center">
         {/* Transparent overlay to intercept first click and prevent keyboard */}
-        {!isOpen && (
+        {!isOpen && !disabled && (
           <div 
             className="absolute inset-0 z-10 cursor-pointer" 
             onClick={(e) => {
@@ -194,30 +201,33 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
         <input
           type="text"
           value={value}
+          disabled={disabled}
           onChange={(e) => {
             onChange(e.target.value);
             setIsOpen(true);
           }}
           onFocus={(e) => {
-      // If menu is closed, this is the first tap.
-      if (!isOpen) {
-        setIsOpen(true);
-        // Force blur immediately to hide keyboard on first tap
-        e.currentTarget.blur();
-        setIsReadOnly(true);
-      }
-    }}
-    onClick={(e) => {
-      // If menu is already open and they tap again, let them type
-      if (isOpen && isReadOnly) {
-        setIsReadOnly(false);
-        e.currentTarget.focus();
-      }
-    }}
-    readOnly={isReadOnly}
-    inputMode={isReadOnly ? "none" : "text"}
-          placeholder={placeholder}
-          className="w-full bg-[#121212] border border-white/10 rounded-xl px-3 py-2.5 pl-9 text-xs font-bold text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 font-cairo transition-all"
+            if (disabled) return;
+            // If menu is closed, this is the first tap.
+            if (!isOpen) {
+              setIsOpen(true);
+              // Force blur immediately to hide keyboard on first tap
+              e.currentTarget.blur();
+              setIsReadOnly(true);
+            }
+          }}
+          onClick={(e) => {
+            if (disabled) return;
+            // If menu is already open and they tap again, let them type
+            if (isOpen && isReadOnly) {
+              setIsReadOnly(false);
+              e.currentTarget.focus();
+            }
+          }}
+          readOnly={isReadOnly}
+          inputMode={isReadOnly ? "none" : "text"}
+          placeholder={isGroupMissing ? 'قم باختيار نوع أو مجموعة محددة أولاً...' : placeholder}
+          className={`w-full bg-[#121212] border border-white/10 rounded-xl px-3 py-2.5 pl-9 text-xs font-bold text-white placeholder-gray-500 focus:outline-none focus:border-emerald-500 font-cairo transition-all ${disabled ? 'opacity-40 cursor-not-allowed' : ''}`}
         />
         <ChevronDown size={14} className="absolute left-3 text-gray-400 pointer-events-none" />
       </div>
@@ -277,8 +287,17 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
             </div>
           ) : (
             <div className="p-4 text-center">
-              <p className="text-xs text-gray-400 mb-1">لم يتم العثور على صنف مطابق بهذا الاسم</p>
-              <p className="text-[10px] text-emerald-400 font-bold">يمكنك الاستمرار بكتابة الاسم الجديد وسيتم اعتماده مباشرة</p>
+              {isGroupMissing ? (
+                <>
+                  <p className="text-xs text-amber-400 font-bold mb-1">الرجاء اختيار المجموعة أولاً</p>
+                  <p className="text-[10px] text-gray-400">لابد من تحديد مجموعة القطع الإلكترونية من القائمة أعلاه لعرض الأصناف التابعة لها</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-xs text-gray-400 mb-1">لم يتم العثور على صنف مطابق بهذا الاسم</p>
+                  <p className="text-[10px] text-emerald-400 font-bold">يمكنك الاستمرار بكتابة الاسم الجديد وسيتم اعتماده مباشرة</p>
+                </>
+              )}
             </div>
           )}
         </div>
