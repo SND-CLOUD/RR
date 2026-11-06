@@ -295,7 +295,10 @@ export default function ShopPartsStockView() {
   // Inventory Totals (Derived from baseFilteredStock to reflect current Tab/Group/Search)
   const availableItemsCount = baseFilteredStock.filter(i => Number(i.quantity || 0) > 0).length;
   const soldItemsCount = baseFilteredStock.filter(i => Number(i.quantity || 0) <= 0).length;
-  const totalStockQuantity = baseFilteredStock.reduce((acc, i) => acc + Math.max(0, Number(i.quantity || 0)), 0);
+  const availableStockPieces = baseFilteredStock.reduce((acc, i) => acc + Math.max(0, Number(i.quantity || 0)), 0);
+  const soldStockPieces = baseFilteredStock.reduce((acc, i) => acc + Math.max(0, Number(i.usedQuantity || 0)), 0);
+  const totalStockPieces = availableStockPieces + soldStockPieces;
+  const totalStockQuantity = availableStockPieces;
   const totalStockSaleValue = baseFilteredStock.reduce((acc, i) => acc + (Math.max(0, Number(i.quantity || 0)) * Number(i.salePrice || 0)), 0);
 
   // Batches Totals (Derived from filteredBatches to reflect search)
@@ -468,7 +471,7 @@ export default function ShopPartsStockView() {
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
                 }`}
               >
-                المتاح ({availableItemsCount})
+                المتاح ({availableStockPieces})
               </button>
               <button
                 onClick={() => setStockFilter('sold')}
@@ -478,7 +481,7 @@ export default function ShopPartsStockView() {
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
                 }`}
               >
-                المباعة ({soldItemsCount})
+                المباعة ({soldStockPieces})
               </button>
               <button
                 onClick={() => setStockFilter('all')}
@@ -488,7 +491,7 @@ export default function ShopPartsStockView() {
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
                 }`}
               >
-                الكل ({baseFilteredStock.length})
+                الكل ({totalStockPieces})
               </button>
             </div>
           </div>

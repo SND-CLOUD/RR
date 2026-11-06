@@ -26,6 +26,7 @@ export class LocalProvider implements IDataProvider {
     });
     if (res.values && res.values.length > 0) {
       const data = { ...res.values[0] };
+      this.deserializeDocFields(data);
       this.wrapDatesInObject(data);
       return {
         exists: () => true,
@@ -67,12 +68,7 @@ export class LocalProvider implements IDataProvider {
     });
     const docs = (res.values || []).map(rawDoc => {
       const docData = { ...rawDoc };
-      if (docData.updates && typeof docData.updates === 'string') {
-        try { docData.updates = JSON.parse(docData.updates); } catch (e) {}
-      }
-      if (docData.permissions && typeof docData.permissions === 'string') {
-        try { docData.permissions = JSON.parse(docData.permissions); } catch (e) {}
-      }
+      this.deserializeDocFields(docData);
       this.wrapDatesInObject(docData);
       return {
         id: docData.id,
@@ -376,12 +372,7 @@ export class LocalProvider implements IDataProvider {
 
         const docs = filtered.map(doc => {
           const docData = { ...doc };
-          if (docData.updates && typeof docData.updates === 'string') {
-            try { docData.updates = JSON.parse(docData.updates); } catch (e) {}
-          }
-          if (docData.permissions && typeof docData.permissions === 'string') {
-            try { docData.permissions = JSON.parse(docData.permissions); } catch (e) {}
-          }
+          this.deserializeDocFields(docData);
           this.wrapDatesInObject(docData);
           return {
             id: docData.id,
@@ -421,9 +412,7 @@ export class LocalProvider implements IDataProvider {
               Object.assign(docData, parsed);
             } catch (e) {}
           }
-          if (docData.permissions && typeof docData.permissions === 'string') {
-            try { docData.permissions = JSON.parse(docData.permissions); } catch (e) {}
-          }
+          this.deserializeDocFields(docData);
           this.wrapDatesInObject(docData);
           callback({
             exists: () => true,
@@ -498,6 +487,28 @@ export class LocalProvider implements IDataProvider {
   }
 
   // --- Helper Methods ---
+  private deserializeDocFields(docData: any): void {
+    if (!docData || typeof docData !== 'object') return;
+    if (docData.updates && typeof docData.updates === 'string') {
+      try { docData.updates = JSON.parse(docData.updates); } catch (e) {}
+    }
+    if (docData.permissions && typeof docData.permissions === 'string') {
+      try { docData.permissions = JSON.parse(docData.permissions); } catch (e) {}
+    }
+    if (docData.partsUsed && typeof docData.partsUsed === 'string') {
+      try {
+        let parsed = JSON.parse(docData.partsUsed);
+        // Handle double-encoded JSON string
+        if (typeof parsed === 'string' && (parsed.startsWith('[') || parsed.startsWith('{'))) {
+          try { parsed = JSON.parse(parsed); } catch (e) {}
+        }
+        docData.partsUsed = Array.isArray(parsed) ? parsed : [];
+      } catch (e) {
+        docData.partsUsed = [];
+      }
+    }
+  }
+
   private wrapDatesInObject(obj: any) {
     if (!obj) return;
     if (Array.isArray(obj)) {

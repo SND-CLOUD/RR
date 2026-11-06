@@ -200,9 +200,19 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
     setEngineerName(existingTech || user?.name || "");
     
     if (avItems.length > 0) {
-      const firstId = avItems[0].id!;
-      const availCount = avItems[0].quantity || 1;
-      setCurrentFormRow({ id: firstId, count: availCount, outcome: 'repaired', reason: 'جاهز' });
+      const first = avItems[0];
+      const firstId = first.id!;
+      const availCount = first.quantity || 1;
+      const inspParts = first.partsUsed || [];
+      const noParts = first.hasNoParts !== undefined ? first.hasNoParts : (inspParts.length === 0);
+      setCurrentFormRow({
+        id: firstId,
+        count: availCount,
+        outcome: 'repaired',
+        reason: 'جاهز',
+        hasNoParts: noParts,
+        partsUsed: inspParts ? [...inspParts] : []
+      });
       setActionItems([]);
     }
   };
@@ -236,8 +246,16 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
     }
     if (field === 'outcome') {
       if (value === 'repaired') row.reason = 'جاهز';
-      else if (value === 'failed') row.reason = 'لا يصلح';
-      else if (value === 'refused') row.reason = 'لم يوافق العميل';
+      else if (value === 'failed') {
+        row.reason = 'لا يصلح';
+        row.hasNoParts = true;
+        row.partsUsed = [];
+      }
+      else if (value === 'refused') {
+        row.reason = 'لم يوافق العميل';
+        row.hasNoParts = true;
+        row.partsUsed = [];
+      }
     }
     setCurrentFormRow(row);
   };
@@ -271,9 +289,18 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
     if (availableItem) {
         const used = newActionItems.reduce((acc, row) => row.id === availableItem.id ? acc + row.count : acc, 0);
         const availCount = availableItem.quantity - used;
-        setCurrentFormRow({ id: availableItem.id!, count: availCount > 0 ? availCount : 1, outcome: 'repaired', reason: 'جاهز' });
+        const inspParts = availableItem.partsUsed || [];
+        const noParts = availableItem.hasNoParts !== undefined ? availableItem.hasNoParts : (inspParts.length === 0);
+        setCurrentFormRow({
+          id: availableItem.id!,
+          count: availCount > 0 ? availCount : 1,
+          outcome: 'repaired',
+          reason: 'جاهز',
+          hasNoParts: noParts,
+          partsUsed: inspParts ? [...inspParts] : []
+        });
     } else {
-        setCurrentFormRow({ id: '', count: 1, outcome: 'repaired', reason: 'جاهز' });
+        setCurrentFormRow({ id: '', count: 1, outcome: 'repaired', reason: 'جاهز', hasNoParts: true, partsUsed: [] });
     }
   };
 
@@ -282,9 +309,18 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
       const availableItem = invoiceItems.find(it => getAvailableQuantity(it.id!, -1) > 0);
       if (availableItem) {
         const availCount = getAvailableQuantity(availableItem.id!, -1);
-        setCurrentFormRow({ id: availableItem.id!, count: availCount > 0 ? availCount : 1, outcome: 'repaired', reason: 'جاهز' });
+        const inspParts = availableItem.partsUsed || [];
+        const noParts = availableItem.hasNoParts !== undefined ? availableItem.hasNoParts : (inspParts.length === 0);
+        setCurrentFormRow({
+          id: availableItem.id!,
+          count: availCount > 0 ? availCount : 1,
+          outcome: 'repaired',
+          reason: 'جاهز',
+          hasNoParts: noParts,
+          partsUsed: inspParts ? [...inspParts] : []
+        });
       } else {
-        setCurrentFormRow({ id: '', count: 1, outcome: 'repaired', reason: 'جاهز' });
+        setCurrentFormRow({ id: '', count: 1, outcome: 'repaired', reason: 'جاهز', hasNoParts: true, partsUsed: [] });
       }
   };
 
@@ -1123,11 +1159,11 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                  </div>
 
                  {/* مربع اختيار بدون قطع + زر عرض / تحديد القطع */}
-                 <div className="flex items-center gap-2 bg-white/5 border border-white/10 p-1.5 px-3 rounded-xl shrink-0">
+                 <div className={`flex items-center gap-2 bg-white/5 border border-white/10 p-1.5 px-3 rounded-xl shrink-0 ${currentFormRow.outcome !== "repaired" ? "opacity-40 grayscale pointer-events-none" : ""}`}>
                    <label className="flex items-center gap-1.5 cursor-pointer select-none">
                      <input
                        type="checkbox"
-                       checked={currentFormRow.hasNoParts ?? true}
+                       checked={currentFormRow.hasNoParts ?? true} disabled={currentFormRow.outcome !== "repaired"}
                        onChange={(e) => {
                          const checked = e.target.checked;
                          setCurrentFormRow(prev => ({
@@ -1136,21 +1172,38 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                            partsUsed: checked ? [] : prev.partsUsed
                          }));
                        }}
-                       className="w-4 h-4 rounded text-orange-600 focus:ring-0 cursor-pointer"
+                       className="w-4 h-4 rounded text-orange-600 focus:ring-0 cursor-pointer disabled:cursor-not-allowed"
                      />
                      <span className="text-xs font-bold text-gray-300 whitespace-nowrap">بدون قطع</span>
                    </label>
 
                    <button
                      type="button"
-                     disabled={currentFormRow.hasNoParts ?? true}
+                     disabled={(currentFormRow.hasNoParts ?? true) || currentFormRow.outcome !== "repaired"}
                      onClick={() => setShowPartsModal(true)}
-                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border whitespace-nowrap ${(currentFormRow.hasNoParts ?? true) ? "bg-white/5 text-gray-600 border-white/5 cursor-not-allowed opacity-40" : "bg-orange-600/30 hover:bg-orange-600 text-orange-300 hover:text-white border-orange-500/40 cursor-pointer shadow-sm"}`}
+                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border whitespace-nowrap ${((currentFormRow.hasNoParts ?? true) || currentFormRow.outcome !== "repaired") ? "bg-white/5 text-gray-600 border-white/5 cursor-not-allowed opacity-40" : "bg-orange-600/30 hover:bg-orange-600 text-orange-300 hover:text-white border-orange-500/40 cursor-pointer shadow-sm"}`}
                    >
                      <Cpu size={14} />
                      <span>عرض / تعديل القطع {(currentFormRow.partsUsed && currentFormRow.partsUsed.length > 0) ? `(${currentFormRow.partsUsed.length})` : ""}</span>
                    </button>
                  </div>
+
+                  {/* حقل عرض قطع الغيار المختارة */}
+                  <div className="flex flex-row items-center gap-2.5 w-full">
+                    <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">قطع الغيار</label>
+                    <div className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white overflow-x-auto whitespace-nowrap scrollbar-thin scrollbar-thumb-white/10 flex items-center min-h-[36px]">
+                      {(!currentFormRow.partsUsed || currentFormRow.partsUsed.length === 0) ? (
+                        <span className="text-gray-500">بدون قطع</span>
+                      ) : (
+                        currentFormRow.partsUsed.map((p, idx) => (
+                          <span key={idx}>
+                            {idx > 0 && <span className="mx-1 text-gray-600">/</span>}
+                            <span className="font-mono">{p.partName}-{p.quantity}</span>
+                          </span>
+                        ))
+                      )}
+                    </div>
+                  </div>
                </div>
 
                {/* تقرير الفحص والمشكلة */}

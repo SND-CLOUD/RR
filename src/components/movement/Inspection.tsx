@@ -473,11 +473,15 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         item.technical = 'سليم';
         item.outcome = '';
         item.report = 'سليم | ';
+        item.hasNoParts = true;
+        item.partsUsed = [];
       }
       else if (value === 'unrepairable') {
         item.technical = 'لا يصلح';
         item.outcome = '';
         item.report = 'لا يصلح | ';
+        item.hasNoParts = true;
+        item.partsUsed = [];
       }
     } else if (field === 'count' || field === 'unitCost') {
       if (selectedInvoice && selectedInvoice.status !== '21') {
@@ -1660,11 +1664,12 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                       />
 
                       {/* مربع اختيار بدون قطع + زر تحديد القطع بجوار التقرير الفني */}
-                      <div className="flex items-center gap-2 bg-white/5 border border-white/10 p-1.5 px-3 rounded-xl shrink-0">
+                      <div className={`flex items-center gap-2 bg-white/5 border border-white/10 p-1.5 px-3 rounded-xl shrink-0 ${currentActionItem.decision !== 'repairing' ? 'opacity-40 grayscale pointer-events-none' : ''}`}>
                         <label className="flex items-center gap-1.5 cursor-pointer select-none">
                           <input
                             type="checkbox"
                             checked={currentActionItem.hasNoParts ?? true}
+                            disabled={currentActionItem.decision !== 'repairing'}
                             onChange={(e) => {
                               const checked = e.target.checked;
                               handleUpdateCurrentField('hasNoParts', checked);
@@ -1672,20 +1677,37 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                                 handleUpdateCurrentField('partsUsed', []);
                               }
                             }}
-                            className="w-4 h-4 rounded text-purple-600 focus:ring-0 cursor-pointer"
+                            className="w-4 h-4 rounded text-purple-600 focus:ring-0 cursor-pointer disabled:cursor-not-allowed"
                           />
                           <span className="text-xs font-bold text-gray-300 whitespace-nowrap">بدون قطع</span>
                         </label>
 
                         <button
                           type="button"
-                          disabled={currentActionItem.hasNoParts ?? true}
+                          disabled={(currentActionItem.hasNoParts ?? true) || currentActionItem.decision !== 'repairing'}
                           onClick={() => setShowPartsModal(true)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border whitespace-nowrap ${(currentActionItem.hasNoParts ?? true) ? 'bg-white/5 text-gray-600 border-white/5 cursor-not-allowed opacity-40' : 'bg-purple-600/30 hover:bg-purple-600 text-purple-300 hover:text-white border-purple-500/40 cursor-pointer shadow-sm'}`}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border whitespace-nowrap ${((currentActionItem.hasNoParts ?? true) || currentActionItem.decision !== 'repairing') ? 'bg-white/5 text-gray-600 border-white/5 cursor-not-allowed opacity-40' : 'bg-purple-600/30 hover:bg-purple-600 text-purple-300 hover:text-white border-purple-500/40 cursor-pointer shadow-sm'}`}
                         >
                           <Cpu size={14} />
                           <span>تحديد القطع {(currentActionItem.partsUsed && currentActionItem.partsUsed.length > 0) ? `(${currentActionItem.partsUsed.length})` : ''}</span>
                         </button>
+                      </div>
+
+                      {/* حقل عرض قطع الغيار المختارة */}
+                      <div className="flex flex-row items-center gap-2.5 w-full mt-2">
+                        <label className="text-xs text-gray-500 whitespace-nowrap w-20">قطع الغيار</label>
+                        <div className="flex-1 bg-black/40 border border-white/10 rounded-xl px-4 py-2 text-xs text-white overflow-x-auto whitespace-nowrap scrollbar-thin scrollbar-thumb-white/10 flex items-center min-h-[40px]">
+                          {(!currentActionItem.partsUsed || currentActionItem.partsUsed.length === 0) ? (
+                            <span className="text-gray-500">بدون قطع</span>
+                          ) : (
+                            currentActionItem.partsUsed.map((p, idx) => (
+                              <span key={idx}>
+                                {idx > 0 && <span className="mx-1 text-gray-600">/</span>}
+                                <span className="font-mono">{p.partName}-{p.quantity}</span>
+                              </span>
+                            ))
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -1882,10 +1904,16 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
             initialParts={currentActionItem.partsUsed || []}
             onClose={() => setShowPartsModal(false)}
             onConfirm={(parts) => {
-              handleUpdateCurrentField('partsUsed', parts);
-              if (parts.length > 0) {
-                handleUpdateCurrentField('hasNoParts', false);
+              const updatedItem = {
+                ...currentActionItem,
+                partsUsed: parts,
+                hasNoParts: parts.length > 0 ? false : currentActionItem.hasNoParts
+              };
+              if (selectedInvoice && selectedInvoice.status === '21') {
+                updatedItem.unitCost = 0;
+                updatedItem.cost = 0;
               }
+              setSyncedCurrentActionItem(updatedItem);
             }}
           />
         );
@@ -2334,10 +2362,16 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
             initialParts={currentActionItem.partsUsed || []}
             onClose={() => setShowPartsModal(false)}
             onConfirm={(parts) => {
-              handleUpdateCurrentField('partsUsed', parts);
-              if (parts.length > 0) {
-                handleUpdateCurrentField('hasNoParts', false);
+              const updatedItem = {
+                ...currentActionItem,
+                partsUsed: parts,
+                hasNoParts: parts.length > 0 ? false : currentActionItem.hasNoParts
+              };
+              if (selectedInvoice && selectedInvoice.status === '21') {
+                updatedItem.unitCost = 0;
+                updatedItem.cost = 0;
               }
+              setSyncedCurrentActionItem(updatedItem);
             }}
           />
         );
