@@ -499,6 +499,7 @@ class LocalDatabase {
           groupId TEXT,
           groupName TEXT,
           quantity INTEGER,
+          usedQuantity INTEGER DEFAULT 0,
           unitCost REAL,
           salePrice REAL,
           isDisassemblyBatch INTEGER DEFAULT 0,
@@ -836,7 +837,8 @@ class LocalDatabase {
       const shopPartsCols = [
         'itemType TEXT DEFAULT "accessory_part"',
         'groupId TEXT',
-        'groupName TEXT'
+        'groupName TEXT',
+        'usedQuantity INTEGER DEFAULT 0'
       ];
       for (const col of shopPartsCols) {
         try {

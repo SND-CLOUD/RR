@@ -2233,7 +2233,7 @@ export default function PrintPreviewOverlay({
                                   <span className="font-bold">{displayStatusReport}</span>
                                   {it.partsUsed && it.partsUsed.length > 0 && (
                                     <span className="text-[9px] text-gray-600 font-medium mt-0.5 border-t border-gray-100 pt-0.5">
-                                      قطع الغيار: {it.partsUsed.map((p: any) => `${p.partName} (${p.quantity})`).join(' / ')}
+                                      {it.partsUsed.map((p: any) => `${p.partName} ${p.quantity}`).join(' / ')}
                                     </span>
                                   )}
                                 </div>
@@ -2764,7 +2764,7 @@ export default function PrintPreviewOverlay({
                                   <span className="font-bold">{displayInspection}</span>
                                   {it.partsUsed && it.partsUsed.length > 0 && (
                                     <span className="text-[9px] text-gray-600 font-medium mt-0.5 border-t border-gray-100 pt-0.5">
-                                      قطع الغيار: {it.partsUsed.map((p: any) => `${p.partName} (${p.quantity})`).join(' / ')}
+                                      {it.partsUsed.map((p: any) => `${p.partName} ${p.quantity}`).join(' / ')}
                                     </span>
                                   )}
                                 </div>

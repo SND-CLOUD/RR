@@ -9,7 +9,7 @@ import {
 } from 'lucide-react';
 import { formatMoney } from '../lib/fundUtils';
 import { ProviderFactory } from '../data/ProviderFactory';
-import { auditOrphanedPartsStock, cleanOrphanedPartsStock, recalculateDisassemblyBatchesRecovery } from '../lib/invoiceCascadeService';
+import { auditOrphanedPartsStock, cleanOrphanedPartsStock, recalculateDisassemblyBatchesRecovery, recalculateInventoryUsedQuantities } from '../lib/invoiceCascadeService';
 import { useBackHandler } from '../hooks/useBackHandler';
 
 export default function ShopPartsStockView() {
@@ -110,8 +110,9 @@ export default function ShopPartsStockView() {
   // Final list for table display (adds the Stock Availability filter)
   const filteredStock = baseFilteredStock.filter(item => {
     const qty = Number(item.quantity || 0);
+    const used = Number(item.usedQuantity || 0);
     if (stockFilter === 'available' && qty <= 0) return false;
-    if (stockFilter === 'sold' && qty > 0) return false;
+    if (stockFilter === 'sold' && used <= 0) return false;
     return true;
   });
 
@@ -224,6 +225,24 @@ export default function ShopPartsStockView() {
       setTimeout(() => setNotificationMsg(null), 6000);
     } catch (err) {
       console.error(err);
+    } finally {
+      setIsRecalculating(false);
+    }
+  };
+
+  const handleRecalculateUsedQuantities = async () => {
+    setIsRecalculating(true);
+    setNotificationMsg(null);
+    try {
+      const res = await recalculateInventoryUsedQuantities();
+      setNotificationMsg({
+        text: `تم التدقيق بنجاح! تم تحديث إحصائيات الاستخدام لـ ${res.updatedCount} صنف من واقع فواتير المبيعات والصيانة.`,
+        type: 'success'
+      });
+      setTimeout(() => setNotificationMsg(null), 6000);
+    } catch (err) {
+      console.error(err);
+      setNotificationMsg({ text: 'حدث خطأ أثناء تدقيق إحصائيات الاستخدام', type: 'error' });
     } finally {
       setIsRecalculating(false);
     }
@@ -373,28 +392,41 @@ export default function ShopPartsStockView() {
           </button>
         </div>
 
-        <div className="flex items-center gap-3 w-full sm:w-auto flex-wrap">
-          {activeTab === 'batches' && (
-            <button
-              onClick={handleRecalculateBatches}
-              disabled={isRecalculating}
-              className="px-3.5 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-              title="إعادة احتساب وتحديث المبالغ المستردة لجميع أجهزة التفكيك من واقع فواتير المبيعات"
-            >
-              <RefreshCw className={isRecalculating ? 'animate-spin' : ''} size={14} />
-              <span>{isRecalculating ? 'جاري التدقيق...' : 'تدقيق وتحديث مبيعات الدفعات'}</span>
-            </button>
-          )}
+        <div className="flex items-center gap-2.5 w-full sm:w-auto flex-wrap">
+          {/* Audit Action Buttons Together on the same row */}
+          <div className="flex items-center gap-2 shrink-0">
+            {activeTab === 'batches' ? (
+              <button
+                onClick={handleRecalculateBatches}
+                disabled={isRecalculating}
+                className="px-3.5 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/20 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                title="إعادة احتساب وتحديث المبالغ المستردة لجميع أجهزة التفكيك من واقع فواتير المبيعات"
+              >
+                <RefreshCw className={isRecalculating ? 'animate-spin' : ''} size={14} />
+                <span>{isRecalculating ? 'جاري التدقيق...' : 'تدقيق وتحديث مبيعات الدفعات'}</span>
+              </button>
+            ) : (
+              <button
+                onClick={handleRecalculateUsedQuantities}
+                disabled={isRecalculating}
+                className="px-3.5 py-2 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/20 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+                title="إعادة احتساب وتدقيق الكميات المباعة والمنصرفة من واقع فواتير البيع والصيانة"
+              >
+                <RefreshCw className={isRecalculating ? 'animate-spin' : ''} size={14} />
+                <span>{isRecalculating ? 'جاري التدقيق...' : 'تدقيق عدادات المباع'}</span>
+              </button>
+            )}
 
-          <button
-            onClick={handleRunOrphanAudit}
-            disabled={isAuditing}
-            className="px-3.5 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
-            title="فحص وتدقيق القطع والدفعات المعلقة"
-          >
-            {isAuditing ? <RefreshCw className="animate-spin" size={14} /> : <ShieldAlert size={14} />}
-            <span>تدقيق المخزون المعلق</span>
-          </button>
+            <button
+              onClick={handleRunOrphanAudit}
+              disabled={isAuditing}
+              className="px-3.5 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/20 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer whitespace-nowrap"
+              title="فحص وتدقيق القطع والدفعات المعلقة"
+            >
+              {isAuditing ? <RefreshCw className="animate-spin" size={14} /> : <ShieldAlert size={14} />}
+              <span>تدقيق المخزون المعلق</span>
+            </button>
+          </div>
 
           <div className="relative w-full sm:w-64">
             <input
@@ -429,70 +461,65 @@ export default function ShopPartsStockView() {
       {/* TAB 1: INVENTORY (قطع الغيار والملحقات) */}
       {activeTab !== 'batches' && (
         <div className="space-y-4">
-          {/* Quick Metrics & Filter Bar */}
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-3">
-            <div className="bg-[#141414] p-3.5 rounded-2xl border border-white/5 flex items-center justify-between">
-              <div>
-                <span className="text-[11px] text-gray-400 block">القطع المتاحة بالمخزن</span>
-                <span className="text-lg font-mono font-black text-emerald-400">{availableItemsCount} صنف ({totalStockQuantity} قطعة)</span>
-              </div>
-              <div className="p-2.5 bg-emerald-500/10 text-emerald-400 rounded-xl">
-                <Boxes size={20} />
-              </div>
-            </div>
-
-            <div className="bg-[#141414] p-3.5 rounded-2xl border border-white/5 flex items-center justify-between">
-              <div>
-                <span className="text-[11px] text-gray-400 block">قطع بيعت بالكامل</span>
-                <span className="text-lg font-mono font-black text-blue-400">{soldItemsCount} صنف</span>
-              </div>
-              <div className="p-2.5 bg-blue-500/10 text-blue-400 rounded-xl">
-                <ShoppingCart size={20} />
-              </div>
-            </div>
-
-            <div className="bg-[#141414] p-3.5 rounded-2xl border border-white/5 flex items-center justify-between">
-              <div>
-                <span className="text-[11px] text-gray-400 block">قيمة المخزون المتاح المتوقعة</span>
-                <span className="text-lg font-mono font-black text-amber-400">{formatMoney(totalStockSaleValue, 'USD')}</span>
-              </div>
-              <div className="p-2.5 bg-amber-500/10 text-amber-400 rounded-xl">
-                <CircleDollarSign size={20} />
-              </div>
-            </div>
-
-            {/* Filter Selector */}
-            <div className="bg-[#141414] p-2 rounded-2xl border border-white/5 flex items-center gap-1.5">
+          {/* Compact Single-Row Counters & Filter Bar */}
+          <div className="bg-[#141414] p-2.5 rounded-2xl border border-white/5 flex flex-col md:flex-row items-stretch md:items-center justify-between gap-3 shadow-lg">
+            {/* The 3 Filter & Counter Buttons */}
+            <div className="flex items-center gap-1.5 p-1 bg-[#1a1a1a] rounded-xl border border-white/5 overflow-x-auto no-scrollbar">
               <button
                 onClick={() => setStockFilter('available')}
-                className={`flex-1 py-2 px-2 text-center rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                className={`flex-1 md:flex-initial px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap ${
                   stockFilter === 'available'
-                    ? 'bg-emerald-600 text-white shadow'
+                    ? 'bg-emerald-600 text-white shadow-md shadow-emerald-600/20'
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
                 }`}
               >
-                المتاح ({availableStockPieces})
+                <Boxes size={15} className={stockFilter === 'available' ? 'text-white' : 'text-emerald-400'} />
+                <span>المتاح</span>
+                <span className="font-mono font-black text-xs px-2 py-0.5 bg-black/30 rounded-md">
+                  {availableStockPieces}
+                </span>
               </button>
+
               <button
                 onClick={() => setStockFilter('sold')}
-                className={`flex-1 py-2 px-2 text-center rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                className={`flex-1 md:flex-initial px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap ${
                   stockFilter === 'sold'
-                    ? 'bg-blue-600 text-white shadow'
+                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/20'
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
                 }`}
               >
-                المباعة ({soldStockPieces})
+                <ShoppingCart size={15} className={stockFilter === 'sold' ? 'text-white' : 'text-blue-400'} />
+                <span>المنصرف</span>
+                <span className="font-mono font-black text-xs px-2 py-0.5 bg-black/30 rounded-md">
+                  {soldStockPieces}
+                </span>
               </button>
+
               <button
                 onClick={() => setStockFilter('all')}
-                className={`flex-1 py-2 px-2 text-center rounded-xl text-[11px] font-bold transition-all cursor-pointer ${
+                className={`flex-1 md:flex-initial px-4 py-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-2 cursor-pointer whitespace-nowrap ${
                   stockFilter === 'all'
-                    ? 'bg-white/10 text-white shadow'
+                    ? 'bg-purple-600 text-white shadow-md shadow-purple-600/20'
                     : 'text-gray-400 hover:text-white hover:bg-white/5'
                 }`}
               >
-                الكل ({totalStockPieces})
+                <Layers size={15} className={stockFilter === 'all' ? 'text-white' : 'text-purple-400'} />
+                <span>الكل</span>
+                <span className="font-mono font-black text-xs px-2 py-0.5 bg-black/30 rounded-md">
+                  {totalStockPieces}
+                </span>
               </button>
+            </div>
+
+            {/* Expected Stock Value */}
+            <div className="flex items-center justify-between md:justify-end gap-2.5 px-4 py-2 bg-[#1a1a1a] rounded-xl border border-white/5 shrink-0">
+              <div className="flex items-center gap-2 text-xs text-gray-400 font-bold">
+                <CircleDollarSign size={16} className="text-amber-400" />
+                <span>قيمة المخزون المتاح المتوقعة:</span>
+              </div>
+              <span className="text-base font-mono font-black text-amber-400">
+                {formatMoney(totalStockSaleValue, 'USD')}
+              </span>
             </div>
           </div>
 
@@ -538,6 +565,7 @@ export default function ShopPartsStockView() {
                   {filteredStock.length > 0 ? (
                     filteredStock.map((item, idx) => {
                       const qty = Number(item.quantity || 0);
+                      const used = Number(item.usedQuantity || 0);
                       const isSoldOut = qty <= 0;
 
                       return (
@@ -578,15 +606,20 @@ export default function ShopPartsStockView() {
                                 <AlertTriangle size={12} className="text-rose-400" />
                                 <span>رصيد سالب</span>
                               </span>
-                            ) : isSoldOut ? (
+                            ) : qty <= 0 ? (
                               <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-blue-500/15 text-blue-300 border border-blue-500/25 flex items-center gap-1 w-fit">
                                 <CheckCircle size={12} className="text-blue-400" />
                                 <span>تم بيعها بالكامل</span>
                               </span>
-                            ) : (
+                            ) : used > 0 ? (
                               <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 flex items-center gap-1 w-fit">
                                 <Boxes size={12} className="text-emerald-400" />
                                 <span>متاح بالمخزن</span>
+                              </span>
+                            ) : (
+                              <span className="px-2.5 py-1 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-400 border border-emerald-500/25 flex items-center gap-1 w-fit">
+                                <Boxes size={12} className="text-emerald-400" />
+                                <span>متاح بالكامل</span>
                               </span>
                             )}
                           </td>
@@ -601,15 +634,22 @@ export default function ShopPartsStockView() {
                                 </span>
                               </div>
                             ) : (
-                              <span className={`px-2.5 py-1 rounded-full text-xs font-mono font-bold ${
-                                isSoldOut 
-                                  ? 'bg-white/5 text-gray-400 border border-white/10' 
-                                  : qty > 5 
-                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
-                                    : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
-                              }`}>
-                                {qty > 0 ? `${qty} قطعة` : '0 قطعة (منصرفة)'}
-                              </span>
+                              <div className="space-y-1">
+                                <span className={`px-2.5 py-0.5 rounded-full text-xs font-mono font-bold inline-block ${
+                                  qty > 0 
+                                    ? qty > 5 
+                                      ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' 
+                                      : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                                    : 'bg-white/5 text-gray-400 border border-white/10'
+                                }`}>
+                                  {qty > 0 ? `${qty} متاح` : '0 متاح'}
+                                </span>
+                                {used > 0 && (
+                                  <span className="text-[10px] text-blue-400 font-bold block whitespace-nowrap">
+                                    منصرف: {used} قطعة
+                                  </span>
+                                )}
+                              </div>
                             )}
                           </td>
                           <td className="p-3.5 font-mono font-bold text-amber-400">
@@ -640,7 +680,7 @@ export default function ShopPartsStockView() {
                     <tr>
                       <td colSpan={9} className="p-10 text-center text-gray-500">
                         {stockFilter === 'sold'
-                          ? 'لا توجد قطع مباعة بالكامل حالياً.'
+                          ? 'لا توجد قطع منصرفة أو مباعة حالياً وفق هذا الفلتر.'
                           : stockFilter === 'available'
                             ? 'لا توجد قطع غيار متاحة بالمخزون حالياً. يمكنك إضافة مشتريات من تبويب "شراء قطع وملحقات".'
                             : 'لا توجد أي قطع مسجلة.'}

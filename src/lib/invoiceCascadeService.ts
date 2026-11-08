@@ -1125,3 +1125,197 @@ export async function deleteCustomerWithCascade(
   }
 }
 
+/**
+ * Recalculates 'usedQuantity' and 'quantity' for all items in shop_parts_inventory based on historical invoice_items.
+ * Merges Local SQLite and Remote Firestore data with de-duplication and accurate purchase detection via parent invoices.
+ */
+export async function recalculateInventoryUsedQuantities(): Promise<{ updatedCount: number }> {
+  try {
+    const provider = ProviderFactory.getProvider();
+    
+    // 1. Fetch all shop inventory items (Merge + De-duplicate)
+    let stockMap = new Map<string, any>();
+    try {
+      const resStock = await localDb.query(`SELECT * FROM shop_parts_inventory`);
+      resStock?.values?.forEach(s => { if (s.id) stockMap.set(String(s.id), s); });
+    } catch (e) {}
+    try {
+      const snapStock = await getDocs(collection(db, 'shop_parts_inventory'));
+      snapStock.forEach(d => {
+        if (!stockMap.has(d.id)) stockMap.set(d.id, { id: d.id, ...d.data() });
+      });
+    } catch (e) {}
+
+    // 2. Fetch all invoices to build a reliable Purchase Lookup & Cancellation Map
+    let invoicesMap = new Map<string, { isPurchase: boolean; isCancelled: boolean }>();
+    try {
+      const resInv = await localDb.query(`SELECT id, isPurchase, invoiceType, type, templateType, invoiceNumber, status, isCancelled FROM invoices`);
+      resInv?.values?.forEach(inv => {
+        const isPur = checkIsPurchase(inv);
+        const isCanc = inv.status === 'cancelled' || inv.status === '70' || inv.isCancelled === 1 || inv.isCancelled === true;
+        const entry = { isPurchase: isPur, isCancelled: isCanc };
+        if (inv.id) invoicesMap.set(String(inv.id), entry);
+        if (inv.invoiceNumber) {
+          invoicesMap.set(normalizeInvoiceNum(inv.invoiceNumber), entry);
+          invoicesMap.set(String(inv.invoiceNumber).trim(), entry);
+        }
+      });
+    } catch (e) {}
+    try {
+      const snapInv = await getDocs(collection(db, 'invoices'));
+      snapInv.forEach(d => {
+        const data = d.data();
+        const id = d.id;
+        const isPur = checkIsPurchase({ id, ...data });
+        const isCanc = data.status === 'cancelled' || data.status === '70' || data.isCancelled === 1 || data.isCancelled === true;
+        const entry = { isPurchase: isPur, isCancelled: isCanc };
+        if (!invoicesMap.has(id)) invoicesMap.set(id, entry);
+        if (data.invoiceNumber) {
+          invoicesMap.set(normalizeInvoiceNum(data.invoiceNumber), entry);
+          invoicesMap.set(String(data.invoiceNumber).trim(), entry);
+        }
+      });
+    } catch (e) {}
+
+    // 3. Fetch ALL invoice_items (Merge + De-duplicate)
+    let itemsMap = new Map<string, any>();
+    try {
+      const resItems = await localDb.query(`SELECT * FROM invoice_items`);
+      resItems?.values?.forEach(it => { if (it.id) itemsMap.set(String(it.id), it); });
+    } catch (e) {}
+    try {
+      const snapItems = await getDocs(collection(db, 'invoice_items'));
+      snapItems.forEach(d => {
+        const id = d.id;
+        const data = d.data();
+        if (!itemsMap.has(id)) {
+          itemsMap.set(id, { id, ...data });
+        }
+      });
+    } catch (e) {}
+
+    // 4. Helper to find stock item by ID, partId, or Name
+    const findStockMatch = (partId?: string, partName?: string) => {
+      if (partId && stockMap.has(String(partId))) {
+        return stockMap.get(String(partId));
+      }
+      const cleanName = (partName || '').trim().toLowerCase();
+      const pId = String(partId || '').trim();
+      for (const stock of stockMap.values()) {
+        if (pId && (String(stock.partId || '').trim() === pId || String(stock.id || '').trim() === pId)) {
+          return stock;
+        }
+        if (cleanName && (stock.name || '').trim().toLowerCase() === cleanName) {
+          return stock;
+        }
+      }
+      return null;
+    };
+
+    // 5. Group and sum purchases and usage (from direct sales AND maintenance)
+    const statsMap = new Map<string, { purchased: number, used: number }>();
+
+    for (const item of itemsMap.values()) {
+      // Check cancellation on item or parent invoice
+      const isItemCancelled = item.status === 'cancelled' || item.status === '70' || item.isCancelled === 1 || item.isCancelled === true;
+      if (isItemCancelled) continue;
+
+      const invoiceId = String(item.invoiceId || '');
+      const cleanInvNum = normalizeInvoiceNum(item.invoiceNumber);
+      const parentInv = invoicesMap.get(invoiceId) || invoicesMap.get(cleanInvNum) || invoicesMap.get(String(item.invoiceNumber || '').trim());
+      if (parentInv?.isCancelled) continue;
+
+      // Check if this item is a purchase
+      const isItemPurchase = item.isPurchase === true || item.isPurchase === 1 || item.isPurchase === '1';
+      const isInvoicePurchase = parentInv?.isPurchase === true;
+      const isActuallyPurchase = isItemPurchase || isInvoicePurchase || String(item.source || '').toLowerCase().includes('purchase');
+
+      // A) Direct Part Item (Sale or Purchase)
+      if (item.partInventoryId) {
+        const pInvId = String(item.partInventoryId);
+        if (!statsMap.has(pInvId)) statsMap.set(pInvId, { purchased: 0, used: 0 });
+        const qty = Number(item.quantity || 0);
+
+        if (isActuallyPurchase) {
+          statsMap.get(pInvId)!.purchased += qty;
+        } else {
+          statsMap.get(pInvId)!.used += qty;
+        }
+      }
+
+      // B) Maintenance Item with partsUsed
+      let partsList: any[] = [];
+      if (item.partsUsed) {
+        if (typeof item.partsUsed === 'string') {
+          try {
+            const parsed = JSON.parse(item.partsUsed);
+            if (Array.isArray(parsed)) partsList = parsed;
+          } catch (e) {}
+        } else if (Array.isArray(item.partsUsed)) {
+          partsList = item.partsUsed;
+        }
+      }
+
+      if (partsList.length > 0) {
+        // Exclude failed or refused maintenance items where parts were not repaired
+        const isFailedOrRefused = item.failureReason || item.subStatus === 'unrepairable' || item.subStatus === 'refused';
+        if (!isFailedOrRefused) {
+          for (const p of partsList) {
+            if (p.isScrap === true || p.isScrap === 1 || p.isScrap === '1') continue; // Scrap parts are never deducted from inventory
+            const partQty = Number(p.quantity || 1);
+            const matchedStock = findStockMatch(p.partId || p.id, p.partName);
+            if (matchedStock && matchedStock.id) {
+              const sId = String(matchedStock.id);
+              if (!statsMap.has(sId)) statsMap.set(sId, { purchased: 0, used: 0 });
+              statsMap.get(sId)!.used += partQty;
+            }
+          }
+        }
+      }
+    }
+
+    // 6. Update stock records
+    let updatedCount = 0;
+    for (const stock of stockMap.values()) {
+      const sId = String(stock.id);
+      const st = statsMap.get(sId) || { purchased: 0, used: 0 };
+      
+      const currentUsed = Number(stock.usedQuantity || 0);
+      const currentQty = Number(stock.quantity || 0);
+      
+      let targetUsed = st.used;
+      let targetQty = currentQty;
+
+      // Invariant: Total = Available + Used
+      if (st.purchased > 0) {
+        targetQty = Math.max(0, st.purchased - st.used);
+      } else {
+        const totalStock = currentQty + currentUsed;
+        if (totalStock > 0) {
+          targetQty = Math.max(0, totalStock - targetUsed);
+        }
+      }
+
+      if (targetUsed !== currentUsed || targetQty !== currentQty) {
+        const updatePayload = { 
+          usedQuantity: targetUsed,
+          quantity: targetQty,
+          updatedAt: serverTimestamp() 
+        };
+        try {
+          await provider.updateDoc('shop_parts_inventory', sId, updatePayload);
+          await updateDoc(doc(db, 'shop_parts_inventory', sId), updatePayload);
+          updatedCount++;
+        } catch (e) {
+          console.warn(`Failed to update stock ${sId}:`, e);
+        }
+      }
+    }
+
+    return { updatedCount };
+  } catch (err) {
+    console.error('Error recalculating inventory used quantities:', err);
+    return { updatedCount: 0 };
+  }
+}
+
