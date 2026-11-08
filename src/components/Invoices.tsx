@@ -13,7 +13,7 @@ import { handleFirestoreError } from '../lib/error-handler';
 import { usePermissions } from '../hooks/usePermissions';
 import { localDb } from '../lib/local-db';
 import { ProviderFactory } from '../data/ProviderFactory';
-import { deleteInvoiceWithCascade, checkIsPurchase, checkIsSale } from '../lib/invoiceCascadeService';
+import { deleteInvoiceWithCascade, checkIsPurchase, checkIsSale, restoreItemSparePartsToStock } from '../lib/invoiceCascadeService';
 import { calculateInvoiceBillableTotal } from '../lib/billableService';
 import { useBackHandler } from '../hooks/useBackHandler';
 
@@ -679,13 +679,27 @@ export default function Invoices({
         updateData.amountPaid = 0;
       }
       batch.update(invRef, updateData);
+
+      // Inventory Reversal Logic: If moving back from Ready/Delivered (50/60) to a lower status
+      const isOldStatusReady = ['50', '55', '60'].includes(inv.status || '');
+      const isNewStatusLower = !['50', '55', '60', '70'].includes(newStatus);
+      
+      if (isOldStatusReady && isNewStatusLower) {
+        for (const it of currentItems) {
+           if (it.partsUsed && it.partsUsed.length > 0) {
+             await restoreItemSparePartsToStock(it);
+           }
+        }
+      }
+
       await batch.commit();
 
       // SQLite update
       await localDb.run("UPDATE invoices SET status = ? WHERE id = ?", [newStatus, inv.id]);
       await localDb.run("UPDATE invoice_items SET status = ? WHERE invoiceNumber = ? OR invoiceNumber = ?", [newStatus, cleanNo, `#${cleanNo}`]);
 
-      showToast(`تم تحديث حالة الفاتورة #${inv.invoiceNumber} إلى: ${getStatusLabel(newStatus)}${deletedReceiptsCount > 0 ? ` مع إلغاء سند القبض ومزامنة الصناديق` : ''}`);
+      const isRestored = isOldStatusReady && isNewStatusLower && currentItems.some(it => (it.partsUsed || []).length > 0);
+      showToast(`تم تحديث حالة الفاتورة #${inv.invoiceNumber} إلى: ${getStatusLabel(newStatus)}${deletedReceiptsCount > 0 ? ` مع إلغاء سند القبض ومزامنة الصناديق` : ''}${isRestored ? ' وإعادة قطع الغيار للمخزون' : ''}`);
     } catch (err: any) {
       handleFirestoreError(err, OperationType.WRITE, 'InvoicesManagement');
     } finally {
@@ -852,6 +866,12 @@ export default function Invoices({
         batch.delete(itemRef);
         await localDb.run("DELETE FROM invoice_items WHERE id = ?", [delId]);
 
+        // Restore spare parts to inventory if the item was in status 50/60
+        const itemToDel = items.find(it => it.id === delId);
+        if (itemToDel && ['50', '55', '60'].includes(itemToDel.status || '') && (itemToDel.partsUsed || []).length > 0) {
+           await restoreItemSparePartsToStock(itemToDel);
+        }
+
         // Cascade delete related actions
         try {
           const mRes = await localDb.query("SELECT id FROM maintenance_actions WHERE itemId = ?", [delId]);
@@ -908,6 +928,14 @@ export default function Invoices({
             UPDATE invoice_items SET deviceType = ?, deviceName = ?, faultType = ?, deviceNotes = ?, quantity = ?, unitCost = ?, cost = ?, status = ?
             WHERE id = ?
           `, [item.deviceType, item.deviceName, item.faultType, item.deviceNotes, item.quantity, item.unitCost, item.cost, item.status, item.id]);
+
+          // Restoration check if status changed from 50/60 to lower
+          const originalItem = items.find(it => it.id === item.id);
+          const wasReady = originalItem && ['50', '55', '60'].includes(originalItem.status || '');
+          const isNowLower = !['50', '55', '60', '70'].includes(item.status || '');
+          if (wasReady && isNowLower && originalItem.partsUsed && originalItem.partsUsed.length > 0) {
+             await restoreItemSparePartsToStock(originalItem);
+          }
         }
       }
 
@@ -925,7 +953,17 @@ export default function Invoices({
 
       await localDb.run("UPDATE invoices SET status = ?, totalCost = ? WHERE id = ?", [computedStatus, totalCost, selectedInvoice!.id]);
 
-      showToast(`تم حفظ وتحديث الفاتورة #${selectedInvoice!.invoiceNumber} بنجاح`);
+      const hasRestored = itemsToDelete.some(id => {
+        const item = items.find(it => it.id === id);
+        return item && ['50', '55', '60'].includes(item.status || '') && (item.partsUsed || []).length > 0;
+      }) || finalItems.some(item => {
+        const originalItem = items.find(it => it.id === item.id);
+        const wasReady = originalItem && ['50', '55', '60'].includes(originalItem.status || '');
+        const isNowLower = !['50', '55', '60', '70'].includes(item.status || '');
+        return wasReady && isNowLower && originalItem.partsUsed && originalItem.partsUsed.length > 0;
+      });
+
+      showToast(`تم حفظ وتحديث الفاتورة #${selectedInvoice!.invoiceNumber} بنجاح${hasRestored ? ' مع إعادة قطع الغيار للمخزون' : ''}`);
       setStagedChanges([]);
       setDeletedItemIds([]);
       setSubview('list');

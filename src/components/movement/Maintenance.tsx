@@ -420,9 +420,9 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
             failureReason: isFailedOrRefused ? row.reason : null,
             engineerReport: originalItem.engineerReport,
             technician: engineerName,
-            hasNoParts: (row as any).hasNoParts !== undefined ? (row as any).hasNoParts : (((row as any).partsUsed && (row as any).partsUsed.length > 0) ? false : true),
-            partsUsed: (row as any).partsUsed || [],
-            sparePartsCost: ((row as any).partsUsed || []).reduce((sum: number, p: any) => sum + (p.isScrap ? 0 : (Number(p.unitCost) || 0) * (Number(p.quantity) || 1)), 0),
+            hasNoParts: isFailedOrRefused ? true : ((row as any).hasNoParts !== undefined ? (row as any).hasNoParts : (((row as any).partsUsed && (row as any).partsUsed.length > 0) ? false : true)),
+            partsUsed: isFailedOrRefused ? [] : ((row as any).partsUsed || []),
+            sparePartsCost: isFailedOrRefused ? 0 : ((row as any).partsUsed || []).reduce((sum: number, p: any) => sum + (p.isScrap ? 0 : (Number(p.unitCost) || 0) * (Number(p.quantity) || 1)), 0),
             createdAt: originalItem.createdAt || serverTimestamp(),
             updatedAt: serverTimestamp()
           });
@@ -449,9 +449,9 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
             failureReason: isFailedOrRefused ? row.reason : null,
             engineerReport: originalItem.engineerReport,
             technician: engineerName,
-            hasNoParts: (row as any).hasNoParts !== undefined ? (row as any).hasNoParts : (((row as any).partsUsed && (row as any).partsUsed.length > 0) ? false : true),
-            partsUsed: (row as any).partsUsed || [],
-            sparePartsCost: ((row as any).partsUsed || []).reduce((sum: number, p: any) => sum + (p.isScrap ? 0 : (Number(p.unitCost) || 0) * (Number(p.quantity) || 1)), 0),
+            hasNoParts: isFailedOrRefused ? true : ((row as any).hasNoParts !== undefined ? (row as any).hasNoParts : (((row as any).partsUsed && (row as any).partsUsed.length > 0) ? false : true)),
+            partsUsed: isFailedOrRefused ? [] : ((row as any).partsUsed || []),
+            sparePartsCost: isFailedOrRefused ? 0 : ((row as any).partsUsed || []).reduce((sum: number, p: any) => sum + (p.isScrap ? 0 : (Number(p.unitCost) || 0) * (Number(p.quantity) || 1)), 0),
             entryDate: resolvedEntryDate,
             updatedAt: serverTimestamp()
           });
@@ -707,7 +707,8 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                 customerProblem: dbItem?.customerProblem || '-',
                 technicalNotes: item.reason || dbItem?.engineerReport || '-',
                 status: item.outcome === 'repaired' ? '50' : item.outcome === 'failed' ? '55' : item.outcome === 'refused' ? '70' : '40',
-                quantity: item.count
+                quantity: item.count,
+                partsUsed: item.partsUsed
               };
             }),
             templateType: 'maintenance'
@@ -1295,9 +1296,14 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                             {it?.deviceType || '-'}
                           </td>
                           <td className="py-2 px-3 whitespace-nowrap text-[11px]">
-                            <div className="flex items-center gap-1.5">
-                              <span>{it?.deviceName || '-'}</span>
-                            </div>
+                              <div className="flex flex-col gap-0.5">
+                                <span className="font-bold">{it?.deviceName || '-'}</span>
+                                {row.partsUsed && row.partsUsed.length > 0 && (
+                                  <span className="text-[9px] text-gray-500 font-medium whitespace-normal">
+                                    {row.partsUsed.map((p: any) => `${p.partName} ${p.quantity}`).join(' / ')}
+                                  </span>
+                                )}
+                              </div>
                           </td>
                           <td className="py-2 px-3 font-mono font-bold text-[11px] whitespace-nowrap">{row.count}</td>
                           <td className="py-2 px-3 whitespace-nowrap text-[11px]">

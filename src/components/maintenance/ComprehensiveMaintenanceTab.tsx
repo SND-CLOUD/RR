@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { localDb } from '../../lib/local-db';
 import { LocalProviderInstance } from '../../data/LocalProvider';
+import { FirebaseProviderInstance } from '../../data/FirebaseProvider';
 import { SyncEngine } from '../../data/SyncEngine';
 import { db, doc, updateDoc } from '../../firebase';
 import { isItemRefusedOrFailed, getItemBillableCost } from '../../lib/billableService';
@@ -47,6 +48,14 @@ interface ComprehensiveAuditReport {
     statusText: string;
     cost: number;
     invoiceNumber: string;
+  }>;
+
+  totalTombstones: number;
+  oldTombstonesCount: number;
+  oldTombstonesSamples: Array<{
+    id: string;
+    tableName: string;
+    deletedAt: string;
   }>;
 }
 
@@ -139,23 +148,40 @@ export default function ComprehensiveMaintenanceTab() {
             statusText,
             cost: itemCost,
             invoiceNumber: String(item.invoiceNumber || '')
-          });
-        }
-      });
+        });
+      }
+    });
 
-      setAuditReport({
-        totalItems: items.length,
-        mismatchedItemsCount: mismatchedItems.length,
-        mismatchedItems,
+    // 4. Deleted records (Tombstones)
+    const tombstonesRes = await localDb.query("SELECT * FROM deleted_records");
+    const tombstones = tombstonesRes.values || [];
+    const ninetyDaysAgo = new Date();
+    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+    const ninetyDaysAgoIso = ninetyDaysAgo.toISOString();
 
-        totalTransactions: txs.length,
-        unboundTransactionsCount: unboundTransactions.length,
-        unboundTransactions,
+    const oldTombstones = tombstones.filter((t: any) => (t.deletedAt || '') < ninetyDaysAgoIso);
 
-        nonBillableWithCostCount: nonBillableSamples.length,
-        totalCostToZero,
-        nonBillableSamples
-      });
+    setAuditReport({
+      totalItems: items.length,
+      mismatchedItemsCount: mismatchedItems.length,
+      mismatchedItems,
+
+      totalTransactions: txs.length,
+      unboundTransactionsCount: unboundTransactions.length,
+      unboundTransactions,
+
+      nonBillableWithCostCount: nonBillableSamples.length,
+      totalCostToZero,
+      nonBillableSamples,
+
+      totalTombstones: tombstones.length,
+      oldTombstonesCount: oldTombstones.length,
+      oldTombstonesSamples: oldTombstones.slice(0, 5).map((t: any) => ({
+        id: t.id,
+        tableName: t.tableName,
+        deletedAt: t.deletedAt
+      }))
+    });
 
     } catch (err: any) {
       console.error("[ComprehensiveAudit] error:", err);
@@ -502,6 +528,71 @@ export default function ComprehensiveMaintenanceTab() {
     }
   };
 
+  // =========================================================================
+  // 🔹 الأداة (4): تنظيف شواهد الحذف القديمة (Tombstones)
+  // =========================================================================
+  const executeCleanupTombstones = async () => {
+    setConfirmToolId(null);
+    setActiveRunningTool(4);
+    setProgressPercent(10);
+    setProgressText('تطبيق الحاوية المغلقة...');
+    setExecutionResult(null);
+
+    SyncEngine.pauseSync();
+
+    try {
+      const ninetyDaysAgo = new Date();
+      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
+      const ninetyDaysAgoIso = ninetyDaysAgo.toISOString();
+
+      // 1. Get IDs to delete
+      const res = await localDb.query("SELECT id FROM deleted_records WHERE deletedAt < ?", [ninetyDaysAgoIso]);
+      const ids = (res.values || []).map((t: any) => t.id);
+
+      if (ids.length === 0) {
+        setExecutionResult({ tool: 4, type: 'info', message: 'لا توجد شواهد حذف قديمة (أكثر من 90 يوم) لتنظيفها حالياً.' });
+        SyncEngine.resumeSync();
+        setActiveRunningTool(null);
+        return;
+      }
+
+      // 2. Delete locally and from cloud
+      for (let i = 0; i < ids.length; i++) {
+        const id = ids[i];
+        await localDb.run("DELETE FROM deleted_records WHERE id = ?", [id]);
+        await LocalProviderInstance.deleteDoc('deleted_records', id, 'BYPASS_OUTBOX');
+        try {
+          // Note: Using bypass to not record the deletion of a deletion record as a deletion!
+          await FirebaseProviderInstance.deleteDoc('deleted_records', id, 'BYPASS_OUTBOX');
+        } catch (e) {}
+
+        if (i % 10 === 0 || i === ids.length - 1) {
+          const pct = Math.round(10 + ((i + 1) / ids.length) * 80);
+          setProgressPercent(pct);
+          setProgressText(`تنظيف شواهد الحذف (${i + 1} من ${ids.length})...`);
+        }
+      }
+
+      SyncEngine.resumeSync();
+      SyncEngine.syncAll().catch(() => {});
+
+      setProgressPercent(100);
+      setExecutionResult({
+        tool: 4,
+        type: 'success',
+        message: `تم بنجاح تنظيف ${ids.length} سجل من شواهد الحذف القديمة التي تجاوز عمرها 90 يوماً.`
+      });
+      runAuditOnly();
+
+    } catch (err: any) {
+      console.error("[CleanupTombstones] error:", err);
+      SyncEngine.resumeSync();
+      setExecutionResult({ tool: 4, type: 'error', message: `فشل تنظيف شواهد الحذف: ${err?.message || err}` });
+    } finally {
+      setActiveRunningTool(null);
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Tool 0: Top Audit Bar */}
@@ -564,6 +655,18 @@ export default function ComprehensiveMaintenanceTab() {
                 <div className="text-xl font-black font-mono mt-1">{auditReport.nonBillableWithCostCount} جهاز</div>
                 <div className="text-[10px] opacity-75 mt-0.5">
                   {auditReport.nonBillableWithCostCount === 0 ? 'سليمة تماماً ولا توجد مبالغ غير معتمدة' : `إجمالي مبالغها: ${auditReport.totalCostToZero.toLocaleString('en-US')}$`}
+                </div>
+              </div>
+
+              <div className={`p-4 rounded-xl border ${auditReport.oldTombstonesCount === 0 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-800 dark:text-emerald-300' : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-800 dark:text-indigo-300'} sm:col-span-3`}>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="text-[11px] font-bold">شواهد الحذف السحابي (Deleted Records)</div>
+                    <div className="text-lg font-black font-mono mt-1">الإجمالي: {auditReport.totalTombstones} | القديمة (&gt;90 يوم): {auditReport.oldTombstonesCount}</div>
+                  </div>
+                  {auditReport.oldTombstonesCount > 0 && (
+                    <span className="text-[10px] bg-indigo-500/20 px-2 py-1 rounded-lg font-bold">تحتاج لتطهير دوري</span>
+                  )}
                 </div>
               </div>
             </div>
@@ -674,7 +777,28 @@ export default function ComprehensiveMaintenanceTab() {
             onClick={() => setConfirmToolId(3)}
             className="w-full py-2.5 px-4 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-50"
           >
-            <span>بدء تصفير الأجهزة الملغاة</span>
+            <span>تصفير مبالغ الملغاة</span>
+          </button>
+        </div>
+
+        {/* Tool 4 */}
+        <div className="bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 rounded-2xl p-5 flex flex-col justify-between space-y-4 shadow-sm hover:border-purple-500/30 transition-all">
+          <div className="space-y-2">
+            <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+              <ShieldCheck size={18} />
+            </div>
+            <h4 className="text-sm font-black text-slate-800 dark:text-white">4. تنظيف شواهد الحذف القديمة</h4>
+            <p className="text-xs text-slate-500 dark:text-gray-400 leading-relaxed">
+              حذف سجلات "Tombstones" التي تجاوز عمرها 90 يوماً. يساعد في تخفيف حجم قاعدة البيانات مع الحفاظ على استقرار المزامنة للأجهزة النشطة.
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={activeRunningTool !== null}
+            onClick={() => setConfirmToolId(4)}
+            className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-50"
+          >
+            <span>بدء تطهير شواهد الحذف</span>
           </button>
         </div>
 
@@ -693,6 +817,7 @@ export default function ComprehensiveMaintenanceTab() {
                 {confirmToolId === 1 && 'سيتم تحديث رقم الفاتورة على جميع بنود الأجهزة في قاعدة البيانات المحلية والسحابية لتتطابق تماماً مع فواتيرها الحالية.'}
                 {confirmToolId === 2 && 'سيتم ربط السندات المالية القديمة بمعرف الفاتورة الثابت invoiceId وهوية العميل، لضمان استقرار العلاقة المحاسبية.'}
                 {confirmToolId === 3 && 'سيتم تصفير مبالغ الأجهزة الملغاة وغير المعتمدة وتعديل إجمالي فواتيرها. هل تريد المتابعة؟'}
+                {confirmToolId === 4 && 'سيتم حذف سجلات شواهد الحذف (Tombstones) التي مر عليها أكثر من 90 يوماً. هذا الإجراء آمن للأجهزة التي تتصل بالنظام بانتظام.'}
               </p>
             </div>
             <div className="flex items-center gap-3 pt-2">
@@ -702,6 +827,7 @@ export default function ComprehensiveMaintenanceTab() {
                   if (confirmToolId === 1) executeHarmonizeItemNumbers();
                   else if (confirmToolId === 2) executeBindTransactions();
                   else if (confirmToolId === 3) executeZeroNonBillableDevices();
+                  else if (confirmToolId === 4) executeCleanupTombstones();
                 }}
                 className="flex-1 py-2.5 px-4 bg-purple-600 hover:bg-purple-500 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-lg"
               >

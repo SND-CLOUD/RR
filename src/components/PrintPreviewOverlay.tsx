@@ -2230,7 +2230,12 @@ export default function PrintPreviewOverlay({
                               </td>
                               <td className="py-1 px-2 border-l border-black text-right">
                                 <div className="max-w-[280px] text-emerald-800 leading-normal flex flex-col justify-center" dir="rtl">
-                                  <span>{displayStatusReport}</span>
+                                  <span className="font-bold">{displayStatusReport}</span>
+                                  {it.partsUsed && it.partsUsed.length > 0 && (
+                                    <span className="text-[9px] text-gray-600 font-medium mt-0.5 border-t border-gray-100 pt-0.5">
+                                      قطع الغيار: {it.partsUsed.map((p: any) => `${p.partName} (${p.quantity})`).join(' / ')}
+                                    </span>
+                                  )}
                                 </div>
                               </td>
                               {!isPhase1 && (
@@ -2756,7 +2761,12 @@ export default function PrintPreviewOverlay({
                               </td>
                               <td className="py-1 px-2 border-l border-black text-right">
                                 <div className="max-w-[180px] leading-normal flex flex-col justify-center" dir="rtl">
-                                  <span>{displayInspection}</span>
+                                  <span className="font-bold">{displayInspection}</span>
+                                  {it.partsUsed && it.partsUsed.length > 0 && (
+                                    <span className="text-[9px] text-gray-600 font-medium mt-0.5 border-t border-gray-100 pt-0.5">
+                                      قطع الغيار: {it.partsUsed.map((p: any) => `${p.partName} (${p.quantity})`).join(' / ')}
+                                    </span>
+                                  )}
                                 </div>
                               </td>
                               <td className="py-1 px-2 border-l border-black text-center">

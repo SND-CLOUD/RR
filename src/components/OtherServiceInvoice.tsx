@@ -1236,6 +1236,7 @@ export default function OtherServiceInvoice({
           const invRef = doc(db, 'shop_parts_inventory', finalPartInventoryId);
           batch.update(invRef, {
             quantity: increment(-item.quantity),
+            usedQuantity: increment(item.quantity),
             updatedAt: serverTimestamp()
           });
         }

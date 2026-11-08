@@ -372,6 +372,15 @@ export async function deleteInvoiceWithCascade(
           }
         } catch (e) {}
 
+        // Restore spare parts to inventory if this was a maintenance item that reached status 50/60
+        if (['50', '55', '60'].includes(item.status || '') && (item.partsUsed || []).length > 0) {
+          try {
+            await restoreItemSparePartsToStock(item);
+          } catch (e) {
+            console.warn('Cascading maintenance parts reversal failed for item:', item.id, e);
+          }
+        }
+
         try {
           await provider.deleteDoc('invoice_items', item.id);
         } catch (e) {}
@@ -447,6 +456,58 @@ export async function deleteInvoiceWithCascade(
       deletedBatchCount
     };
   }
+}
+
+/**
+ * Restores spare parts used in a maintenance item back to inventory.
+ * Used when an item is deleted or reverted from status 50/60.
+ */
+export async function restoreItemSparePartsToStock(item: InvoiceItem): Promise<number> {
+  const parts = item.partsUsed || [];
+  if (parts.length === 0) return 0;
+
+  const provider = ProviderFactory.getProvider();
+  let restoredCount = 0;
+
+  for (const p of parts) {
+    if (p.isScrap) continue; // Scrap parts were never deducted
+
+    const partQty = Number(p.quantity) || 1;
+    const partId = p.partId || p.id;
+    if (!partId) continue;
+
+    try {
+      // Find the stock record
+      let stockDoc: any = null;
+      try {
+        const res = await localDb.query(`SELECT * FROM shop_parts_inventory WHERE id = ? OR partId = ?`, [partId, partId]);
+        if (res?.values?.[0]) stockDoc = res.values[0];
+      } catch (e) {}
+
+      if (!stockDoc) {
+        const snap = await getDoc(doc(db, 'shop_parts_inventory', partId));
+        if (snap.exists()) stockDoc = { id: snap.id, ...snap.data() };
+      }
+
+      if (stockDoc) {
+        const newQty = (Number(stockDoc.quantity) || 0) + partQty;
+        const newUsed = Math.max(0, (Number(stockDoc.usedQuantity) || 0) - partQty);
+        
+        const updatePayload = {
+          quantity: newQty,
+          usedQuantity: newUsed,
+          updatedAt: serverTimestamp()
+        };
+
+        try { await provider.updateDoc('shop_parts_inventory', stockDoc.id, updatePayload); } catch (e) {}
+        try { await updateDoc(doc(db, 'shop_parts_inventory', stockDoc.id), updatePayload); } catch (e) {}
+        restoredCount++;
+      }
+    } catch (err) {
+      console.warn(`Failed to restore part ${partId}:`, err);
+    }
+  }
+  return restoredCount;
 }
 
 /**
@@ -546,25 +607,35 @@ export async function deleteSingleInvoiceItemWithCascade(
         try { await provider.setDoc('shop_parts_inventory', newStockId, payload); } catch (e) {}
         try { await setDoc(doc(db, 'shop_parts_inventory', newStockId), payload); } catch (e) {}
       }
-
-      // Reverse batch recovery if applicable
-      if (item.batchId) {
-        try {
-          const bSnap = await getDoc(doc(db, 'disassembly_batches', item.batchId));
-          if (bSnap.exists()) {
-            const bData = bSnap.data();
-            const rev = qty * Number(item.unitCost || 0);
-            const currentRec = Number(bData.recoveredAmount || 0);
-            const newRec = Math.max(0, currentRec - rev);
-            const isFull = (bData.totalBatchCost || 0) > 0 && newRec >= (bData.totalBatchCost || 0);
-            try { await provider.updateDoc('disassembly_batches', item.batchId, { recoveredAmount: newRec, isCostFullyRecovered: isFull ? 1 : 0 }); } catch (e) {}
-            try { await updateDoc(doc(db, 'disassembly_batches', item.batchId), { recoveredAmount: newRec, isCostFullyRecovered: isFull }); } catch (e) {}
-          }
-        } catch (e) {}
-      }
     }
 
-    // 3. Delete the item record
+    // 3. If maintenance item and status is 50/60: restore spare parts to stock
+    if (['50', '55', '60'].includes(item.status || '') && (item.partsUsed || []).length > 0) {
+       try {
+         await restoreItemSparePartsToStock(item);
+       } catch (e) {
+         console.warn('Cascading maintenance parts reversal failed for single item:', item.id, e);
+       }
+    }
+
+    // 4. Reverse batch recovery if applicable
+    if (item.batchId) {
+      try {
+        const bSnap = await getDoc(doc(db, 'disassembly_batches', item.batchId));
+        if (bSnap.exists()) {
+          const bData = bSnap.data();
+          const rev = qty * Number(item.unitCost || 0);
+          const currentRec = Number(bData.recoveredAmount || 0);
+          const totalCost = Number(bData.totalBatchCost || 0);
+          const newRec = Math.max(0, currentRec - rev);
+          const isFull = totalCost > 0 && newRec >= totalCost;
+          try { await provider.updateDoc('disassembly_batches', item.batchId, { recoveredAmount: newRec, isCostFullyRecovered: isFull ? 1 : 0 }); } catch (e) {}
+          try { await updateDoc(doc(db, 'disassembly_batches', item.batchId), { recoveredAmount: newRec, isCostFullyRecovered: isFull ? 1 : 0, updatedAt: serverTimestamp() }); } catch (e) {}
+        }
+      } catch (e) {}
+    }
+
+    // 5. Delete the item record
     if (item.id) {
       try { await provider.deleteDoc('invoice_items', item.id); } catch (e) {}
       try { await deleteDoc(doc(db, 'invoice_items', item.id)); } catch (e) {}

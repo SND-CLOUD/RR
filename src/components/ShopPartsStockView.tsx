@@ -296,7 +296,7 @@ export default function ShopPartsStockView() {
   const availableItemsCount = baseFilteredStock.filter(i => Number(i.quantity || 0) > 0).length;
   const soldItemsCount = baseFilteredStock.filter(i => Number(i.quantity || 0) <= 0).length;
   const availableStockPieces = baseFilteredStock.reduce((acc, i) => acc + Math.max(0, Number(i.quantity || 0)), 0);
-  const soldStockPieces = baseFilteredStock.reduce((acc, i) => acc + Math.max(0, Number(i.usedQuantity || 0)), 0);
+  const soldStockPieces = baseFilteredStock.reduce((acc, i) => acc + (Number(i.usedQuantity) || 0), 0);
   const totalStockPieces = availableStockPieces + soldStockPieces;
   const totalStockQuantity = availableStockPieces;
   const totalStockSaleValue = baseFilteredStock.reduce((acc, i) => acc + (Math.max(0, Number(i.quantity || 0)) * Number(i.salePrice || 0)), 0);

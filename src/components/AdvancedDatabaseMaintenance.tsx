@@ -26,10 +26,15 @@ import { localDb } from '../lib/local-db';
 import { LocalProviderInstance } from '../data/LocalProvider';
 import { SyncEngine } from '../data/SyncEngine';
 import { isAccountingTransactionValid, roundCurrencyAmount } from '../lib/fundRepairService';
-import { db, doc, updateDoc } from '../firebase';
+import { db, doc, updateDoc, serverTimestamp } from '../firebase';
 import MaintenanceInvoicesTab from './maintenance/MaintenanceInvoicesTab';
 import OtherInvoicesTab from './maintenance/OtherInvoicesTab';
 import ComprehensiveMaintenanceTab from './maintenance/ComprehensiveMaintenanceTab';
+import { 
+  auditOrphanedPartsStock, 
+  cleanOrphanedPartsStock, 
+  recalculateDisassemblyBatchesRecovery 
+} from '../lib/invoiceCascadeService';
 
 // Reports interfaces
 interface VoucherAuditReport {
@@ -64,8 +69,8 @@ interface Props {
 export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) {
   const handleExit = onBack || onClose || (() => {});
 
-  // Section Selector: 'vouchers' | 'customers' | 'invoices' | 'other' | 'comprehensive'
-  const [activeSection, setActiveSection] = useState<'vouchers' | 'customers' | 'invoices' | 'other' | 'comprehensive'>('vouchers');
+  // Section Selector: 'vouchers' | 'customers' | 'invoices' | 'other' | 'comprehensive' | 'parts' | 'batches'
+  const [activeSection, setActiveSection] = useState<'vouchers' | 'customers' | 'invoices' | 'other' | 'comprehensive' | 'parts' | 'batches'>('vouchers');
 
   // --- Zero Background Activity: No auto-running useEffect ---
 
@@ -97,6 +102,28 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
 
   const [customCustStartNumber, setCustomCustStartNumber] = useState<number>(1);
   const [showCustRenumberConfirm, setShowCustRenumberConfirm] = useState(false);
+
+  // =========================================================================
+  // States: Section 3 (Parts Inventory & Stock)
+  // =========================================================================
+  const [partsAuditLoading, setPartsAuditLoading] = useState(false);
+  const [partsAuditReport, setPartsAuditReport] = useState<{ orphanedItems: any[]; orphanedBatches: any[] } | null>(null);
+  
+  const [activeRunningPartsTool, setActiveRunningPartsTool] = useState<number | null>(null);
+  const [partsProgressText, setPartsProgressText] = useState('');
+  const [partsProgressPercent, setPartsProgressPercent] = useState(0);
+  const [partsExecutionResult, setPartsExecutionResult] = useState<{ tool: number; type: 'success' | 'error' | 'info'; message: string } | null>(null);
+
+  // =========================================================================
+  // States: Section 4 (Disassembly Batches)
+  // =========================================================================
+  const [batchesAuditLoading, setBatchesAuditLoading] = useState(false);
+  const [batchesReport, setBatchesReport] = useState<{ updatedCount: number; batches: any[] } | null>(null);
+
+  const [activeRunningBatchesTool, setActiveRunningBatchesTool] = useState<number | null>(null);
+  const [batchesProgressText, setBatchesProgressText] = useState('');
+  const [batchesProgressPercent, setBatchesProgressPercent] = useState(0);
+  const [batchesExecutionResult, setBatchesExecutionResult] = useState<{ tool: number; type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   // =========================================================================
   // 📂 المحور الأول: صيانة سندات النظام والخزينة (أدوات 1 إلى 5)
@@ -963,6 +990,189 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
     }
   };
 
+  // =========================================================================
+  // 📂 المحور الثالث: صيانة مخزون قطع الغيار (أدوات 1 و 2)
+  // =========================================================================
+
+  // 🔹 الأداة (1 للقطع): فحص المخزون والأصناف اليتيمة
+  const runPartsAudit = async () => {
+    setPartsAuditLoading(true);
+    setPartsExecutionResult(null);
+    try {
+      const report = await auditOrphanedPartsStock();
+      setPartsAuditReport(report);
+    } catch (err: any) {
+      setPartsExecutionResult({
+        tool: 1,
+        type: 'error',
+        message: `فشل فحص المخزون: ${err?.message || err}`
+      });
+    } finally {
+      setPartsAuditLoading(false);
+    }
+  };
+
+  // 🔹 الأداة (2 للقطع): تنظيف الأصناف اليتيمة والمكررة
+  const executeCleanPartsOrphans = async () => {
+    if (!partsAuditReport) return;
+    setActiveRunningPartsTool(2);
+    setPartsProgressPercent(10);
+    setPartsProgressText('إيقاف المزامنة وعزل قاعدة البيانات...');
+    setPartsExecutionResult(null);
+
+    SyncEngine.pauseSync();
+
+    try {
+      const itemIds = partsAuditReport.orphanedItems.map(i => i.id).filter(Boolean);
+      const batchIds = partsAuditReport.orphanedBatches.map(b => b.id).filter(Boolean);
+
+      if (itemIds.length === 0 && batchIds.length === 0) {
+        setPartsExecutionResult({
+          tool: 2,
+          type: 'info',
+          message: 'لا توجد أصناف يتيمة لتنظيفها حالياً.'
+        });
+        SyncEngine.resumeSync();
+        setActiveRunningPartsTool(null);
+        return;
+      }
+
+      setPartsProgressPercent(40);
+      setPartsProgressText(`تنظيف ${itemIds.length + batchIds.length} سجل يتيم...`);
+
+      const res = await cleanOrphanedPartsStock(itemIds, batchIds);
+
+      setPartsProgressPercent(90);
+      setPartsProgressText('استكمال العملية وتحديث الفهارس...');
+      
+      SyncEngine.resumeSync();
+      SyncEngine.syncAll().catch(() => {});
+
+      setPartsProgressPercent(100);
+      setPartsExecutionResult({
+        tool: 2,
+        type: 'success',
+        message: `تم بنجاح تنظيف ${res.cleanedCount} سجل يتيم من المخزون والدفعات.`
+      });
+
+      runPartsAudit();
+    } catch (err: any) {
+      SyncEngine.resumeSync();
+      setPartsExecutionResult({
+        tool: 2,
+        type: 'error',
+        message: `خطأ أثناء تنظيف الأصناف اليتيمة: ${err?.message || err}`
+      });
+    } finally {
+      setActiveRunningPartsTool(null);
+    }
+  };
+
+  // 🔹 الأداة (3 للقطع): معالجة المخزون السالب (تصفير)
+  const executeFixNegativeParts = async () => {
+    setActiveRunningPartsTool(3);
+    setPartsProgressPercent(10);
+    setPartsProgressText('البحث عن الأصناف ذات الرصيد السالب...');
+    setPartsExecutionResult(null);
+
+    SyncEngine.pauseSync();
+
+    try {
+      const res = await localDb.query("SELECT id, name, quantity FROM shop_parts_inventory WHERE quantity < 0");
+      const negatives = res.values || [];
+
+      if (negatives.length === 0) {
+        setPartsExecutionResult({
+          tool: 3,
+          type: 'info',
+          message: 'لا يوجد أصناف برصيد سالب في المخزون حالياً.'
+        });
+        SyncEngine.resumeSync();
+        setActiveRunningPartsTool(null);
+        return;
+      }
+
+      for (let i = 0; i < negatives.length; i++) {
+        const item = negatives[i];
+        const pct = Math.round(10 + ((i + 1) / negatives.length) * 80);
+        setPartsProgressPercent(pct);
+        setPartsProgressText(`تصفير رصيد (${item.name || item.id})...`);
+
+        const nowIso = new Date().toISOString();
+        await LocalProviderInstance.updateDoc('shop_parts_inventory', item.id, {
+          quantity: 0,
+          updatedAt: nowIso
+        });
+        
+        try {
+          await updateDoc(doc(db, 'shop_parts_inventory', item.id), {
+            quantity: 0,
+            updatedAt: serverTimestamp()
+          });
+        } catch (e) {}
+      }
+
+      SyncEngine.resumeSync();
+      SyncEngine.syncAll().catch(() => {});
+
+      setPartsProgressPercent(100);
+      setPartsExecutionResult({
+        tool: 3,
+        type: 'success',
+        message: `تم بنجاح معالجة وتصفير رصيد ${negatives.length} صنف سالب في المخزون.`
+      });
+
+      runPartsAudit();
+    } catch (err: any) {
+      SyncEngine.resumeSync();
+      setPartsExecutionResult({
+        tool: 3,
+        type: 'error',
+        message: `خطأ أثناء معالجة المخزون السالب: ${err?.message || err}`
+      });
+    } finally {
+      setActiveRunningPartsTool(null);
+    }
+  };
+
+  // =========================================================================
+  // 📂 المحور الرابع: صيانة دفعات التفكيك (أداة 1)
+  // =========================================================================
+
+  // 🔹 الأداة (1 للدفعات): إعادة احتساب استرداد التكلفة
+  const runBatchesSync = async () => {
+    setActiveRunningBatchesTool(1);
+    setBatchesProgressPercent(20);
+    setBatchesProgressText('جاري فحص المبيعات ومطابقتها مع الدفعات...');
+    setBatchesExecutionResult(null);
+
+    SyncEngine.pauseSync();
+
+    try {
+      const res = await recalculateDisassemblyBatchesRecovery();
+      setBatchesReport(res);
+
+      SyncEngine.resumeSync();
+      SyncEngine.syncAll().catch(() => {});
+
+      setBatchesProgressPercent(100);
+      setBatchesExecutionResult({
+        tool: 1,
+        type: 'success',
+        message: `تم بنجاح تحديث ومزامنة أرباح ${res.updatedCount} دفعة تفكيك بناءً على المبيعات الفعلية.`
+      });
+    } catch (err: any) {
+      SyncEngine.resumeSync();
+      setBatchesExecutionResult({
+        tool: 1,
+        type: 'error',
+        message: `فشل مزامنة الدفعات: ${err?.message || err}`
+      });
+    } finally {
+      setActiveRunningBatchesTool(null);
+    }
+  };
+
   return (
     <div className="w-full max-w-6xl mx-auto p-4 sm:p-6 pb-24 space-y-6 text-right font-cairo" dir="rtl">
       
@@ -1005,6 +1215,8 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
           >
             <option value="vouchers">سندات النظام والخزينة</option>
             <option value="customers">سجلات وأرقام العملاء</option>
+            <option value="parts">مخزون قطع الغيار</option>
+            <option value="batches">دفعات التفكيك والتشليح</option>
             <option value="invoices">فواتير الصيانة والأجهزة</option>
             <option value="other">فواتير أخرى ومبيعات</option>
             <option value="comprehensive">معالجة شاملة للروابط</option>
@@ -1012,6 +1224,8 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
           <div className="absolute right-3.5 top-1/2 -translate-y-1/2 pointer-events-none">
             {activeSection === 'vouchers' && <Receipt size={18} className="text-amber-500" />}
             {activeSection === 'customers' && <Users size={18} className="text-emerald-500" />}
+            {activeSection === 'parts' && <Database size={18} className="text-orange-500" />}
+            {activeSection === 'batches' && <Layers size={18} className="text-indigo-500" />}
             {activeSection === 'invoices' && <FileText size={18} className="text-blue-500" />}
             {activeSection === 'other' && <Database size={18} className="text-purple-500" />}
             {activeSection === 'comprehensive' && <Sparkles size={18} className="text-rose-500" />}
@@ -1470,17 +1684,253 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
       {/* ========================================================================= */}
       {/* 📂 عرض المحور الثالث: فواتير الصيانة والأجهزة                              */}
       {/* ========================================================================= */}
-      {activeSection === 'invoices' && <MaintenanceInvoicesTab />}
-
-      {/* ========================================================================= */}
-      {/* 📂 عرض المحور الرابع: فواتير أخرى والمبيعات والمشتريات                      */}
-      {/* ========================================================================= */}
-      {activeSection === 'other' && <OtherInvoicesTab />}
-
-      {/* ========================================================================= */}
-      {/* 📂 عرض المحور الخامس: المعالجة الشاملة وتسوية الروابط                      */}
-      {/* ========================================================================= */}
       {activeSection === 'comprehensive' && <ComprehensiveMaintenanceTab />}
+
+      {/* ========================================================================= */}
+      {/* 📂 عرض المحور السادس: صيانة مخزون قطع الغيار                           */}
+      {/* ========================================================================= */}
+      {activeSection === 'parts' && (
+        <div className="bg-white dark:bg-[#1a1a1a] border-2 border-orange-500/50 rounded-3xl p-5 sm:p-6 shadow-md space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/10 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-orange-500/20 text-orange-600 dark:text-orange-400 flex items-center justify-center font-bold">
+                <Database size={22} />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  المحور الثالث: صيانة مخزون قطع الغيار
+                  <span className="text-[10px] bg-orange-500/20 text-orange-700 dark:text-orange-300 px-2 py-0.5 rounded-md font-mono font-bold">
+                    shop_parts_inventory
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-600 dark:text-gray-400 mt-0.5">
+                  أدوات معالجة الأصناف اليتيمة والمخزون السالب وتصحيح روابط فواتير الشراء
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Progress Indicator */}
+          {activeRunningPartsTool !== null && (
+            <div className="p-4 bg-orange-50 dark:bg-black/40 rounded-2xl border border-orange-300 dark:border-orange-500/30 space-y-2 animate-pulse">
+              <div className="flex items-center justify-between text-xs font-bold text-orange-800 dark:text-orange-300">
+                <span>{partsProgressText}</span>
+                <span className="font-mono text-sm">{partsProgressPercent}%</span>
+              </div>
+              <div className="w-full bg-slate-200 dark:bg-white/10 rounded-full h-3 overflow-hidden">
+                <div className="bg-orange-500 h-full rounded-full transition-all duration-300" style={{ width: `${partsProgressPercent}%` }} />
+              </div>
+            </div>
+          )}
+
+          {/* Execution Result Log */}
+          {partsExecutionResult && (
+            <div className={`p-4 rounded-2xl text-xs font-bold border flex items-start gap-2.5 shadow-sm ${
+              partsExecutionResult.type === 'success'
+                ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-500/30 text-emerald-900 dark:text-emerald-300'
+                : partsExecutionResult.type === 'error'
+                ? 'bg-rose-50 dark:bg-rose-500/10 border-rose-300 dark:border-rose-500/30 text-rose-900 dark:text-rose-300'
+                : 'bg-orange-50 dark:bg-orange-500/10 border-orange-300 dark:border-orange-500/30 text-orange-900 dark:text-orange-300'
+            }`}>
+              {partsExecutionResult.type === 'success' ? <CheckCircle size={18} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" /> : <AlertTriangle size={18} className="shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />}
+              <span className="leading-relaxed">{partsExecutionResult.message}</span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Tool 1: Audit */}
+            <div className="bg-slate-50 dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col justify-between space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-lg bg-orange-500/10 text-orange-600 dark:text-orange-400 flex items-center justify-center font-black text-xs">1</span>
+                    <h3 className="font-black text-sm text-slate-900 dark:text-white">فحص المخزون واليتامى</h3>
+                  </div>
+                  <span className="text-[10px] bg-slate-200 dark:bg-white/10 text-slate-700 dark:text-gray-300 px-2 py-0.5 rounded font-bold">قراءة فقط</span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-gray-400 leading-relaxed">
+                  كشف الأصناف التي فقدت فواتير شرائها أو دفعات التفكيك الخاصة بها، وكذلك حصر الأصناف ذات الرصيد السالب.
+                </p>
+
+                {partsAuditReport && (
+                  <div className="mt-3 p-3 bg-white dark:bg-black/50 rounded-xl border border-slate-200 dark:border-white/10 text-xs space-y-2">
+                    <div className="grid grid-cols-2 gap-2 text-center font-mono">
+                      <div className="p-2 bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-400 rounded-lg border border-orange-200 dark:border-orange-500/20">
+                        <span className="block text-[9px] font-sans opacity-70">أصناف يتيمة</span>
+                        <strong className="text-lg">{partsAuditReport.orphanedItems.length}</strong>
+                      </div>
+                      <div className="p-2 bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 rounded-lg border border-indigo-200 dark:border-indigo-500/20">
+                        <span className="block text-[9px] font-sans opacity-70">دفعات يتيمة</span>
+                        <strong className="text-lg">{partsAuditReport.orphanedBatches.length}</strong>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={runPartsAudit}
+                disabled={partsAuditLoading || activeRunningPartsTool !== null}
+                className="w-full py-2.5 bg-orange-600 hover:bg-orange-500 text-white rounded-xl font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <Search size={14} className={partsAuditLoading ? 'animate-spin' : ''} />
+                <span>{partsAuditLoading ? 'جاري فحص المخزون...' : 'فحص وتدقيق المخزون الآن'}</span>
+              </button>
+            </div>
+
+            {/* Tool 2: Clean Orphans */}
+            <div className="bg-slate-50 dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col justify-between space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-lg bg-rose-500/10 text-rose-600 dark:text-rose-400 flex items-center justify-center font-black text-xs">2</span>
+                    <h3 className="font-black text-sm text-slate-900 dark:text-white">تنظيف الأصناف اليتيمة</h3>
+                  </div>
+                  <span className="text-[10px] bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 px-2 py-0.5 rounded font-bold">إزالة بيانات</span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-gray-400 leading-relaxed">
+                  حذف كافة الأصناف والدفعات التي لم يعد لها أصل في فواتير النظام لتطهير المخزون من المخلفات.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={executeCleanPartsOrphans}
+                disabled={activeRunningPartsTool !== null || !partsAuditReport || (partsAuditReport.orphanedItems.length === 0 && partsAuditReport.orphanedBatches.length === 0)}
+                className="w-full py-2.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <Wrench size={14} />
+                <span>تنظيف السجلات اليتيمة الآن</span>
+              </button>
+            </div>
+
+            {/* Tool 3: Fix Negatives */}
+            <div className="md:col-span-2 bg-slate-50 dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded-2xl p-4 flex flex-col justify-between space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center font-black text-xs">3</span>
+                    <h3 className="font-black text-sm text-slate-900 dark:text-white">معالجة وتصفير المخزون السالب</h3>
+                  </div>
+                  <span className="text-[10px] bg-teal-50 dark:bg-teal-500/10 text-teal-700 dark:text-teal-400 px-2 py-0.5 rounded font-bold border border-teal-300 dark:border-teal-500/20">تصحيح الأرصدة</span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-gray-400 leading-relaxed">
+                  البحث عن أي أصناف أصبحت أرصدتها "سالبة" (بسبب عمليات بيع سابقة غير مضبوطة) وتصفيرها لضمان دقة التقارير المالية.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={executeFixNegativeParts}
+                disabled={activeRunningPartsTool !== null}
+                className="w-full py-2.5 bg-teal-600 hover:bg-teal-500 text-white rounded-xl font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <AlertTriangle size={14} />
+                <span>تصفير الأرصدة السالبة في المخزون</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ========================================================================= */}
+      {/* 📂 عرض المحور السابع: صيانة دفعات التفكيك                                */}
+      {/* ========================================================================= */}
+      {activeSection === 'batches' && (
+        <div className="bg-white dark:bg-[#1a1a1a] border-2 border-indigo-500/50 rounded-3xl p-5 sm:p-6 shadow-md space-y-6">
+          <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/10 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-bold">
+                <Layers size={22} />
+              </div>
+              <div>
+                <h2 className="text-lg font-black text-slate-900 dark:text-white flex items-center gap-2">
+                  المحور الرابع: صيانة دفعات التفكيك والتشليح
+                  <span className="text-[10px] bg-indigo-500/20 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-md font-mono font-bold">
+                    disassembly_batches
+                  </span>
+                </h2>
+                <p className="text-xs text-slate-600 dark:text-gray-400 mt-0.5">
+                  أدوات مزامنة استرداد التكلفة والأرباح المحققة من مبيعات القطع المفككة
+                </p>
+              </div>
+            </div>
+          </div>
+
+          {/* Progress Indicator */}
+          {activeRunningBatchesTool !== null && (
+            <div className="p-4 bg-indigo-50 dark:bg-black/40 rounded-2xl border border-indigo-300 dark:border-indigo-500/30 space-y-2 animate-pulse">
+              <div className="flex items-center justify-between text-xs font-bold text-indigo-800 dark:text-indigo-300">
+                <span>{batchesProgressText}</span>
+                <span className="font-mono text-sm">{batchesProgressPercent}%</span>
+              </div>
+              <div className="w-full bg-slate-200 dark:bg-white/10 rounded-full h-3 overflow-hidden">
+                <div className="bg-indigo-500 h-full rounded-full transition-all duration-300" style={{ width: `${batchesProgressPercent}%` }} />
+              </div>
+            </div>
+          )}
+
+          {/* Execution Result Log */}
+          {batchesExecutionResult && (
+            <div className={`p-4 rounded-2xl text-xs font-bold border flex items-start gap-2.5 shadow-sm ${
+              batchesExecutionResult.type === 'success'
+                ? 'bg-emerald-50 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-500/30 text-emerald-900 dark:text-emerald-300'
+                : 'bg-rose-50 dark:bg-rose-500/10 border-rose-300 dark:border-rose-500/30 text-rose-900 dark:text-rose-300'
+            }`}>
+              {batchesExecutionResult.type === 'success' ? <CheckCircle size={18} className="shrink-0 mt-0.5 text-emerald-600 dark:text-emerald-400" /> : <AlertTriangle size={18} className="shrink-0 mt-0.5 text-rose-600 dark:text-rose-400" />}
+              <span className="leading-relaxed">{batchesExecutionResult.message}</span>
+            </div>
+          )}
+
+          <div className="space-y-4">
+            <div className="bg-slate-50 dark:bg-black/30 border border-slate-200 dark:border-white/10 rounded-2xl p-6 flex flex-col justify-between space-y-4">
+              <div>
+                <div className="flex items-center justify-between mb-3">
+                  <div className="flex items-center gap-2">
+                    <span className="w-6 h-6 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 flex items-center justify-center font-black text-xs">1</span>
+                    <h3 className="font-black text-sm text-slate-900 dark:text-white">إعادة احتساب ومزامنة استرداد التكلفة</h3>
+                  </div>
+                  <span className="text-[10px] bg-indigo-50 dark:bg-indigo-500/10 text-indigo-700 dark:text-indigo-400 px-2 py-0.5 rounded font-bold border border-indigo-300 dark:border-indigo-500/20">تحديث الأرباح</span>
+                </div>
+                <p className="text-xs text-slate-600 dark:text-gray-400 leading-relaxed">
+                  يقوم النظام بمسح كافة مبيعات القطع في فواتير المبيعات وفواتير الصيانة، ومطابقتها مع دفعات التفكيك الأصلية لتحديث خانة "المبلغ المسترد" وتحديد ما إذا كانت الدفعة قد استردت تكلفتها أم لا بدقة 100%.
+                </p>
+
+                {batchesReport && (
+                  <div className="mt-4 p-4 bg-white dark:bg-black/50 rounded-xl border border-slate-200 dark:border-white/10">
+                    <div className="flex items-center justify-between mb-3">
+                      <span className="text-xs font-bold text-slate-700 dark:text-gray-300">ملخص عملية المزامنة:</span>
+                      <span className="text-[10px] bg-emerald-500/10 text-emerald-600 px-2 py-0.5 rounded-full font-bold">محدث: {batchesReport.updatedCount}</span>
+                    </div>
+                    <div className="space-y-2 max-h-40 overflow-y-auto custom-scrollbar pr-2">
+                      {batchesReport.batches.map((b: any, idx: number) => (
+                        <div key={idx} className="p-2 bg-slate-50 dark:bg-white/5 rounded border border-slate-200 dark:border-white/10 flex items-center justify-between text-[10px]">
+                          <span className="font-bold text-slate-900 dark:text-white">{b.batchName || b.batchNumber}</span>
+                          <div className="flex items-center gap-3 font-mono">
+                            <span className="text-blue-600 dark:text-blue-400">مسترد: {Number(b.recoveredAmount || 0).toLocaleString()}</span>
+                            {b.isCostFullyRecovered === 1 && <span className="text-emerald-600 dark:text-emerald-400 font-bold">✓ مكتمل</span>}
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                onClick={runBatchesSync}
+                disabled={activeRunningBatchesTool !== null}
+                className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-bold text-xs shadow-sm transition-all cursor-pointer flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <Sparkles size={16} />
+                <span>بدء مزامنة استرداد تكاليف الدفعات</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation Modal for Tool 4 (Vouchers Full Renumbering) */}
       {showRenumberConfirm && (

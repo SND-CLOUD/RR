@@ -744,7 +744,8 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         cost: row.decision === 'repairing' ? (Number(row.cost) || 0) : 0,
         unitCost: row.decision === 'repairing' ? (Number(row.unitCost) || 0) : 0,
         subStatus: row.decision === 'intact' ? 'intact' : row.decision === 'unrepairable' ? 'unrepairable' : 'maintenance',
-        status: row.decision === 'intact' ? '50' : row.decision === 'unrepairable' ? '50' : '30'
+        status: row.decision === 'intact' ? '50' : row.decision === 'unrepairable' ? '50' : '30',
+        partsUsed: (row as any).partsUsed
       });
 
       remainingQtyMap.set(orig.id!, Math.max(0, currentRem - rowCount));
@@ -1647,7 +1648,8 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                   <div className="flex items-start gap-3 w-full">
                     <label className="text-xs text-gray-500 whitespace-nowrap w-20 mt-3">التقرير الفني</label>
                     <div className="flex-1 flex flex-col sm:flex-row gap-2.5 items-stretch sm:items-center">
-                      <textarea 
+                      <input 
+                        type="text"
                         value={currentActionItem.technical || ''}
                         onChange={e => {
                           handleUpdateCurrentField('technical', e.target.value);
@@ -1657,9 +1659,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                           e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         }}
                         onClick={(e) => {
-                          (e.target as HTMLTextAreaElement).select();
+                          e.currentTarget.select();
                         }}
-                        className="flex-1 bg-black/40 border border-white/10 px-4 py-2 focus:border-purple-500 outline-none transition-all h-12 resize-none rounded-xl text-right leading-relaxed"
+                        className="flex-1 bg-black/40 border border-white/10 px-4 py-2 focus:border-purple-500 outline-none transition-all h-10 rounded-xl text-right leading-relaxed"
                         placeholder="أدخل التقرير الفني..."
                       />
 
@@ -1713,7 +1715,8 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                   </div>
                   <div className="flex items-start gap-3 w-full">
                     <label className="text-xs text-gray-500 whitespace-nowrap w-20 mt-3">نتيجة الصيانة</label>
-                    <textarea 
+                    <input 
+                      type="text"
                       value={currentActionItem.outcome || ''}
                       onChange={e => {
                         handleUpdateCurrentField('outcome', e.target.value);
@@ -1723,9 +1726,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                         e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
                       }}
                       onClick={(e) => {
-                        (e.target as HTMLTextAreaElement).select();
+                        e.currentTarget.select();
                       }}
-                      className="flex-1 bg-black/40 border border-white/10 px-4 py-2 focus:border-purple-500 outline-none transition-all h-12 resize-none rounded-xl text-right leading-relaxed"
+                      className="flex-1 bg-black/40 border border-white/10 px-4 py-2 focus:border-purple-500 outline-none transition-all h-10 rounded-xl text-right leading-relaxed"
                       placeholder="أدخل نتيجة الصيانة للعميل..."
                     />
                   </div>
@@ -1818,9 +1821,14 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                        <tr key={idx} className={`hover:bg-white/5 transition-colors whitespace-nowrap ${editingActionIndex === idx ? 'bg-orange-500/10' : ''}`}>
                          <td className="px-4 py-3 pr-6 font-bold whitespace-nowrap">{original?.deviceType || '---'}</td>
                          <td className="px-4 py-3 font-medium whitespace-nowrap">
-                           <div className="flex items-center gap-1.5">
-                             <span>{original?.deviceName || '---'}</span>
-                           </div>
+                            <div className="flex flex-col gap-0.5">
+                              <span className="font-bold">{original?.deviceName || '---'}</span>
+                              {item.partsUsed && item.partsUsed.length > 0 && (
+                                <span className="text-[10px] text-gray-500 font-medium whitespace-normal">
+                                  {item.partsUsed.map((p: any) => `${p.partName} ${p.quantity}`).join(' / ')}
+                                </span>
+                              )}
+                            </div>
                          </td>
                          <td className="px-4 py-3 text-gray-300 text-center whitespace-nowrap">{item.count}</td>
                          <td className="px-4 py-3 text-center whitespace-nowrap">
