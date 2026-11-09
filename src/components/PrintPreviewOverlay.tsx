@@ -1082,7 +1082,7 @@ export default function PrintPreviewOverlay({
           docNumber = cleanDocNum;
         }
 
-        if (targetInvId) {
+        if (targetInvId && targetInvId !== 'preview' && !targetInvId.startsWith('preview') && targetInvId !== 'temp') {
           try {
             await ProviderFactory.getProvider().updateDoc('invoices', targetInvId, {
               printCount: nextCount
@@ -1096,7 +1096,7 @@ export default function PrintPreviewOverlay({
       } else if (type === 'voucher' && voucher) {
         docId = voucher.id || '';
         docNumber = String(voucher.voucherNumber || voucher.number || '').replace(/#/g, '').trim();
-        if (voucher.id) {
+        if (voucher.id && voucher.id !== 'preview' && !voucher.id.startsWith('preview') && voucher.id !== 'temp') {
           try {
             await ProviderFactory.getProvider().updateDoc('vault_transactions', voucher.id, {
               printCount: nextCount

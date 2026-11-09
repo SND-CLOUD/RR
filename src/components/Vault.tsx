@@ -826,13 +826,18 @@ export default function Vault({
           return [
             [`=== العملة: ${getArabicCurrencyName(curr)} ===`, '', '', ''],
             ['(+) إيرادات فواتير الصيانة (أجهزة بحالة 50 جاهز للتسليم و 60 تم التسليم)', `+${st.maintenanceGrossRevenue.toLocaleString('en-US')} ${curr}`, `${st.totalGrossRevenue > 0 ? ((st.maintenanceGrossRevenue / st.totalGrossRevenue) * 100).toFixed(1) : 0}%`, 'إيراد أجهزة الصيانة المكتملة'],
+            ['(-) تكلفة قطع الغيار المستخدمة في الصيانة (COGS)', `-${st.maintenanceCogs.toLocaleString('en-US')} ${curr}`, `${st.totalGrossRevenue > 0 ? ((st.maintenanceCogs / st.totalGrossRevenue) * 100).toFixed(1) : 0}%`, 'تكلفة القطع الإلكترونية المنصرفة في صيانة الأجهزة'],
+            ['(=) مجمل ربح الصيانة التشغيلي', `${st.maintenanceGrossProfit >= 0 ? '+' : ''}${st.maintenanceGrossProfit.toLocaleString('en-US')} ${curr}`, '-', 'فائض إيراد الصيانة بعد خصم تكلفة القطع المستهلكة'],
             ['(+) إيرادات مبيعات القطع والخدمات الأخرى (قبل الخصم)', `+${st.salesGrossRevenue.toLocaleString('en-US')} ${curr}`, `${st.totalGrossRevenue > 0 ? ((st.salesGrossRevenue / st.totalGrossRevenue) * 100).toFixed(1) : 0}%`, 'فواتير بيع قطع الغيار والخدمات'],
+            ['(-) تكلفة بضاعة القطع والخدمات المباعة (COGS)', `-${st.salesCogs.toLocaleString('en-US')} ${curr}`, `${st.totalGrossRevenue > 0 ? ((st.salesCogs / st.totalGrossRevenue) * 100).toFixed(1) : 0}%`, 'تكلفة شراء قطع الغيار والخدمات المباعة'],
+            ['(=) مجمل ربح المبيعات والخدمات', `${st.salesGrossProfit >= 0 ? '+' : ''}${st.salesGrossProfit.toLocaleString('en-US')} ${curr}`, '-', 'فائض مبيعات القطع والخدمات بعد خصم تكلفتها'],
             ['(=) إجمالي الإيرادات المحققة', `+${st.totalGrossRevenue.toLocaleString('en-US')} ${curr}`, '-', 'إجمالي الإيرادات قبل تطبيق أي خصم'],
-            ['(-) تكلفة قطع الغيار وبضاعة الخدمات المباعة (COGS)', `-${st.totalCogs.toLocaleString('en-US')} ${curr}`, `${st.totalGrossRevenue > 0 ? ((st.totalCogs / st.totalGrossRevenue) * 100).toFixed(1) : 0}%`, '0$ للصيانة حالياً لعدم ربط القطع + تكلفة الخدمات'],
+            ['(-) إجمالي تكلفة البضاعة وقطع الغيار المنصرفة (COGS)', `-${st.totalCogs.toLocaleString('en-US')} ${curr}`, `${st.totalGrossRevenue > 0 ? ((st.totalCogs / st.totalGrossRevenue) * 100).toFixed(1) : 0}%`, 'إجمالي تكلفة قطع الصيانة وبضاعة المبيعات'],
             ['(-) الخصم المسموح به (Discounts Allowed)', `-${st.totalDiscounts.toLocaleString('en-US')} ${curr}`, `${st.totalGrossRevenue > 0 ? ((st.totalDiscounts / st.totalGrossRevenue) * 100).toFixed(1) : 0}%`, `تخفيضات تجارية مسموح بها (${st.discountedInvoiceCount} فاتورة تضمنت خصماً)`],
             ['(=) مجمل الربح التشغيلي (Gross Profit)', `${st.grossProfit >= 0 ? '+' : ''}${st.grossProfit.toLocaleString('en-US')} ${curr}`, `${st.grossMarginPercent.toFixed(1)}%`, 'فائض الدخل قبل المصروفات التشغيلية'],
             ['(-) المصروفات التشغيلية (OPEX)', `-${st.totalOperatingExpenses.toLocaleString('en-US')} ${curr}`, `${st.totalGrossRevenue > 0 ? ((st.totalOperatingExpenses / st.totalGrossRevenue) * 100).toFixed(1) : 0}%`, 'سندات صرف كهرباء، نت، إيجار، رواتب، إلخ'],
             ['(=) صافي الربح الفعلي النهائي (Net Profit)', `${st.netProfit >= 0 ? '+' : ''}${st.netProfit.toLocaleString('en-US')} ${curr}`, `${st.netMarginPercent.toFixed(1)}%`, st.netProfit >= 0 ? 'صافي أرباح النشاط للفترة' : 'صافي عجز / خسارة للفترة'],
+            ['(*) حساب مخزون قطع الغيار المتبقي (أصل متداول بالتكلفة)', `${st.totalStockRemainingValue.toLocaleString('en-US')} ${curr}`, '-', `القيمة البيعية المتوقعة: ${st.totalStockRetailValue.toLocaleString('en-US')} ${curr}`],
             ['(*) السيولة المحصلة نقداً (كود 60 تم التسليم)', `${st.totalCollected.toLocaleString('en-US')} ${curr}`, '-', 'المبالغ المسددة فعلياً بالصناديق'],
             ['(*) إيراد تحت التسليم / ذمم معلقة (كود 50 جاهز للتسليم)', `${st.totalUncollected.toLocaleString('en-US')} ${curr}`, '-', 'أجهزة أصلحت وبانتظار الاستلام والدفع']
           ];
@@ -3007,9 +3012,43 @@ export default function Vault({
           actualRevenue = 0;
         }
 
-        // قاعدة الصيانة: تكلفة قطع الغيار حالياً تساوي صفر (0$) لجميع فواتير الصيانة
-        // لأن قطع الغيار لم تُدخل بعد على النظام، ومستقبلاً ستعتمد حقل sparePartsCost عند تفعيله
-        cogs = 0;
+        // تكلفة قطع الغيار المستخدمة في صيانة الأجهزة المكتملة
+        cogs = recognizedItems.reduce((sum, it) => {
+          let itemPartsCost = Number(it.sparePartsCost || 0);
+
+          // إذا لم تكن sparePartsCost محسوبة مسبقاً، نحسبها من قائمة partsUsed
+          if (itemPartsCost <= 0 && it.partsUsed) {
+            let pList: any[] = [];
+            if (typeof it.partsUsed === 'string') {
+              try {
+                const parsed = JSON.parse(it.partsUsed);
+                if (Array.isArray(parsed)) pList = parsed;
+              } catch (e) {}
+            } else if (Array.isArray(it.partsUsed)) {
+              pList = it.partsUsed;
+            }
+
+            itemPartsCost = pList.reduce((pSum: number, p: any) => {
+              if (p.isScrap === true || p.isScrap === 1 || p.isScrap === '1') return pSum;
+              const pQty = Number(p.quantity) || 1;
+              let pUnitCost = Number(p.unitCost || 0);
+              if (pUnitCost <= 0) {
+                const pId = String(p.partId || p.id || '').trim();
+                const pName = (p.partName || '').trim().toLowerCase();
+                const matchedStock = shopParts.find(s => 
+                  (pId && (s.id === pId || s.partId === pId)) ||
+                  (pName && (s.name || '').trim().toLowerCase() === pName)
+                );
+                if (matchedStock && Number(matchedStock.unitCost) > 0) {
+                  pUnitCost = Number(matchedStock.unitCost);
+                }
+              }
+              return pSum + (pUnitCost * pQty);
+            }, 0);
+          }
+
+          return sum + itemPartsCost;
+        }, 0);
       }
 
       // معادلة الربح المعتمدة: إجمالي الإيرادات - تكلفة القطع (0 للصيانة) - الخصم المسموح به
@@ -3076,14 +3115,20 @@ export default function Vault({
       totalRevenue: number;
       maintenanceGrossRevenue: number;
       maintenanceRevenue: number;
+      maintenanceCogs: number;
+      maintenanceGrossProfit: number;
       salesGrossRevenue: number;
       salesRevenue: number;
+      salesCogs: number;
+      salesGrossProfit: number;
       totalCogs: number;
       grossProfit: number;
       grossMarginPercent: number;
       totalOperatingExpenses: number;
       operatingExpensesByCategory: Record<string, number>;
       totalInventoryPayments: number;
+      totalStockRemainingValue: number;
+      totalStockRetailValue: number;
       netProfit: number;
       netMarginPercent: number;
       totalCollected: number;
@@ -3102,13 +3147,17 @@ export default function Vault({
 
       const maintenanceRevenue = invs.filter(i => !i.isSale).reduce((s, i) => s + i.revenue, 0);
       const maintenanceGrossRevenue = invs.filter(i => !i.isSale).reduce((s, i) => s + (i.grossRevenue || i.revenue), 0);
+      const maintenanceCogs = invs.filter(i => !i.isSale).reduce((s, i) => s + (i.cogs || 0), 0);
+      const maintenanceGrossProfit = maintenanceGrossRevenue - maintenanceCogs;
 
       const salesRevenue = invs.filter(i => i.isSale).reduce((s, i) => s + i.revenue, 0);
       const salesGrossRevenue = invs.filter(i => i.isSale).reduce((s, i) => s + (i.grossRevenue || i.revenue), 0);
+      const salesCogs = invs.filter(i => i.isSale).reduce((s, i) => s + (i.cogs || 0), 0);
+      const salesGrossProfit = salesGrossRevenue - salesCogs;
 
       const discountedInvoiceCount = invs.filter(i => (i.discount || 0) > 0).length;
 
-      const totalCogs = invs.reduce((s, i) => s + i.cogs, 0);
+      const totalCogs = invs.reduce((s, i) => s + (i.cogs || 0), 0);
       // معادلة مجمل الربح: إجمالي الإيرادات - تكلفة القطع - الخصم المسموح به
       const grossProfit = totalGrossRevenue - totalCogs - totalDiscounts;
       const grossMarginPercent = totalGrossRevenue > 0 ? (grossProfit / totalGrossRevenue) * 100 : 0;
@@ -3130,6 +3179,14 @@ export default function Vault({
         }
       });
 
+      // تقييم مخزون قطع الغيار المتبقي كأصل متداول بالعملة الحالية
+      const totalStockRemainingValue = shopParts
+        .filter(p => normalizeCurrencyCode(p.currency || 'USD') === curr)
+        .reduce((sum, p) => sum + (Math.max(0, Number(p.quantity || 0)) * Number(p.unitCost || 0)), 0);
+      const totalStockRetailValue = shopParts
+        .filter(p => normalizeCurrencyCode(p.currency || 'USD') === curr)
+        .reduce((sum, p) => sum + (Math.max(0, Number(p.quantity || 0)) * Number(p.salePrice || 0)), 0);
+
       const netProfit = grossProfit - totalOperatingExpenses;
       const netMarginPercent = totalGrossRevenue > 0 ? (netProfit / totalGrossRevenue) * 100 : 0;
       const totalCollected = invs.reduce((s, i) => s + i.amountPaid, 0);
@@ -3142,14 +3199,20 @@ export default function Vault({
         totalRevenue,
         maintenanceGrossRevenue,
         maintenanceRevenue,
+        maintenanceCogs,
+        maintenanceGrossProfit,
         salesGrossRevenue,
         salesRevenue,
+        salesCogs,
+        salesGrossProfit,
         totalCogs,
         grossProfit,
         grossMarginPercent,
         totalOperatingExpenses,
         operatingExpensesByCategory,
         totalInventoryPayments,
+        totalStockRemainingValue,
+        totalStockRetailValue,
         netProfit,
         netMarginPercent,
         totalCollected,
@@ -3160,7 +3223,7 @@ export default function Vault({
     });
 
     return stats;
-  }, [pnlCurrencies, evaluatedProfitInvoices, evaluatedProfitExpenses]);
+  }, [pnlCurrencies, evaluatedProfitInvoices, evaluatedProfitExpenses, shopParts]);
 
   // Filtered invoices for invoices table
   const filteredProfitInvoices = useMemo(() => {
@@ -5262,13 +5325,15 @@ export default function Vault({
                           {/* 4. COGS (Parts Cost) */}
                           <div className="bg-[#181818] border border-white/5 rounded-xl p-3 space-y-1">
                             <div className="flex items-center justify-between text-gray-400">
-                              <span className="text-[10px] font-cairo font-bold">تكلفة القطع والخدمات</span>
+                              <span className="text-[10px] font-cairo font-bold">تكلفة القطع والخدمات (COGS)</span>
                               <Layers size={12} className="text-amber-400" />
                             </div>
                             <p className="font-mono text-base sm:text-lg font-black text-amber-300">
                               -{st.totalCogs.toLocaleString('en-US')}
                             </p>
-                            <span className="text-[9px] text-gray-500 font-cairo block">0$ للصيانة حالياً + الخدمات</span>
+                            <span className="text-[9px] text-gray-400 font-cairo block truncate">
+                              صيانة: {st.maintenanceCogs.toLocaleString('en-US')} | مبيعات: {st.salesCogs.toLocaleString('en-US')}
+                            </span>
                           </div>
 
                           {/* 5. Operating Expenses */}
@@ -5309,23 +5374,49 @@ export default function Vault({
                               </div>
                               <table className="w-full text-right text-xs">
                                 <tbody className="divide-y divide-white/5 font-cairo">
-                                  {/* Revenues */}
+                                  {/* Maintenance Section */}
                                   <tr className="hover:bg-white/[0.02]">
                                     <td className="py-2.5 px-3 font-bold text-gray-300">(+) إيرادات فواتير الصيانة (أجهزة بحالة 50 جاهز للتسليم و 60 تم التسليم)</td>
                                     <td className="py-2.5 px-3 font-mono font-bold text-emerald-400 text-left">+{st.maintenanceGrossRevenue.toLocaleString('en-US')} <span className="text-[9px] text-gray-500">{curr}</span></td>
                                   </tr>
+                                  {st.maintenanceCogs > 0 && (
+                                    <tr className="hover:bg-white/[0.02] bg-amber-500/[0.02]">
+                                      <td className="py-2 px-3 pr-6 text-xs text-amber-400/90 font-bold flex items-center gap-1.5">
+                                        <span>↳ (-) تكلفة قطع الغيار المستخدمة في صيانة الأجهزة</span>
+                                      </td>
+                                      <td className="py-2 px-3 font-mono font-bold text-amber-400 text-left">-{st.maintenanceCogs.toLocaleString('en-US')} <span className="text-[9px] text-gray-500">{curr}</span></td>
+                                    </tr>
+                                  )}
+
+                                  {/* Sales Section */}
                                   <tr className="hover:bg-white/[0.02]">
                                     <td className="py-2.5 px-3 font-bold text-gray-300">(+) إيرادات مبيعات القطع والملحقات والخدمات الأخرى (قبل الخصم)</td>
                                     <td className="py-2.5 px-3 font-mono font-bold text-emerald-400 text-left">+{st.salesGrossRevenue.toLocaleString('en-US')} <span className="text-[9px] text-gray-500">{curr}</span></td>
                                   </tr>
+                                  {st.salesCogs > 0 && (
+                                    <tr className="hover:bg-white/[0.02] bg-amber-500/[0.02]">
+                                      <td className="py-2 px-3 pr-6 text-xs text-amber-400/90 font-bold flex items-center gap-1.5">
+                                        <span>↳ (-) تكلفة بضاعة القطع والخدمات المباعة</span>
+                                      </td>
+                                      <td className="py-2 px-3 font-mono font-bold text-amber-400 text-left">-{st.salesCogs.toLocaleString('en-US')} <span className="text-[9px] text-gray-500">{curr}</span></td>
+                                    </tr>
+                                  )}
+
+                                  {/* Total Revenues */}
                                   <tr className="bg-white/[0.02] border-t border-white/5 font-bold text-gray-300">
                                     <td className="py-2 px-3 text-gray-400">(=) إجمالي الإيرادات المحققة</td>
                                     <td className="py-2 px-3 font-mono text-gray-300 text-left">+{st.totalGrossRevenue.toLocaleString('en-US')} <span className="text-[9px] text-gray-500">{curr}</span></td>
                                   </tr>
-                                  <tr className="hover:bg-white/[0.02]">
-                                    <td className="py-2.5 px-3 font-bold text-gray-400">(-) تكلفة قطع الغيار وبضاعة الخدمات المباعة (COGS) [0$ للصيانة حالياً]</td>
+
+                                  {/* Total COGS */}
+                                  <tr className="hover:bg-white/[0.02] font-bold">
+                                    <td className="py-2.5 px-3 text-amber-300">
+                                      (-) إجمالي تكلفة البضاعة وقطع الغيار المنصرفة (COGS)
+                                    </td>
                                     <td className="py-2.5 px-3 font-mono font-bold text-amber-400 text-left">-{st.totalCogs.toLocaleString('en-US')} <span className="text-[9px] text-gray-500">{curr}</span></td>
                                   </tr>
+
+                                  {/* Discounts */}
                                   <tr className="bg-purple-950/20 hover:bg-purple-950/30 font-bold border-t border-purple-500/20 text-purple-300">
                                     <td className="py-2.5 px-3 flex items-center justify-between">
                                       <span>(-) الخصم المسموح به (Discounts Allowed)</span>
@@ -5335,16 +5426,22 @@ export default function Vault({
                                     </td>
                                     <td className="py-2.5 px-3 font-mono text-purple-300 text-left font-black">-{st.totalDiscounts.toLocaleString('en-US')} <span className="text-[10px]">{curr}</span></td>
                                   </tr>
+
+                                  {/* Gross Profit */}
                                   <tr className="bg-amber-950/20 border-t border-b border-amber-500/20 font-black">
                                     <td className="py-2.5 px-3 text-amber-300">(=) مجمل الربح التشغيلي (Gross Profit) [هامش {st.grossMarginPercent.toFixed(1)}%]</td>
                                     <td className={`py-2.5 px-3 font-mono text-left text-sm ${st.grossProfit >= 0 ? 'text-amber-300' : 'text-red-400'}`}>
                                       {st.grossProfit >= 0 ? '+' : ''}{st.grossProfit.toLocaleString('en-US')} <span className="text-[10px]">{curr}</span>
                                     </td>
                                   </tr>
+
+                                  {/* Operating Expenses */}
                                   <tr className="hover:bg-white/[0.02]">
                                     <td className="py-2.5 px-3 font-bold text-gray-400">(-) المصروفات والنفقات التشغيلية المباشرة (كهرباء، نت، إيجار، إلخ)</td>
                                     <td className="py-2.5 px-3 font-mono font-bold text-rose-400 text-left">-{st.totalOperatingExpenses.toLocaleString('en-US')} <span className="text-[9px] text-gray-500">{curr}</span></td>
                                   </tr>
+
+                                  {/* Net Operating Profit */}
                                   <tr className={`${isProfit ? 'bg-emerald-950/30 border-emerald-500/30' : 'bg-red-950/30 border-red-500/30'} border-t-2 border-b-2 font-black text-sm`}>
                                     <td className={`py-3 px-3 ${isProfit ? 'text-emerald-300' : 'text-red-300'}`}>
                                       (=) صافي الربح الفعلي النهائي (Net Operating Profit) [هامش {st.netMarginPercent.toFixed(1)}%]
@@ -5377,19 +5474,27 @@ export default function Vault({
                                 </div>
                               </div>
 
-                              {/* Inventory Purchases Card (Separated from OPEX) */}
+                              {/* Inventory Asset & Capital Card */}
                               <div className="bg-[#161616] border border-white/5 rounded-xl p-3 space-y-2">
                                 <span className="text-[11px] font-bold text-white font-cairo flex items-center gap-1.5">
                                   <Layers size={14} className="text-blue-400" />
-                                  تدفقات المخزون وسداد الموردين (رأس مال):
+                                  حساب مخزون قطع الغيار (أصول متداولة):
                                 </span>
                                 <div className="space-y-1.5 text-[11px] font-cairo text-gray-400">
                                   <div className="flex items-center justify-between">
-                                    <span>مدفوعات شراء قطع ومخزون وسداد موردين:</span>
+                                    <span>قيمة المخزون المتبقي حالياً (بسعر التكلفة):</span>
+                                    <span className="font-mono font-bold text-emerald-400">+{st.totalStockRemainingValue.toLocaleString('en-US')} {curr}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span>القيمة البيعية المتوقعة للمخزون:</span>
+                                    <span className="font-mono font-bold text-amber-300">+{st.totalStockRetailValue.toLocaleString('en-US')} {curr}</span>
+                                  </div>
+                                  <div className="flex items-center justify-between border-t border-white/5 pt-1">
+                                    <span>مدفوعات شراء المخزون وسداد الموردين للفترة:</span>
                                     <span className="font-mono font-bold text-blue-300">{st.totalInventoryPayments.toLocaleString('en-US')} {curr}</span>
                                   </div>
                                   <p className="text-[10px] text-gray-500 leading-relaxed">
-                                    ملاحظة محاسبية: مدفوعات شراء المخزون وسداد الموردين تُسجل كأصول متداولة ولا تُخصم مباشرة من الأرباح التشغيلية تجنباً للازدواجية مع تكلفة القطع المباعة (COGS).
+                                    المعيار المحاسبي: مخزون قطع الغيار المتبقي يُقيد كأصل متداول (Current Asset) برأس المال العامل، بينما يتم إدراج تكلفة القطع المستهلكة فعلياً في الصيانة والمبيعات في قائمة الدخل أعلاه كـ (COGS) للحصول على صافي الربح الحقيقي بدقة تامة.
                                   </p>
                                 </div>
                               </div>

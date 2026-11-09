@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { localDb } from '../lib/local-db';
 import { LocalProviderInstance } from '../data/LocalProvider';
+import { FirebaseProviderInstance } from '../data/FirebaseProvider';
 import { SyncEngine } from '../data/SyncEngine';
 import { isAccountingTransactionValid, roundCurrencyAmount } from '../lib/fundRepairService';
 import { db, doc, updateDoc, serverTimestamp } from '../firebase';
@@ -43,6 +44,8 @@ interface VoucherAuditReport {
   unnumbered: number;
   maxNumber: number;
   minNumber: number;
+  missingCount: number;
+  missingNumbers: number[];
   duplicatesCount: number;
   duplicateNumbers: { number: number; count: number }[];
   unnumberedSamples: { id: string; timestamp: string; amount: number; currency: string; type: string }[];
@@ -135,10 +138,48 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
     setExecutionResult(null);
 
     try {
+      // تنظيف أي سجل شبحي وهمي للمعاينة كان قد تم حفظه بالخطأ (مثل id = 'preview')
+      await localDb.run("DELETE FROM vault_transactions WHERE id = 'preview' OR id LIKE 'preview%'").catch(() => {});
+
+      // 1. استعلام السجلات المحلية من SQLite
       const res = await localDb.query(
-        "SELECT id, voucherNumber, timestamp, amount, currency, type FROM vault_transactions ORDER BY timestamp ASC"
+        "SELECT id, voucherNumber, timestamp, amount, currency, type FROM vault_transactions WHERE id != 'preview' AND id NOT LIKE 'preview%' ORDER BY timestamp ASC"
       );
-      const rows = res.values || [];
+      const localRows = res.values || [];
+
+      // 2. استعلام السجلات السحابية من Firebase للمطابقة الشاملة وعدم إغفال أي سند
+      let cloudRows: any[] = [];
+      try {
+        const cloudRes = await FirebaseProviderInstance.getDocs('vault_transactions');
+        cloudRows = (cloudRes.docs || []).map((d: any) => {
+          const raw = d.data ? (typeof d.data === 'function' ? d.data() : d.data) : d;
+          return { ...(raw || {}), id: d.id || raw?.id };
+        }).filter((t: any) => Boolean(t?.id) && t.id !== 'preview' && !String(t.id).startsWith('preview'));
+      } catch (cloudErr) {
+        console.warn("[Audit] Could not fetch cloud transactions, relying on local:", cloudErr);
+      }
+
+      // 3. دمج السجلات مع إزالة التكرار بالـ ID ومزامنة أي سند سحابي غائب إلى المحلي
+      const txMap = new Map<string, any>();
+      localRows.forEach((r: any) => {
+        if (r.id && r.id !== 'preview' && !String(r.id).startsWith('preview')) {
+          txMap.set(String(r.id), r);
+        }
+      });
+      for (const cr of cloudRows) {
+        if (cr.id && cr.id !== 'preview' && !String(cr.id).startsWith('preview')) {
+          const idStr = String(cr.id);
+          const existing = txMap.get(idStr);
+          if (!existing) {
+            txMap.set(idStr, cr);
+            LocalProviderInstance.setDoc('vault_transactions', cr.id, cr, undefined, 'BYPASS_OUTBOX').catch(() => {});
+          } else {
+            txMap.set(idStr, { ...existing, ...cr });
+          }
+        }
+      }
+
+      const rows = Array.from(txMap.values());
       const total = rows.length;
 
       let numbered = 0;
@@ -149,8 +190,10 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
       const unnumberedList: any[] = [];
 
       rows.forEach((r: any) => {
-        const vNum = Number(r.voucherNumber);
-        if (vNum && !isNaN(vNum) && vNum > 0) {
+        // استخراج الرقم بشكل آمن ومعالجة السلاسل النصية مثل "#100" أو المسافات
+        const rawNum = r.voucherNumber !== undefined && r.voucherNumber !== null ? String(r.voucherNumber).replace(/[^0-9]/g, '') : '';
+        const vNum = rawNum ? parseInt(rawNum, 10) : NaN;
+        if (!isNaN(vNum) && vNum > 0) {
           numbered++;
           if (vNum > maxNum) maxNum = vNum;
           if (vNum < minNum) minNum = vNum;
@@ -179,22 +222,31 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
         }
       });
 
+      // حساب الفجوات والأرقام المفقودة في التسلسل الزمني بين أقل وأعلى رقم
+      const missingNumbers: number[] = [];
+      if (maxNum > 0 && minNum !== Infinity) {
+        for (let i = minNum; i <= maxNum; i++) {
+          if (!numberFreq[i]) {
+            missingNumbers.push(i);
+          }
+        }
+      }
+
       setAuditReport({
         total,
         numbered,
         unnumbered,
         maxNumber: maxNum,
         minNumber: minNum === Infinity ? 0 : minNum,
+        missingCount: missingNumbers.length,
+        missingNumbers,
         duplicatesCount: totalDuplicateRows,
         duplicateNumbers,
         unnumberedSamples: unnumberedList
       });
 
-      if (maxNum > 0) {
-        setCustomStartNumber(maxNum + 1);
-      } else {
-        setCustomStartNumber(1);
-      }
+      // رقم بداية إعادة الترقيم الشامل الافتراضي هو 1 لإغلاق الفجوات إن رغب المستخدم
+      setCustomStartNumber(1);
 
     } catch (err: any) {
       console.error("[Audit] Query error:", err);
@@ -225,14 +277,16 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
 
       let currentMax = 0;
       rows.forEach((r: any) => {
-        const v = Number(r.voucherNumber);
+        const raw = r.voucherNumber !== undefined && r.voucherNumber !== null ? String(r.voucherNumber).replace(/[^0-9]/g, '') : '';
+        const v = raw ? parseInt(raw, 10) : 0;
         if (v && !isNaN(v) && v > currentMax) {
           currentMax = v;
         }
       });
 
       const unnumberedRows = rows.filter((r: any) => {
-        const v = Number(r.voucherNumber);
+        const raw = r.voucherNumber !== undefined && r.voucherNumber !== null ? String(r.voucherNumber).replace(/[^0-9]/g, '') : '';
+        const v = raw ? parseInt(raw, 10) : 0;
         return !v || isNaN(v) || v <= 0;
       });
 
@@ -313,7 +367,8 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
       const duplicateRows: any[] = [];
 
       rows.forEach((r: any) => {
-        const v = Number(r.voucherNumber);
+        const raw = r.voucherNumber !== undefined && r.voucherNumber !== null ? String(r.voucherNumber).replace(/[^0-9]/g, '') : '';
+        const v = raw ? parseInt(raw, 10) : 0;
         if (v && !isNaN(v) && v > 0) {
           if (v > currentMax) currentMax = v;
           if (seenNumbers.has(v)) {
@@ -389,8 +444,9 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
     SyncEngine.pauseSync();
 
     try {
+      await localDb.run("DELETE FROM vault_transactions WHERE id = 'preview' OR id LIKE 'preview%'").catch(() => {});
       const res = await localDb.query(
-        "SELECT id, voucherNumber, timestamp FROM vault_transactions ORDER BY timestamp ASC"
+        "SELECT id, voucherNumber, timestamp FROM vault_transactions WHERE id != 'preview' AND id NOT LIKE 'preview%' ORDER BY timestamp ASC, voucherNumber ASC"
       );
       const rows = res.values || [];
 
@@ -420,6 +476,10 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
           voucherNumber: assignedNum,
           updatedAt: nowIso
         });
+        await FirebaseProviderInstance.updateDoc('vault_transactions', row.id, {
+          voucherNumber: assignedNum,
+          updatedAt: nowIso
+        }).catch(() => {});
       }
 
       SyncEngine.resumeSync();
@@ -1304,25 +1364,42 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
                   فحص السجلات الحالية وعرض تقرير تفصيلي بأعداد السندات، السندات المرقمة، غير المرقمة، والتكرارات دون تعديل أي بايت.
                 </p>
                 {auditReport && (
-                  <div className="mt-3 p-3 bg-white dark:bg-black/50 rounded-xl border border-slate-200 dark:border-white/10 text-xs space-y-2">
+                  <div className="mt-3 p-3 bg-white dark:bg-black/50 rounded-xl border border-slate-200 dark:border-white/10 text-xs space-y-3">
                     <div className="grid grid-cols-4 gap-1 text-center font-mono">
                       <div className="p-1 bg-slate-100 dark:bg-white/5 rounded">
-                        <span className="block text-[9px] text-slate-500 dark:text-gray-400 font-sans">الإجمالي</span>
+                        <span className="block text-[9px] text-slate-500 dark:text-gray-400 font-sans">الإجمالي الفعلي</span>
                         <strong className="text-slate-900 dark:text-white">{auditReport.total}</strong>
                       </div>
                       <div className="p-1 bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 rounded">
                         <span className="block text-[9px] font-sans">مرقمة</span>
                         <strong>{auditReport.numbered}</strong>
                       </div>
-                      <div className="p-1 bg-rose-50 dark:bg-rose-500/10 text-rose-700 dark:text-rose-400 rounded">
-                        <span className="block text-[9px] font-sans">بدون رقم</span>
-                        <strong>{auditReport.unnumbered}</strong>
+                      <div className="p-1 bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 rounded">
+                        <span className="block text-[9px] font-sans">أعلى رقم</span>
+                        <strong>#{auditReport.maxNumber}</strong>
                       </div>
                       <div className="p-1 bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 rounded">
-                        <span className="block text-[9px] font-sans">تكرارات</span>
-                        <strong>{auditReport.duplicatesCount}</strong>
+                        <span className="block text-[9px] font-sans">فجوات تسلسل</span>
+                        <strong>{auditReport.missingCount}</strong>
                       </div>
                     </div>
+
+                    {/* تفصيل فجوات الأرقام المفقودة المحذوفة سابقاً */}
+                    {auditReport.missingCount > 0 ? (
+                      <div className="p-2.5 bg-amber-500/10 border border-amber-500/20 rounded-lg space-y-1.5 text-right">
+                        <div className="flex items-center justify-between text-[11px] font-bold text-amber-800 dark:text-amber-300">
+                          <span>⚠️ فجوات في أرقام السلسلة ({auditReport.missingCount} سندات محذوفة):</span>
+                          <span className="font-mono text-xs">#{auditReport.missingNumbers.join('، #')}</span>
+                        </div>
+                        <p className="text-[10px] text-slate-600 dark:text-gray-400 leading-relaxed font-sans">
+                          قاعدة البيانات تحتوي فعلياً على <strong>{auditReport.total}</strong> سنداً مسجلاً من أصل <strong>{auditReport.maxNumber}</strong> رقماً. الفارق ({auditReport.missingCount} سندات) يعود لأرقام سندات حُذفت سابقاً عند حذف فواتير تجريبية، ولذا فإن أعلى رقم حالياً هو #{auditReport.maxNumber} والسند الجديد التالي سيكون #{auditReport.maxNumber + 1}.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="p-2 bg-emerald-500/10 border border-emerald-500/20 rounded-lg text-emerald-700 dark:text-emerald-400 text-[10px] font-bold text-center">
+                        ✓ الترقيم متصل 100% من #{auditReport.minNumber} حتى #{auditReport.maxNumber} دون أي فجوات تسلسلية.
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1409,6 +1486,9 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
                     disabled={activeRunningTool !== null}
                     className="w-24 bg-slate-100 dark:bg-black/60 border border-slate-300 dark:border-white/20 rounded-lg px-2.5 py-1 text-xs font-mono font-bold text-purple-600 dark:text-purple-400 text-center"
                   />
+                  <span className="text-[10px] text-slate-500 dark:text-gray-400">
+                    (افتراضياً 1 لإغلاق الفجوات وسرد السندات تسلسلياً من 1 إلى {auditReport ? auditReport.total : '...'})
+                  </span>
                 </div>
               </div>
               <button
@@ -1683,6 +1763,16 @@ export default function AdvancedDatabaseMaintenance({ onBack, onClose }: Props) 
 
       {/* ========================================================================= */}
       {/* 📂 عرض المحور الثالث: فواتير الصيانة والأجهزة                              */}
+      {/* ========================================================================= */}
+      {activeSection === 'invoices' && <MaintenanceInvoicesTab />}
+
+      {/* ========================================================================= */}
+      {/* 📂 عرض المحور الرابع: فواتير أخرى ومبيعات                                 */}
+      {/* ========================================================================= */}
+      {activeSection === 'other' && <OtherInvoicesTab />}
+
+      {/* ========================================================================= */}
+      {/* 📂 عرض المحور الخامس: معالجة شاملة للروابط                                 */}
       {/* ========================================================================= */}
       {activeSection === 'comprehensive' && <ComprehensiveMaintenanceTab />}
 
