@@ -44,6 +44,20 @@ class LocalDatabase {
   private observers: Map<string, Set<(data: any[]) => void>> = new Map();
   private initializingPromise: Promise<void> | null = null;
   private queue: Promise<any> = Promise.resolve();
+  private columnCache: Map<string, string[]> = new Map();
+  private isWebPlatform: boolean | null = null;
+  private saveToStoreTimer: any = null;
+
+  private scheduleSaveToStore(): void {
+    if (this.saveToStoreTimer) clearTimeout(this.saveToStoreTimer);
+    this.saveToStoreTimer = setTimeout(async () => {
+      try {
+        await this.getSqlite().saveToStore('snd_system');
+      } catch (err) {
+        console.warn('Failed to save sqlite to store:', err);
+      }
+    }, 150);
+  }
 
   private async enqueue<T>(operation: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
@@ -687,6 +701,15 @@ class LocalDatabase {
         `);
         await this.db.run(`
           CREATE INDEX IF NOT EXISTS idx_del_rec_tbl_id ON deleted_records(tableName, recordId);
+          CREATE INDEX IF NOT EXISTS idx_outbox_status_ts ON outbox(status, timestamp);
+          CREATE INDEX IF NOT EXISTS idx_inv_items_inv_id ON invoice_items(invoiceId);
+          CREATE INDEX IF NOT EXISTS idx_inv_items_inv_no ON invoice_items(invoiceNumber);
+          CREATE INDEX IF NOT EXISTS idx_inv_items_status ON invoice_items(status);
+          CREATE INDEX IF NOT EXISTS idx_invoices_status ON invoices(status);
+          CREATE INDEX IF NOT EXISTS idx_invoices_inv_no ON invoices(invoiceNumber);
+          CREATE INDEX IF NOT EXISTS idx_vault_tx_inv_id ON vault_transactions(invoiceId);
+          CREATE INDEX IF NOT EXISTS idx_vault_tx_inv_no ON vault_transactions(invoiceNumber);
+          CREATE INDEX IF NOT EXISTS idx_vault_tx_fund_id ON vault_transactions(fundId);
         `);
       } catch (err) {
         console.error('Failed to create deleted_records table', err);
@@ -1459,9 +1482,12 @@ class LocalDatabase {
       const cleanParams = (params || []).map(sanitizeSqliteParam);
       const result = await this.db.run(sql, cleanParams);
       
-      const info = await Device.getInfo();
-      if (info.platform === 'web') {
-        await this.getSqlite().saveToStore('snd_system');
+      if (this.isWebPlatform === null) {
+        const info = await Device.getInfo().catch(() => ({ platform: 'web' }));
+        this.isWebPlatform = info.platform === 'web';
+      }
+      if (this.isWebPlatform) {
+        this.scheduleSaveToStore();
       }
       
       return result;
@@ -1490,7 +1516,9 @@ class LocalDatabase {
           const tableName = row.name;
           const colRes = await this.db.query(`PRAGMA table_info(${tableName})`);
           if (colRes.values) {
-            schemas[tableName] = colRes.values.map(c => c.name);
+            const cols = colRes.values.map(c => c.name);
+            schemas[tableName] = cols;
+            this.columnCache.set(tableName, cols);
           }
         }
       }
@@ -1499,7 +1527,13 @@ class LocalDatabase {
   }
 
   async getTableColumns(tableName: string): Promise<string[]> {
+    if (this.columnCache.has(tableName)) {
+      return this.columnCache.get(tableName)!;
+    }
     return this.enqueue(async () => {
+      if (this.columnCache.has(tableName)) {
+        return this.columnCache.get(tableName)!;
+      }
       if (!this.db) {
         await this.initialize();
       } else {
@@ -1513,7 +1547,9 @@ class LocalDatabase {
       if (!this.db) throw new Error('Failed to initialize local database connection.');
       const res = await this.db.query(`PRAGMA table_info(${tableName})`);
       if (res.values) {
-        return res.values.map(row => row.name);
+        const cols = res.values.map(row => row.name);
+        this.columnCache.set(tableName, cols);
+        return cols;
       }
       return [];
     });

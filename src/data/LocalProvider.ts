@@ -85,6 +85,17 @@ export class LocalProvider implements IDataProvider {
     };
   }
 
+  private static syncDebounceTimer: any = null;
+
+  static triggerDebouncedSync(delayMs: number = 350) {
+    if (LocalProvider.syncDebounceTimer) clearTimeout(LocalProvider.syncDebounceTimer);
+    LocalProvider.syncDebounceTimer = setTimeout(() => {
+      import('./SyncEngine').then(({ SyncEngine }) => {
+        SyncEngine.syncAll().catch(e => console.error('Failed to run debounced auto-sync:', e));
+      });
+    }, delayMs);
+  }
+
   private async queueInOutbox(
     tableName: string,
     recordId: string,
@@ -107,18 +118,14 @@ export class LocalProvider implements IDataProvider {
       );
       console.log(`Outbox queued: ${action} on ${tableName}/${recordId} (Tx: ${transactionGroupId || 'none'})`);
 
-      // Trigger sync in background if online
-      if (true) {
-        import('./SyncEngine').then(({ SyncEngine }) => {
-          SyncEngine.syncAll().catch(e => console.error('Failed to run auto-sync on queue:', e));
-        });
-      }
+      // Trigger debounced sync in background if online (avoid parallel sync thrashing)
+      LocalProvider.triggerDebouncedSync(transactionGroupId ? 600 : 350);
     } catch (e) {
       console.error('Failed to insert into outbox table:', e);
     }
   }
 
-  async setDoc(collectionName: string, id: string, data: any, options?: any, transactionGroupId?: string): Promise<void> {
+  async setDoc(collectionName: string, id: string, data: any, options?: any, transactionGroupId?: string, skipNotify?: boolean): Promise<void> {
     if (collectionName === "company_details") { id = "main_details"; data.id = "main_details"; }
     const cleanedData = { ...data };
     if (!cleanedData.id && id) {
@@ -214,8 +221,10 @@ export class LocalProvider implements IDataProvider {
     await this.queueInOutbox(collectionName, id, 'SET', { data, options }, transactionGroupId);
 
     // Trigger notification
-    const res = await localDb.query(`SELECT * FROM ${collectionName}`);
-    localDb.notify(collectionName, res.values || []);
+    if (!skipNotify) {
+      const res = await localDb.query(`SELECT * FROM ${collectionName}`).catch(() => ({ values: [] }));
+      localDb.notify(collectionName, res.values || []);
+    }
   }
 
   async addDoc(collectionName: string, data: any): Promise<{ id: string }> {
@@ -224,7 +233,7 @@ export class LocalProvider implements IDataProvider {
     return { id };
   }
 
-  async updateDoc(collectionName: string, id: string, data: any, transactionGroupId?: string): Promise<void> {
+  async updateDoc(collectionName: string, id: string, data: any, transactionGroupId?: string, skipNotify?: boolean): Promise<void> {
     const validColumns = await localDb.getTableColumns(collectionName);
     const validColumnsSet = new Set(validColumns);
 
@@ -269,11 +278,13 @@ export class LocalProvider implements IDataProvider {
     await this.queueInOutbox(collectionName, id, 'UPDATE', data, transactionGroupId);
 
     // Trigger notification
-    const res = await localDb.query(`SELECT * FROM ${collectionName}`);
-    localDb.notify(collectionName, res.values || []);
+    if (!skipNotify) {
+      const res = await localDb.query(`SELECT * FROM ${collectionName}`).catch(() => ({ values: [] }));
+      localDb.notify(collectionName, res.values || []);
+    }
   }
 
-  async deleteDoc(collectionName: string, id: string, transactionGroupId?: string): Promise<void> {
+  async deleteDoc(collectionName: string, id: string, transactionGroupId?: string, skipNotify?: boolean): Promise<void> {
     if (collectionName !== 'deleted_records' && transactionGroupId !== 'BYPASS_OUTBOX') {
       let recordNumber: string | null = null;
       try {
@@ -337,8 +348,10 @@ export class LocalProvider implements IDataProvider {
       }
     }
 
-    const res = await localDb.query(`SELECT * FROM ${collectionName}`).catch(() => ({ values: [] }));
-    localDb.notify(collectionName, res.values || []);
+    if (!skipNotify) {
+      const res = await localDb.query(`SELECT * FROM ${collectionName}`).catch(() => ({ values: [] }));
+      localDb.notify(collectionName, res.values || []);
+    }
   }
 
   onSnapshot(
@@ -453,11 +466,22 @@ export class LocalProvider implements IDataProvider {
       delete: (docRef: any) => operations.push({ type: 'delete', ref: docRef }),
       commit: async () => {
         const txGroupId = 'tx-' + generateUUID();
+        const affectedTables = new Set<string>();
         for (const op of operations) {
-          if (op.type === 'set') await this.setDoc(op.ref.name, op.ref.id, op.data, op.options, txGroupId);
-          if (op.type === 'update') await this.updateDoc(op.ref.name, op.ref.id, op.data, txGroupId);
-          if (op.type === 'delete') await this.deleteDoc(op.ref.name, op.ref.id, txGroupId);
+          if (op.ref?.name) affectedTables.add(op.ref.name);
+          if (op.type === 'set') await this.setDoc(op.ref.name, op.ref.id, op.data, op.options, txGroupId, true);
+          if (op.type === 'update') await this.updateDoc(op.ref.name, op.ref.id, op.data, txGroupId, true);
+          if (op.type === 'delete') await this.deleteDoc(op.ref.name, op.ref.id, txGroupId, true);
         }
+
+        // Notify each affected table ONCE at the end of the batch
+        for (const table of affectedTables) {
+          const res = await localDb.query(`SELECT * FROM ${table}`).catch(() => ({ values: [] }));
+          localDb.notify(table, res.values || []);
+        }
+
+        // Trigger one debounced sync for the whole batch
+        LocalProvider.triggerDebouncedSync(350);
       }
     };
   }

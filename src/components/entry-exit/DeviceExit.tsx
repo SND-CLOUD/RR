@@ -2,7 +2,7 @@ import { CustomerAutocomplete } from '../CustomerAutocomplete';
 import { resolveEntryDateString } from '../../lib/dateUtils';
 import { sharePdfFile, openWhatsApp } from '../../lib/shareHelper';
 import { calculateInvoiceBillableTotal, getItemBillableCost, isItemRefusedOrFailed } from '../../lib/billableService';
-import { useState, useEffect, useRef, ChangeEvent, KeyboardEvent } from 'react';
+import { useState, useEffect, useRef, useMemo, ChangeEvent, KeyboardEvent } from 'react';
 import { collection, onSnapshot, doc, writeBatch, getDoc, setDoc, updateDoc, serverTimestamp } from '../../firebase';
 import { db } from '../../firebase';
 import { Invoice, InvoiceItem, User, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../../types';
@@ -362,40 +362,61 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
     return () => { unsubInvoices(); unsubItems(); unsubCustomers(); };
   }, []);
 
-  const EXIT_READY_STATUSES = ['ready', 'unrepairable', 'intact', 'refused', '50', '70', 'cancelled'];
+  const EXIT_READY_STATUSES = useMemo(() => ['ready', 'unrepairable', 'intact', 'refused', '50', '70', 'cancelled'], []);
 
-  const readyInvoices = invoices.filter(inv => {
-    // Exclude purchase and sale/other services invoices
-    if (isPurchaseInvoice(inv) || isSaleInvoice(inv)) return false;
-    // Has at least one ready item that is a maintenance item
-    return items.some(item => item.invoiceNumber === inv.invoiceNumber && isShopMaintenanceItem(item, inv) && EXIT_READY_STATUSES.includes(item.status));
-  }).filter(inv => 
-    (inv.customerName || '').toLowerCase().includes(search.toLowerCase()) || 
-    (inv.invoiceNumber || '').includes(search)
-  ).sort((a, b) => {
-    let valA: any = '';
-    let valB: any = '';
-
-    switch (sortConfig.key) {
-      case 'invoiceNumber':
-        valA = Number(a.invoiceNumber);
-        valB = Number(b.invoiceNumber);
-        break;
-      case 'customerName':
-        valA = a.customerName || '';
-        valB = b.customerName || '';
-        break;
-      case 'date':
-      default:
-        valA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-        valB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-        break;
+  // Pre-index ready invoice numbers to turn O(N * M) search into O(1) set lookup
+  const readyInvoiceNumbersSet = useMemo(() => {
+    const set = new Set<string>();
+    for (const item of items) {
+      if (EXIT_READY_STATUSES.includes(item.status)) {
+        if (item.invoiceNumber) {
+          const num = String(item.invoiceNumber).replace('#', '').trim();
+          if (num) set.add(num);
+        }
+        if (item.invoiceId) {
+          set.add(String(item.invoiceId).trim());
+        }
+      }
     }
+    return set;
+  }, [items, EXIT_READY_STATUSES]);
 
-    if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
-    if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
-    return 0;
-  });
+  const readyInvoices = useMemo(() => {
+    const q = search.toLowerCase().trim();
+    return invoices.filter(inv => {
+      // Exclude purchase and sale/other services invoices
+      if (isPurchaseInvoice(inv) || isSaleInvoice(inv)) return false;
+      const invNum = String(inv.invoiceNumber || '').replace('#', '').trim();
+      const hasReadyItem = readyInvoiceNumbersSet.has(invNum) || (inv.id ? readyInvoiceNumbersSet.has(inv.id) : false);
+      if (!hasReadyItem) return false;
+
+      if (!q) return true;
+      return (inv.customerName || '').toLowerCase().includes(q) || invNum.includes(q);
+    }).sort((a, b) => {
+      let valA: any = '';
+      let valB: any = '';
+
+      switch (sortConfig.key) {
+        case 'invoiceNumber':
+          valA = Number(a.invoiceNumber) || 0;
+          valB = Number(b.invoiceNumber) || 0;
+          break;
+        case 'customerName':
+          valA = a.customerName || '';
+          valB = b.customerName || '';
+          break;
+        case 'date':
+        default:
+          valA = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          valB = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          break;
+      }
+
+      if (valA < valB) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (valA > valB) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [invoices, readyInvoiceNumbersSet, search, sortConfig]);
 
   const itemsPerPage = 6;
   const totalPages = Math.max(1, Math.ceil(readyInvoices.length / itemsPerPage));

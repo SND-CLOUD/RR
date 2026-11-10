@@ -7,10 +7,10 @@ export interface IDataProvider {
   // --- Generic Document API ---
   getDoc(collectionName: string, id: string): Promise<any>;
   getDocs(collectionName: string, constraints?: any[]): Promise<any>;
-  setDoc(collectionName: string, id: string, data: any, options?: any, txGroupId?: string): Promise<void>;
+  setDoc(collectionName: string, id: string, data: any, options?: any, txGroupId?: string, skipNotify?: boolean): Promise<void>;
   addDoc(collectionName: string, data: any): Promise<{ id: string }>;
-  updateDoc(collectionName: string, id: string, data: any, txGroupId?: string): Promise<void>;
-  deleteDoc(collectionName: string, id: string, txGroupId?: string): Promise<void>;
+  updateDoc(collectionName: string, id: string, data: any, txGroupId?: string, skipNotify?: boolean): Promise<void>;
+  deleteDoc(collectionName: string, id: string, txGroupId?: string, skipNotify?: boolean): Promise<void>;
   onSnapshot(
     collectionName: string,
     constraints: any[] | undefined,

@@ -51,6 +51,9 @@ interface ComprehensiveAuditReport {
   }>;
 
   totalTombstones: number;
+  tombstonesCount7Days: number;
+  tombstonesCount30Days: number;
+  tombstonesCount90Days: number;
   oldTombstonesCount: number;
   oldTombstonesSamples: Array<{
     id: string;
@@ -58,6 +61,8 @@ interface ComprehensiveAuditReport {
     deletedAt: string;
   }>;
 }
+
+export type TombstonePeriod = 'all' | '7' | '30' | '90';
 
 export default function ComprehensiveMaintenanceTab() {
   const [auditLoading, setAuditLoading] = useState(false);
@@ -69,6 +74,26 @@ export default function ComprehensiveMaintenanceTab() {
   const [executionResult, setExecutionResult] = useState<{ tool: number; type: 'success' | 'error' | 'info'; message: string } | null>(null);
 
   const [confirmToolId, setConfirmToolId] = useState<number | null>(null);
+  const [tombstonePeriod, setTombstonePeriod] = useState<TombstonePeriod>('all');
+
+  const getPeriodLabel = (period: TombstonePeriod) => {
+    switch (period) {
+      case 'all': return 'الكل (الآن فوراً)';
+      case '7': return 'أقدم من أسبوع (7 أيام)';
+      case '30': return 'أقدم من شهر (30 يوماً)';
+      case '90': return 'أقدم من 3 أشهر (90 يوماً)';
+    }
+  };
+
+  const getSelectedPeriodCount = () => {
+    if (!auditReport) return 0;
+    switch (tombstonePeriod) {
+      case 'all': return auditReport.totalTombstones;
+      case '7': return auditReport.tombstonesCount7Days;
+      case '30': return auditReport.tombstonesCount30Days;
+      case '90': return auditReport.tombstonesCount90Days;
+    }
+  };
 
   // =========================================================================
   // 🔍 زر التدقيق الشامل (قراءة فقط - Read Only)
@@ -152,14 +177,33 @@ export default function ComprehensiveMaintenanceTab() {
       }
     });
 
-    // 4. Deleted records (Tombstones)
+    // 4. Deleted records (Tombstones) - الجمع بين المحلي والسحابي
     const tombstonesRes = await localDb.query("SELECT * FROM deleted_records");
     const tombstones = tombstonesRes.values || [];
-    const ninetyDaysAgo = new Date();
-    ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-    const ninetyDaysAgoIso = ninetyDaysAgo.toISOString();
 
-    const oldTombstones = tombstones.filter((t: any) => (t.deletedAt || '') < ninetyDaysAgoIso);
+    let cloudTombstones: any[] = [];
+    try {
+      const cloudSnap = await FirebaseProviderInstance.getDocs('deleted_records');
+      cloudTombstones = (cloudSnap.docs || []).map((d: any) => {
+        const raw = d.data ? (typeof d.data === 'function' ? d.data() : d.data) : d;
+        return { ...(raw || {}), id: d.id || raw?.id };
+      }).filter((t: any) => Boolean(t?.id));
+    } catch (e) {}
+
+    const allTombstonesMap = new Map<string, any>();
+    tombstones.forEach((t: any) => { if (t.id) allTombstonesMap.set(t.id, t); });
+    cloudTombstones.forEach((t: any) => { if (t.id && !allTombstonesMap.has(t.id)) allTombstonesMap.set(t.id, t); });
+    const allTombstones = Array.from(allTombstonesMap.values());
+
+    const now = new Date();
+    const sevenDaysAgoIso = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const thirtyDaysAgoIso = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const ninetyDaysAgoIso = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000).toISOString();
+
+    const tombstonesCount7Days = allTombstones.filter((t: any) => (t.deletedAt || '') < sevenDaysAgoIso).length;
+    const tombstonesCount30Days = allTombstones.filter((t: any) => (t.deletedAt || '') < thirtyDaysAgoIso).length;
+    const tombstonesCount90Days = allTombstones.filter((t: any) => (t.deletedAt || '') < ninetyDaysAgoIso).length;
+    const oldTombstones = allTombstones.filter((t: any) => (t.deletedAt || '') < ninetyDaysAgoIso);
 
     setAuditReport({
       totalItems: items.length,
@@ -174,7 +218,10 @@ export default function ComprehensiveMaintenanceTab() {
       totalCostToZero,
       nonBillableSamples,
 
-      totalTombstones: tombstones.length,
+      totalTombstones: allTombstones.length,
+      tombstonesCount7Days,
+      tombstonesCount30Days,
+      tombstonesCount90Days,
       oldTombstonesCount: oldTombstones.length,
       oldTombstonesSamples: oldTombstones.slice(0, 5).map((t: any) => ({
         id: t.id,
@@ -529,47 +576,76 @@ export default function ComprehensiveMaintenanceTab() {
   };
 
   // =========================================================================
-  // 🔹 الأداة (4): تنظيف شواهد الحذف القديمة (Tombstones)
+  // 🔹 الأداة (4): تنظيف شواهد الحذف (Tombstones) باختيار الفترة
   // =========================================================================
-  const executeCleanupTombstones = async () => {
+  const executeCleanupTombstones = async (period: TombstonePeriod = tombstonePeriod) => {
     setConfirmToolId(null);
     setActiveRunningTool(4);
-    setProgressPercent(10);
-    setProgressText('تطبيق الحاوية المغلقة...');
+    setProgressPercent(5);
+    setProgressText('تطبيق الحاوية المغلقة: إيقاف المزامنة لحظياً...');
     setExecutionResult(null);
 
     SyncEngine.pauseSync();
 
     try {
-      const ninetyDaysAgo = new Date();
-      ninetyDaysAgo.setDate(ninetyDaysAgo.getDate() - 90);
-      const ninetyDaysAgoIso = ninetyDaysAgo.toISOString();
+      let localIds: string[] = [];
+      const now = new Date();
 
-      // 1. Get IDs to delete
-      const res = await localDb.query("SELECT id FROM deleted_records WHERE deletedAt < ?", [ninetyDaysAgoIso]);
-      const ids = (res.values || []).map((t: any) => t.id);
+      if (period === 'all') {
+        const res = await localDb.query("SELECT id FROM deleted_records");
+        localIds = (res.values || []).map((t: any) => t.id);
+      } else {
+        const days = parseInt(period, 10) || 90;
+        const cutoffIso = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+        const res = await localDb.query("SELECT id FROM deleted_records WHERE deletedAt < ?", [cutoffIso]);
+        localIds = (res.values || []).map((t: any) => t.id);
+      }
 
-      if (ids.length === 0) {
-        setExecutionResult({ tool: 4, type: 'info', message: 'لا توجد شواهد حذف قديمة (أكثر من 90 يوم) لتنظيفها حالياً.' });
+      // Cloud IDs
+      let cloudIdsToClean: string[] = [];
+      try {
+        const cloudSnap = await FirebaseProviderInstance.getDocs('deleted_records');
+        const cloudDocs = cloudSnap.docs || [];
+        if (period === 'all') {
+          cloudIdsToClean = cloudDocs.map((d: any) => d.id).filter(Boolean);
+        } else {
+          const days = parseInt(period, 10) || 90;
+          const cutoffIso = new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+          cloudIdsToClean = cloudDocs.filter((d: any) => {
+            const data = d.data ? (typeof d.data === 'function' ? d.data() : d.data) : d;
+            return (data?.deletedAt || '') < cutoffIso;
+          }).map((d: any) => d.id).filter(Boolean);
+        }
+      } catch (cloudErr) {
+        console.warn("[CleanupTombstones] Cloud query error:", cloudErr);
+      }
+
+      const allTargetIds = Array.from(new Set([...localIds, ...cloudIdsToClean]));
+
+      if (allTargetIds.length === 0) {
+        setExecutionResult({ 
+          tool: 4, 
+          type: 'info', 
+          message: `لا توجد شواهد حذف مطابقة للفترة المحددة (${getPeriodLabel(period)}) لتنظيفها حالياً.` 
+        });
         SyncEngine.resumeSync();
         setActiveRunningTool(null);
         return;
       }
 
       // 2. Delete locally and from cloud
-      for (let i = 0; i < ids.length; i++) {
-        const id = ids[i];
-        await localDb.run("DELETE FROM deleted_records WHERE id = ?", [id]);
-        await LocalProviderInstance.deleteDoc('deleted_records', id, 'BYPASS_OUTBOX');
+      for (let i = 0; i < allTargetIds.length; i++) {
+        const id = allTargetIds[i];
+        await localDb.run("DELETE FROM deleted_records WHERE id = ?", [id]).catch(() => {});
+        await LocalProviderInstance.deleteDoc('deleted_records', id, 'BYPASS_OUTBOX').catch(() => {});
         try {
-          // Note: Using bypass to not record the deletion of a deletion record as a deletion!
           await FirebaseProviderInstance.deleteDoc('deleted_records', id, 'BYPASS_OUTBOX');
         } catch (e) {}
 
-        if (i % 10 === 0 || i === ids.length - 1) {
-          const pct = Math.round(10 + ((i + 1) / ids.length) * 80);
+        if (i % 5 === 0 || i === allTargetIds.length - 1) {
+          const pct = Math.round(10 + ((i + 1) / allTargetIds.length) * 85);
           setProgressPercent(pct);
-          setProgressText(`تنظيف شواهد الحذف (${i + 1} من ${ids.length})...`);
+          setProgressText(`تطهير شواهد الحذف (${i + 1} من ${allTargetIds.length})...`);
         }
       }
 
@@ -580,7 +656,7 @@ export default function ComprehensiveMaintenanceTab() {
       setExecutionResult({
         tool: 4,
         type: 'success',
-        message: `تم بنجاح تنظيف ${ids.length} سجل من شواهد الحذف القديمة التي تجاوز عمرها 90 يوماً.`
+        message: `تم بنجاح تطهير ${allTargetIds.length} سجل من شواهد الحذف (الفترة: ${getPeriodLabel(period)}). تم تخفيف قاعدة البيانات المحلية والسحابية بأمان.`
       });
       runAuditOnly();
 
@@ -658,15 +734,17 @@ export default function ComprehensiveMaintenanceTab() {
                 </div>
               </div>
 
-              <div className={`p-4 rounded-xl border ${auditReport.oldTombstonesCount === 0 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-800 dark:text-emerald-300' : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-800 dark:text-indigo-300'} sm:col-span-3`}>
-                <div className="flex items-center justify-between">
+              <div className={`p-4 rounded-xl border ${auditReport.totalTombstones === 0 ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-800 dark:text-emerald-300' : 'bg-indigo-500/10 border-indigo-500/20 text-indigo-800 dark:text-indigo-300'} sm:col-span-3`}>
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
-                    <div className="text-[11px] font-bold">شواهد الحذف السحابي (Deleted Records)</div>
-                    <div className="text-lg font-black font-mono mt-1">الإجمالي: {auditReport.totalTombstones} | القديمة (&gt;90 يوم): {auditReport.oldTombstonesCount}</div>
+                    <div className="text-[11px] font-bold">شواهد الحذف السحابي والمحلي (Deleted Records)</div>
+                    <div className="text-base sm:text-lg font-black font-mono mt-1">
+                      الإجمالي: {auditReport.totalTombstones} سجل | أسبوع: {auditReport.tombstonesCount7Days} | شهر: {auditReport.tombstonesCount30Days} | 3 أشهر: {auditReport.tombstonesCount90Days}
+                    </div>
                   </div>
-                  {auditReport.oldTombstonesCount > 0 && (
-                    <span className="text-[10px] bg-indigo-500/20 px-2 py-1 rounded-lg font-bold">تحتاج لتطهير دوري</span>
-                  )}
+                  <div className="text-[10px] bg-indigo-500/20 px-2.5 py-1 rounded-lg font-bold text-center self-start sm:self-auto">
+                    {auditReport.totalTombstones > 0 ? 'جاهزة للتطهير حسب اختيارك' : 'نظيفة بالكامل ✓'}
+                  </div>
                 </div>
               </div>
             </div>
@@ -781,24 +859,91 @@ export default function ComprehensiveMaintenanceTab() {
           </button>
         </div>
 
-        {/* Tool 4 */}
+        {/* Tool 4: Tombstone Cleanup */}
         <div className="bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 rounded-2xl p-5 flex flex-col justify-between space-y-4 shadow-sm hover:border-purple-500/30 transition-all">
-          <div className="space-y-2">
-            <div className="w-9 h-9 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
-              <ShieldCheck size={18} />
+          <div className="space-y-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-600 dark:text-indigo-400">
+                  <ShieldCheck size={18} />
+                </div>
+                <h4 className="text-sm font-black text-slate-800 dark:text-white">4. تنظيف وتطهير شواهد الحذف</h4>
+              </div>
+              <span className="text-[10px] bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 px-2 py-0.5 rounded-full font-bold">
+                Tombstones
+              </span>
             </div>
-            <h4 className="text-sm font-black text-slate-800 dark:text-white">4. تنظيف شواهد الحذف القديمة</h4>
+            
             <p className="text-xs text-slate-500 dark:text-gray-400 leading-relaxed">
-              حذف سجلات "Tombstones" التي تجاوز عمرها 90 يوماً. يساعد في تخفيف حجم قاعدة البيانات مع الحفاظ على استقرار المزامنة للأجهزة النشطة.
+              شواهد الحذف تُسجل عند حذف أي سجل لتفادي عودته عند مزامنة أجهزة أخرى كانت غير متصلة. وبما أن النظام يعمل حالياً على جهاز واحد، يمكنك تطهيرها بالكامل الآن لتخفيف قاعدة البيانات، أو اختيار الفترة:
             </p>
+
+            {/* فترة التطهير الاختيارية */}
+            <div className="space-y-1.5 pt-1">
+              <span className="text-[11px] font-bold text-slate-700 dark:text-gray-300 block">فترة الحفظ المراد تطهيرها:</span>
+              <div className="grid grid-cols-2 gap-1.5 sm:grid-cols-4 font-mono text-xs">
+                <button
+                  type="button"
+                  onClick={() => setTombstonePeriod('all')}
+                  className={`p-2 rounded-xl border text-center transition-all cursor-pointer ${
+                    tombstonePeriod === 'all'
+                      ? 'bg-indigo-600 text-white border-indigo-500 shadow-md font-bold'
+                      : 'bg-slate-50 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-700 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-white/10'
+                  }`}
+                >
+                  <span className="block text-[11px] font-sans">الكل (الآن فوراً)</span>
+                  <strong className="text-[10px] opacity-90">{auditReport ? auditReport.totalTombstones : 0} شاهد</strong>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setTombstonePeriod('7')}
+                  className={`p-2 rounded-xl border text-center transition-all cursor-pointer ${
+                    tombstonePeriod === '7'
+                      ? 'bg-indigo-600 text-white border-indigo-500 shadow-md font-bold'
+                      : 'bg-slate-50 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-700 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-white/10'
+                  }`}
+                >
+                  <span className="block text-[11px] font-sans">أقدم من أسبوع</span>
+                  <strong className="text-[10px] opacity-90">{auditReport ? auditReport.tombstonesCount7Days : 0} شاهد</strong>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setTombstonePeriod('30')}
+                  className={`p-2 rounded-xl border text-center transition-all cursor-pointer ${
+                    tombstonePeriod === '30'
+                      ? 'bg-indigo-600 text-white border-indigo-500 shadow-md font-bold'
+                      : 'bg-slate-50 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-700 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-white/10'
+                  }`}
+                >
+                  <span className="block text-[11px] font-sans">أقدم من شهر</span>
+                  <strong className="text-[10px] opacity-90">{auditReport ? auditReport.tombstonesCount30Days : 0} شاهد</strong>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setTombstonePeriod('90')}
+                  className={`p-2 rounded-xl border text-center transition-all cursor-pointer ${
+                    tombstonePeriod === '90'
+                      ? 'bg-indigo-600 text-white border-indigo-500 shadow-md font-bold'
+                      : 'bg-slate-50 dark:bg-white/5 border-slate-200 dark:border-white/10 text-slate-700 dark:text-gray-300 hover:bg-slate-100 dark:hover:bg-white/10'
+                  }`}
+                >
+                  <span className="block text-[11px] font-sans">أقدم من 3 أشهر</span>
+                  <strong className="text-[10px] opacity-90">{auditReport ? auditReport.tombstonesCount90Days : 0} شاهد</strong>
+                </button>
+              </div>
+            </div>
           </div>
+
           <button
             type="button"
-            disabled={activeRunningTool !== null}
+            disabled={activeRunningTool !== null || getSelectedPeriodCount() === 0}
             onClick={() => setConfirmToolId(4)}
             className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-black transition-all flex items-center justify-center gap-2 cursor-pointer shadow-md disabled:opacity-50"
           >
-            <span>بدء تطهير شواهد الحذف</span>
+            <span>بدء تطهير شواهد الحذف ({getSelectedPeriodCount()} سجل)</span>
           </button>
         </div>
 
@@ -817,7 +962,12 @@ export default function ComprehensiveMaintenanceTab() {
                 {confirmToolId === 1 && 'سيتم تحديث رقم الفاتورة على جميع بنود الأجهزة في قاعدة البيانات المحلية والسحابية لتتطابق تماماً مع فواتيرها الحالية.'}
                 {confirmToolId === 2 && 'سيتم ربط السندات المالية القديمة بمعرف الفاتورة الثابت invoiceId وهوية العميل، لضمان استقرار العلاقة المحاسبية.'}
                 {confirmToolId === 3 && 'سيتم تصفير مبالغ الأجهزة الملغاة وغير المعتمدة وتعديل إجمالي فواتيرها. هل تريد المتابعة؟'}
-                {confirmToolId === 4 && 'سيتم حذف سجلات شواهد الحذف (Tombstones) التي مر عليها أكثر من 90 يوماً. هذا الإجراء آمن للأجهزة التي تتصل بالنظام بانتظام.'}
+                {confirmToolId === 4 && (
+                  <span>
+                    سيتم تنظيف وتطهير <strong>{getSelectedPeriodCount()}</strong> سجل من شواهد الحذف (خيار: <strong>{getPeriodLabel(tombstonePeriod)}</strong>) محلياً وسحابياً.
+                    {tombstonePeriod === 'all' && ' وبما أن البرنامج غير موزع حالياً لعدة أجهزة منفصلة، فهذا الإجراء آمن 100% ويفرغ المساحة بالكامل.'}
+                  </span>
+                )}
               </p>
             </div>
             <div className="flex items-center gap-3 pt-2">
