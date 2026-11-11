@@ -36,7 +36,8 @@ const STATIC_HYBRID_TABLES = [
 const DYNAMIC_HYBRID_TABLES = [
   'customers', 'invoices', 'invoice_items', 'vault_transactions',
   'maintenance_actions', 'approval_actions', 'inventory_items',
-  'shop_parts_inventory', 'disassembly_batches', 'document_outputs', 'saved_pdfs'
+  'shop_parts_inventory', 'disassembly_batches', 'document_outputs', 'saved_pdfs',
+  'deleted_records'
 ];
 
 const DEFAULT_HYBRID_TABLES = [
@@ -70,6 +71,7 @@ const TABLE_ARABIC_NAMES: Record<string, string> = {
   disassembly_batches: 'دفعات أجهزة التفكيك والتشليح',
   document_outputs: 'الوثائق والمستندات المخرجة',
   saved_pdfs: 'أرشيف ومستندات PDF المحفوظة',
+  deleted_records: 'شواهد الحذف والتدمير السحابي',
 };
 
 export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignOut, onNavigateToAdvancedMaintenance }: { user: User, shopConfig: ShopConfig | null, onShopConfigUpdate?: (config: any) => void, onSignOut?: () => void, onNavigateToAdvancedMaintenance?: () => void }) {
@@ -1322,54 +1324,35 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
     try {
       setSaving(true);
       console.log('Starting factory reset process...');
-      setProgress({ active: true, value: 10, label: 'جاري تهيئة النظام...' });
+      setProgress({ active: true, value: 5, label: 'جاري بدء تهيئة النظام الشاملة...' });
 
-      const dbMode = ProviderFactory.getMode();
+      const collectionsToClear = [
+        'invoices', 'invoice_items', 'customers', 'maintenance_actions', 
+        'approval_actions', 'vault_transactions', 
+        'inventory_items', 'document_outputs', 'saved_pdfs', 'parts_catalog',
+        'shop_parts_inventory', 'disassembly_batches', 'electronic_part_groups', 'fin_transaction_types',
+        'fin_funds', 'fin_currencies', 'fin_payment_methods', 'user_devices',
+        'job_titles', 'device_categories', 'device_models', 'engineers',
+        'deleted_records'
+      ];
 
-      // 1. Clear Firestore collections (if in CLOUD or AUTO mode)
-      if (dbMode === 'CLOUD' || dbMode === 'AUTO') {
+      // 1. Clear Firestore collections directly via FirebaseProviderInstance if online
+      if (typeof window !== 'undefined' && navigator.onLine) {
         try {
-          const collectionsToClear = [
-            'invoices', 'invoice_items', 'customers', 'maintenance_actions', 
-            'approval_actions', 'vault_transactions', 
-            'inventory_items', 'document_outputs', 'saved_pdfs', 'parts_catalog',
-            'shop_parts_inventory', 'disassembly_batches', 'electronic_part_groups', 'fin_transaction_types',
-            'fin_funds', 'fin_currencies', 'fin_payment_methods', 'user_devices',
-            'job_titles', 'device_categories', 'device_models', 'engineers',
-            'deleted_records'
-          ];
-          
           let colIdx = 0;
           for (const colName of collectionsToClear) {
             colIdx++;
-            const percent = Math.round(10 + (colIdx / collectionsToClear.length) * 35);
-            setProgress({ active: true, value: percent, label: `جاري تهيئة السحاب: ${colName}...` });
-            const snap = await getDocs(collection(db, colName));
-            for (const docSnap of snap.docs) {
-              await deleteDoc(doc(db, colName, docSnap.id)).catch(e => console.warn(`Error deleting doc ${docSnap.id}:`, e));
-            }
+            const percent = Math.round(5 + (colIdx / collectionsToClear.length) * 45);
+            setProgress({ active: true, value: percent, label: `جاري تنظيف السحاب: ${TABLE_ARABIC_NAMES[colName] || colName}...` });
+            await FirebaseProviderInstance.clearCollection(colName).catch(e => {
+              console.warn(`Error clearing Firestore collection ${colName}:`, e);
+            });
           }
 
           // Clear all users in Firestore and reset primary admin
-          setProgress({ active: true, value: 45, label: 'جاري تهيئة حسابات المستخدمين في السحاب...' });
-          const usersSnap = await getDocs(collection(db, 'users'));
-          for (const docSnap of usersSnap.docs) {
-            if (docSnap.id === 'primary-admin') {
-              await setDoc(doc(db, 'users', 'primary-admin'), {
-                id: 'primary-admin',
-                username: 'admin',
-                password: 'admin',
-                name: 'المدير العام',
-                role: 'admin',
-                isPrimary: true,
-                userNumber: 100,
-                isActive: true
-              });
-            } else {
-              await deleteDoc(doc(db, 'users', docSnap.id)).catch(e => console.warn(`Error deleting user doc ${docSnap.id}:`, e));
-            }
-          }
-          await setDoc(doc(db, 'users', 'primary-admin'), {
+          setProgress({ active: true, value: 52, label: 'جاري تهيئة حساب المدير بالسحاب...' });
+          await FirebaseProviderInstance.clearCollection('users').catch(() => {});
+          await FirebaseProviderInstance.setDoc('users', 'primary-admin', {
             id: 'primary-admin',
             username: 'admin',
             password: 'admin',
@@ -1380,59 +1363,84 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
             isActive: true
           });
 
-          // Reset Counter settings in Firestore
-          await setDoc(doc(db, 'settings', 'app'), { 
-            lastInvoiceNumber: 0, 
-            lastCustomerNumber: 0
-          }, { merge: true });
+          // Reset ALL Counter settings in Firestore (including lastOtherInvoiceNumber)
+          setProgress({ active: true, value: 55, label: 'تصفير كافة العدادات في السحاب...' });
+          await FirebaseProviderInstance.setDoc('settings', 'app', { 
+            lastInvoiceNumber: 0,
+            lastOtherInvoiceNumber: 0,
+            lastCustomerNumber: 0,
+            lastVoucherNumber: 0
+          });
+
+          // Ensure inventory_items exists in Firestore
+          await FirebaseProviderInstance.ensureInventoryCollection();
 
         } catch (fsErr) {
           console.warn('Firestore reset failed/skipped:', fsErr);
         }
       }
 
-      // 2. Clear Local SQLite (if in LOCAL or AUTO mode)
-      if (dbMode === 'LOCAL' || dbMode === 'AUTO') {
-        setProgress({ active: true, value: 50, label: 'جاري تنظيف قاعدة البيانات المحلية...' });
-        const tablesToClear = [
-          'invoices', 'invoice_items', 'customers', 'maintenance_actions', 
-          'approval_actions', 'vault_transactions', 
-          'inventory_items', 'document_outputs', 'saved_pdfs', 'parts_catalog',
-          'shop_parts_inventory', 'disassembly_batches', 'electronic_part_groups', 'fin_transaction_types',
-          'fin_funds', 'fin_currencies', 'fin_payment_methods', 'user_devices',
-          'job_titles', 'device_categories', 'device_models', 'engineers',
-          'deleted_records'
-        ];
+      // 2. Clear Local SQLite tables directly with SQL (Fast, zero-hang on Android, no tombstones)
+      setProgress({ active: true, value: 60, label: 'جاري تنظيف وتصفير قاعدة البيانات المحلية...' });
+      
+      const localTables = [
+        ...collectionsToClear,
+        'outbox'
+      ];
+
+      let tableIdx = 0;
+      for (const table of localTables) {
+        tableIdx++;
+        const percent = Math.round(60 + (tableIdx / localTables.length) * 30);
+        setProgress({ active: true, value: percent, label: `تنظيف الجدول المحلي: ${TABLE_ARABIC_NAMES[table] || table}...` });
         
-        let tableIdx = 0;
-        for (const table of tablesToClear) {
-          tableIdx++;
-          const percent = Math.round(50 + (tableIdx / tablesToClear.length) * 35);
-          setProgress({ active: true, value: percent, label: `جاري تنظيف جدول: ${table}...` });
-          
-          try {
-            await localDb.run(`DELETE FROM ${table}`);
-            await localDb.run(`DELETE FROM outbox WHERE tableName = ?`, [table]).catch(() => {});
-          } catch (e) {
-            console.error(`Error clearing table ${table}`, e);
+        try {
+          await localDb.run(`DELETE FROM ${table}`);
+        } catch (e: any) {
+          const errMsg = String(e?.message || e || '');
+          if (!errMsg.includes('no such table')) {
+            console.error(`Error clearing SQLite table ${table}`, e);
           }
         }
+      }
 
-        // Clear all users in SQLite and insert primary admin
-        try {
-          await localDb.run(`DELETE FROM users`);
-          await localDb.run(`INSERT INTO users (id, username, password, name, role, isPrimary, userNumber, isActive) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, 
-            ['primary-admin', 'admin', 'admin', 'المدير العام', 'admin', 1, 100, 1]);
-        } catch (e) {
-          console.error(`Error resetting users in SQLite`, e);
-        }
+      // Clear all users in SQLite and insert primary admin
+      try {
+        await localDb.run(`DELETE FROM users`);
+        await localDb.run(`INSERT INTO users (id, username, password, name, role, isPrimary, userNumber, isActive) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, 
+          ['primary-admin', 'admin', 'admin', 'المدير العام', 'admin', 1, 100, 1]);
+      } catch (e) {
+        console.error(`Error resetting users in SQLite`, e);
+      }
 
-        // Reset funds balances
+      // Reset funds balances in SQLite
+      try {
+        await localDb.run(`UPDATE fin_funds SET balance = 0`);
+      } catch (e) {
+        console.error('Error resetting funds balances', e);
+      }
+
+      // Reset all counters in SQLite (both in settings and system_settings)
+      try {
+        await localDb.run("DELETE FROM settings WHERE id = 'app'");
+        await localDb.run("INSERT INTO settings (id, data) VALUES ('app', ?)", [
+          JSON.stringify({
+            lastInvoiceNumber: 0,
+            lastOtherInvoiceNumber: 0,
+            lastCustomerNumber: 0,
+            lastVoucherNumber: 0
+          })
+        ]);
+        await localDb.run("UPDATE system_settings SET value = '0' WHERE key IN ('lastInvoiceNumber', 'lastOtherInvoiceNumber', 'lastCustomerNumber', 'lastVoucherNumber')").catch(() => {});
+      } catch (e) {
+        console.error('Error resetting settings in SQLite:', e);
+      }
+
+      // Notify localDb subscribers for clean React state
+      for (const table of collectionsToClear) {
         try {
-          await localDb.run(`UPDATE fin_funds SET balance = 0`);
-        } catch (e) {
-          console.error('Error resetting funds balances', e);
-        }
+          localDb.notify(table, []);
+        } catch (_) {}
       }
 
       // 3. Clear LocalStorage settings
@@ -1442,11 +1450,15 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
       sessionStorage.removeItem('alertsClosed');
       sessionStorage.removeItem('snd_user');
 
-      setProgress({ active: false, value: 100, label: 'تم الحذف بنجاح!' });
+      setProgress({ active: false, value: 100, label: 'تمت التهيئة بنجاح!' });
       setSaving(false);
       
       // Show custom success status modal
-      setResetStatus({ type: 'success', message: 'تمت تهيئة النظام وتصفير كافة البيانات بنجاح! سيتم إعادة تشغيل التطبيق تلقائياً بعد ثانيتين لإتمام العملية...' });
+      setResetStatus({ 
+        type: 'success', 
+        message: 'تمت تهيئة وضبط المصنع لكافة البيانات السحابية والمحلية والعدادات بنجاح تام! سيتم إعادة تشغيل التطبيق تلقائياً بعد ثانيتين...' 
+      });
+      
       setTimeout(() => {
         window.location.reload();
       }, 2500);
@@ -1505,33 +1517,37 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
       const allTables = hybridSelectedTables;
 
       if (targetIsCloud) {
-        // 1. Clear CLOUD tables
+        // 1. Clear CLOUD tables using batch clear (fast, zero tombstone multiplication)
         let idx = 0;
         for (const table of allTables) {
           idx++;
           const percent = Math.round(5 + (idx / allTables.length) * 60);
-          setProgress({ active: true, value: percent, label: `جاري مسح السحاب: ${table}...` });
+          setProgress({ active: true, value: percent, label: `جاري مسح السحاب: ${TABLE_ARABIC_NAMES[table] || table}...` });
           
           if (table === 'users') continue; // Handled separately
 
           try {
-            const snap = await FirebaseProviderInstance.getDocs(table);
-            for (const docSnap of snap.docs) {
-              await FirebaseProviderInstance.deleteDoc(table, docSnap.id);
-            }
+            await FirebaseProviderInstance.clearCollection(table);
           } catch (e: any) {
             console.error(`Error clearing Firestore table ${table}:`, e);
             failures.push(`جدول ${table}: ${e.message || e}`);
           }
         }
 
-        // Re-create settings/app in CLOUD
+        // Ensure inventory_items exists in Cloud if included
+        if (allTables.includes('inventory_items')) {
+          await FirebaseProviderInstance.ensureInventoryCollection().catch(() => {});
+        }
+
+        // Re-create settings/app in CLOUD with all counters reset
         if (allTables.includes('settings')) {
           setProgress({ active: true, value: 75, label: 'جاري إعادة ضبط العدادات في السحاب...' });
           try {
             await FirebaseProviderInstance.setDoc('settings', 'app', { 
-              lastInvoiceNumber: 0, 
-              lastCustomerNumber: 0
+              lastInvoiceNumber: 0,
+              lastOtherInvoiceNumber: 0,
+              lastCustomerNumber: 0,
+              lastVoucherNumber: 0
             });
           } catch (e: any) {
             console.error('Failed to reset app settings in Firestore:', e);
@@ -1543,23 +1559,17 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         if (allTables.includes('users')) {
           setProgress({ active: true, value: 85, label: 'جاري تهيئة حسابات المستخدمين في السحاب...' });
           try {
-            const usersSnap = await FirebaseProviderInstance.getDocs('users');
-            for (const docSnap of usersSnap.docs) {
-              if (docSnap.id === 'primary-admin') {
-                await FirebaseProviderInstance.setDoc('users', 'primary-admin', {
-                  id: 'primary-admin',
-                  username: 'admin',
-                  password: 'admin',
-                  name: 'المدير العام',
-                  role: 'admin',
-                  isPrimary: true,
-                  userNumber: 100,
-                  isActive: true
-                });
-              } else {
-                await FirebaseProviderInstance.deleteDoc('users', docSnap.id);
-              }
-            }
+            await FirebaseProviderInstance.clearCollection('users');
+            await FirebaseProviderInstance.setDoc('users', 'primary-admin', {
+              id: 'primary-admin',
+              username: 'admin',
+              password: 'admin',
+              name: 'المدير العام',
+              role: 'admin',
+              isPrimary: true,
+              userNumber: 100,
+              isActive: true
+            });
           } catch (e: any) {
             console.error('Failed to reset users in Firestore:', e);
             failures.push(`تهيئة المستخدمين: ${e.message || e}`);
@@ -1567,12 +1577,12 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         }
 
       } else {
-        // 2. Clear LOCAL tables
+        // 2. Clear LOCAL tables directly with SQL (Fast, zero tombstones)
         let idx = 0;
         for (const table of allTables) {
           idx++;
           const percent = Math.round(5 + (idx / allTables.length) * 60);
-          setProgress({ active: true, value: percent, label: `جاري مسح جدول المحلي: ${table}...` });
+          setProgress({ active: true, value: percent, label: `جاري مسح جدول المحلي: ${TABLE_ARABIC_NAMES[table] || table}...` });
           
           if (table === 'users') continue; // Handled separately
 
@@ -1611,6 +1621,25 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
           } catch (e: any) {
             console.error('Error resetting funds balances in SQLite:', e);
             failures.push(`إعادة تعيين الخزائن: ${e.message || e}`);
+          }
+        }
+
+        // Reset all counters in SQLite
+        if (allTables.includes('settings')) {
+          try {
+            await localDb.run("DELETE FROM settings WHERE id = 'app'");
+            await localDb.run("INSERT INTO settings (id, data) VALUES ('app', ?)", [
+              JSON.stringify({
+                lastInvoiceNumber: 0,
+                lastOtherInvoiceNumber: 0,
+                lastCustomerNumber: 0,
+                lastVoucherNumber: 0
+              })
+            ]);
+            await localDb.run("UPDATE system_settings SET value = '0' WHERE key IN ('lastInvoiceNumber', 'lastOtherInvoiceNumber', 'lastCustomerNumber', 'lastVoucherNumber')").catch(() => {});
+          } catch (e: any) {
+            console.error('Error resetting settings in SQLite:', e);
+            failures.push(`إعادة تعيين العدادات المحلية: ${e.message || e}`);
           }
         }
       }
@@ -1806,12 +1835,9 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
             }
           }
         } else {
-          // Destination is CLOUD: Clear Firestore collection
+          // Destination is CLOUD: Clear Firestore collection using batch (no tombstones)
           try {
-            const targetSnap = await FirebaseProviderInstance.getDocs(table);
-            for (const docSnap of targetSnap.docs) {
-              await FirebaseProviderInstance.deleteDoc(table, docSnap.id);
-            }
+            await FirebaseProviderInstance.clearCollection(table);
           } catch (e: any) {
             console.error(`Error clearing cloud table ${table} before transfer:`, e);
             failures.push(`فشل تصفير جدول السحاب ${table}: ${e.message || e}`);
@@ -1836,13 +1862,27 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         }
       }
 
+      // Ensure inventory_items exists in Cloud if included in transfer
+      if (tables.includes('inventory_items')) {
+        await FirebaseProviderInstance.ensureInventoryCollection().catch(() => {});
+      }
+
       try {
         const targetProvider = sourceIsCloud ? LocalProviderInstance : FirebaseProviderInstance;
         const targetInvoicesSnap = await targetProvider.getDocs('invoices');
         let maxInv = 0;
+        let maxOther = 0;
         targetInvoicesSnap.docs.forEach((d: any) => {
-          const num = parseInt(d.data()?.invoiceNumber, 10);
+          const inv = d.data();
+          const num = parseInt(inv?.invoiceNumber, 10);
           if (!isNaN(num) && num > maxInv) maxInv = num;
+
+          const numStr = String(inv?.invoiceNumber || '').trim();
+          if (numStr.startsWith('O-') || numStr.startsWith('PUR-') || inv?.invoiceType?.startsWith('sale_') || inv?.type === 'purchase') {
+            const clean = numStr.replace('O-', '').replace('PUR-', '').trim();
+            const n = parseInt(clean, 10);
+            if (!isNaN(n) && n > maxOther) maxOther = n;
+          }
         });
 
         const targetCustomersSnap = await targetProvider.getDocs('customers');
@@ -1854,6 +1894,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
 
         await targetProvider.setDoc('settings', 'app', {
           lastInvoiceNumber: maxInv,
+          lastOtherInvoiceNumber: maxOther,
           lastCustomerNumber: maxCust
         }, { merge: true }, 'BYPASS_OUTBOX');
       } catch (err) {
@@ -1908,19 +1949,32 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
 
   return (
     <div className="max-w-4xl mx-auto px-4 h-full overflow-y-auto pb-20 sm:pb-8">
-      {/* Progress Overlay */}
+      {/* Progress Overlay - High Z-Index to remain on top of Hybrid Mode and all other modals */}
       {progress.active && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/80 backdrop-blur-sm p-6">
-          <div className="bg-[#1a1a1a] p-6 rounded-3xl border border-white/10 w-full max-w-sm text-center shadow-2xl">
-            <h3 className="text-white font-bold mb-4">{progress.label}</h3>
-            <div className="w-full h-3 bg-white/10 rounded-full overflow-hidden">
-               <motion.div 
-                 className="h-full bg-blue-500"
-                 initial={{ width: 0 }}
-                 animate={{ width: `${progress.value}%` }}
-               />
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/85 backdrop-blur-md p-6 font-cairo" dir="rtl">
+          <div className="bg-[#161616] border border-orange-500/30 p-6 md:p-8 rounded-[2rem] w-full max-w-md text-center shadow-[0_0_50px_rgba(249,115,22,0.15)] space-y-5 relative overflow-hidden">
+            <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-orange-500 via-amber-400 to-orange-600 animate-pulse" />
+            <div className="w-14 h-14 mx-auto rounded-2xl bg-orange-500/10 border border-orange-500/20 text-orange-400 flex items-center justify-center shadow-inner">
+              <RefreshCw size={26} className="animate-spin" />
             </div>
-            <p className="text-gray-500 text-xs mt-2">{Math.round(progress.value)}%</p>
+            <div>
+              <h3 className="text-white font-black text-base md:text-lg leading-snug">{progress.label}</h3>
+              <p className="text-gray-400 text-xs mt-1">يرجى الانتظار، جاري معالجة ونقل السجلات بدقة...</p>
+            </div>
+            <div className="space-y-2">
+              <div className="w-full h-3.5 bg-white/5 border border-white/10 rounded-full overflow-hidden p-0.5 shadow-inner">
+                <motion.div 
+                  className="h-full bg-gradient-to-r from-orange-600 to-amber-500 rounded-full shadow-[0_0_12px_rgba(249,115,22,0.5)]"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${Math.min(100, Math.max(0, progress.value))}%` }}
+                  transition={{ duration: 0.3 }}
+                />
+              </div>
+              <div className="flex items-center justify-between text-xs font-bold font-mono px-1">
+                <span className="text-orange-400">{Math.round(progress.value)}%</span>
+                <span className="text-gray-500 text-[10px]">مكتمل</span>
+              </div>
+            </div>
           </div>
         </div>
       )}

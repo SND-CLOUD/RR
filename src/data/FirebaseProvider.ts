@@ -158,6 +158,61 @@ export class FirebaseProvider implements IDataProvider {
     }
   }
 
+  /**
+   * Bulk-deletes all documents in a Firestore collection in batches of 400.
+   * Completely bypasses tombstone generation (clean wipe for factory / precise reset).
+   */
+  async clearCollection(collectionName: string): Promise<number> {
+    try {
+      const database = this.getDb();
+      const colRef = collection(database, collectionName);
+      const snap = await fsGetDocs(colRef);
+      if (snap.empty) return 0;
+
+      let count = 0;
+      const batchSize = 400;
+      const docs = snap.docs;
+      for (let i = 0; i < docs.length; i += batchSize) {
+        const chunk = docs.slice(i, i + batchSize);
+        const batch = fsWriteBatch(database);
+        for (const d of chunk) {
+          batch.delete(d.ref);
+          count++;
+        }
+        await batch.commit();
+      }
+      return count;
+    } catch (err) {
+      console.error(`[FirebaseProvider] clearCollection error on ${collectionName}:`, err);
+      throw err;
+    }
+  }
+
+  /**
+   * Ensures that the inventory_items collection exists and is visible in Cloud Firestore.
+   */
+  async ensureInventoryCollection(): Promise<void> {
+    try {
+      const database = this.getDb();
+      const docRef = doc(database, 'inventory_items', 'meta_schema');
+      const snap = await fsGetDoc(docRef);
+      if (!snap.exists()) {
+        await fsSetDoc(docRef, {
+          id: 'meta_schema',
+          name: 'سجل تهيئة المخزون الأولي',
+          category: 'عام',
+          quantity: 0,
+          minQuantity: 0,
+          price: 0,
+          isSystemPlaceholder: true,
+          updatedAt: new Date().toISOString()
+        });
+      }
+    } catch (e) {
+      console.warn('[FirebaseProvider] ensureInventoryCollection skipped or error:', e);
+    }
+  }
+
   onSnapshot(
     collectionName: string,
     constraints: any[] | undefined,

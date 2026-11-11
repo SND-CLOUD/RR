@@ -43,6 +43,12 @@ export class ProviderFactory {
       if (this.getMode() === 'AUTO') {
         setTimeout(async () => {
           try {
+            // Ensure inventory_items exists in Firestore
+            try {
+              const { FirebaseProviderInstance } = await import('./FirebaseProvider');
+              await FirebaseProviderInstance.ensureInventoryCollection();
+            } catch (_) {}
+
             const { SyncEngine } = await import('./SyncEngine');
             console.log('Starting startup auto-sync...');
             await SyncEngine.syncAll();

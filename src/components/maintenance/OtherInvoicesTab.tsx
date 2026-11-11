@@ -11,7 +11,8 @@ import {
 import { localDb } from '../../lib/local-db';
 import { LocalProviderInstance } from '../../data/LocalProvider';
 import { SyncEngine } from '../../data/SyncEngine';
-import { db, doc, updateDoc } from '../../firebase';
+import { db, doc, updateDoc, setDoc } from '../../firebase';
+import { FirebaseProviderInstance } from '../../data/FirebaseProvider';
 import { isPurchaseInvoice, isSaleInvoice } from '../../types';
 
 interface OtherAuditReport {
@@ -193,7 +194,12 @@ export default function OtherInvoicesTab() {
       localDb.notify('invoices', updatedInvs.values || []);
       const updatedItems = await localDb.query("SELECT * FROM invoice_items");
       localDb.notify('invoice_items', updatedItems.values || []);
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('snd_data_synced'));
+      // Synchronize lastOtherInvoiceNumber in Local & Cloud
+      await LocalProviderInstance.setDoc('settings', 'app', { lastOtherInvoiceNumber: nextNum }, { merge: true }).catch(() => {});
+      await localDb.run("UPDATE system_settings SET value = ? WHERE key = 'lastOtherInvoiceNumber'", [String(nextNum)]).catch(() => {});
+      if (typeof window !== 'undefined' && navigator.onLine) {
+        FirebaseProviderInstance.setDoc('settings', 'app', { lastOtherInvoiceNumber: nextNum }, { merge: true }).catch(() => {});
+      }
 
       SyncEngine.resumeSync();
       SyncEngine.syncAll().catch(err => console.warn(err));
@@ -274,7 +280,12 @@ export default function OtherInvoicesTab() {
       localDb.notify('invoices', updatedInvs.values || []);
       const updatedItems = await localDb.query("SELECT * FROM invoice_items");
       localDb.notify('invoice_items', updatedItems.values || []);
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('snd_data_synced'));
+      // Synchronize lastOtherInvoiceNumber in Local & Cloud
+      await LocalProviderInstance.setDoc('settings', 'app', { lastOtherInvoiceNumber: nextNum }, { merge: true }).catch(() => {});
+      await localDb.run("UPDATE system_settings SET value = ? WHERE key = 'lastOtherInvoiceNumber'", [String(nextNum)]).catch(() => {});
+      if (typeof window !== 'undefined' && navigator.onLine) {
+        FirebaseProviderInstance.setDoc('settings', 'app', { lastOtherInvoiceNumber: nextNum }, { merge: true }).catch(() => {});
+      }
 
       SyncEngine.resumeSync();
       SyncEngine.syncAll().catch(err => console.warn(err));
@@ -345,13 +356,19 @@ export default function OtherInvoicesTab() {
       localDb.notify('invoices', updatedInvs.values || []);
       const updatedItems = await localDb.query("SELECT * FROM invoice_items");
       localDb.notify('invoice_items', updatedItems.values || []);
-      if (typeof window !== 'undefined') window.dispatchEvent(new CustomEvent('snd_data_synced'));
+      const finalNum = start + total - 1;
+
+      // Synchronize lastOtherInvoiceNumber in Local & Cloud
+      await LocalProviderInstance.setDoc('settings', 'app', { lastOtherInvoiceNumber: finalNum }, { merge: true }).catch(() => {});
+      await localDb.run("UPDATE system_settings SET value = ? WHERE key = 'lastOtherInvoiceNumber'", [String(finalNum)]).catch(() => {});
+      if (typeof window !== 'undefined' && navigator.onLine) {
+        FirebaseProviderInstance.setDoc('settings', 'app', { lastOtherInvoiceNumber: finalNum }, { merge: true }).catch(() => {});
+      }
 
       SyncEngine.resumeSync();
       SyncEngine.syncAll().catch(err => console.warn(err));
 
       setProgressPercent(100);
-      const finalNum = start + total - 1;
       setExecutionResult({ tool: 4, type: 'success', message: `اكتملت إعادة الترقيم التسلسلي الشامل لـ ${total} فاتورة أخرى بنجاح من ${prefix}${start} حتى ${prefix}${finalNum}.` });
       runAuditOnly();
 
