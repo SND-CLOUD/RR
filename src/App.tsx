@@ -156,11 +156,6 @@ export default function App() {
 
     try {
       const { SyncEngine } = await import('./data/SyncEngine');
-      if (force) {
-        // Clear stale local tombstones that might be blocking download of cloud data
-        await localDb.run("DELETE FROM deleted_records").catch(() => {});
-        await localDb.run("DELETE FROM outbox WHERE action = 'DELETE'").catch(() => {});
-      }
       // force = false: Fast outbox sync, force = true: Comprehensive down/up sync
       const result = await SyncEngine.syncAll(force);
 
@@ -243,7 +238,7 @@ export default function App() {
       clearTimeout(clickTimeoutRef.current);
     }
     clickTimeoutRef.current = setTimeout(() => {
-      handleManualSync(true); // Single Click -> Comprehensive Sync (downloads all cloud data and syncs outbox)
+      handleManualSync(false); // Single Click -> Fast outbox sync
     }, 150);
   };
 
@@ -366,7 +361,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user?.id) return;
     const unsubInvoices = onSnapshot(collection(db, 'invoices'), (snapshot) => {
       setInvoicesList(snapshot.docs.map(d => ({ ...d.data(), id: d.id })));
     });
@@ -385,7 +380,7 @@ export default function App() {
       unsubCustomers();
       unsubTransactions();
     };
-  }, [user]);
+  }, [user?.id]);
 
 
 
@@ -425,9 +420,13 @@ export default function App() {
           sessionStorage.removeItem('snd_user');
           return;
         }
-        // Sync any updates (permissions, password, name) back to the session state
-        setUser({ ...updatedUserData, id: snapshot.id });
-        sessionStorage.setItem('snd_user', JSON.stringify({ ...updatedUserData, id: snapshot.id }));
+        // Sync any updates (permissions, password, name) back to the session state only if changed
+        const nextUser = { ...updatedUserData, id: snapshot.id };
+        const nextStr = JSON.stringify(nextUser);
+        if (sessionStorage.getItem('snd_user') !== nextStr) {
+          sessionStorage.setItem('snd_user', nextStr);
+          setUser(nextUser);
+        }
       }
     }, (error) => {
       console.warn("Failed to listen to user document:", error);
@@ -436,163 +435,223 @@ export default function App() {
   }, [user?.id]);
 
   useEffect(() => {
-    const generatedAlerts: any[] = [];
-    const now = Date.now();
-    const warrantyDurationMs = 14 * 24 * 60 * 60 * 1000; // 14 days standard warranty
+    const timer = setTimeout(() => {
+      const generatedAlerts: any[] = [];
+      const now = Date.now();
+      const warrantyDurationMs = 14 * 24 * 60 * 60 * 1000; // 14 days standard warranty
 
-    // 1. Outstanding Invoices & Debts Check (Calculated exactly like Customer Account Statement)
-    const customerMap = new Map<string, any>();
-
-    customersList.forEach(c => {
-      if (c && (c.id || c.name)) {
-        const key = c.id || c.name;
-        customerMap.set(key, c);
-      }
-    });
-
-    invoicesList.forEach(inv => {
-      if (inv.customerId && !customerMap.has(inv.customerId)) {
-        customerMap.set(inv.customerId, {
-          id: inv.customerId,
-          name: inv.customerName,
-          phone1: inv.customerPhone,
-          liabilityCurrency: inv.currency || 'USD'
-        });
-      } else if (!inv.customerId && inv.customerName && !customerMap.has(inv.customerName)) {
-        customerMap.set(inv.customerName, {
-          name: inv.customerName,
-          phone1: inv.customerPhone,
-          liabilityCurrency: inv.currency || 'USD'
-        });
-      }
-    });
-
-    customerMap.forEach((cust) => {
-      const customerId = cust.id;
-      const customerName = cust.name || '';
-      if (!customerName && !customerId) return;
-
-      const customerInvs = invoicesList.filter(inv => (customerId && inv.customerId === customerId) || (customerName && inv.customerName === customerName));
-      
-      let totalDebit = 0;
-      let totalCredit = 0;
-
-      customerInvs.forEach(inv => {
-        const invItems = itemsList.filter(it => it.invoiceNumber === inv.invoiceNumber);
-        const actualCost = getInvoiceActualCost(invItems, inv);
-        
-        const explicitType = inv.invoiceType || inv.templateType || inv.type || '';
-        let isPurchase = explicitType === 'purchase' || String(explicitType).startsWith('purchase') || inv.type === 'purchase' || String(inv.invoiceNumber).startsWith('PUR-') || String(inv.invoiceNumber).startsWith('DIS-');
-        if (inv.notes && (inv.notes.includes('شراء') || inv.notes.includes('مورد') || inv.notes.includes('مشتريات'))) {
-          isPurchase = true;
+      // Pre-index invoices, items, and valid transactions in O(N) single passes
+      const itemsByInvoiceNum = new Map<string, any[]>();
+      for (let i = 0; i < itemsList.length; i++) {
+        const it = itemsList[i];
+        const key = it.invoiceNumber;
+        if (key !== undefined && key !== null) {
+          let arr = itemsByInvoiceNum.get(key);
+          if (!arr) { arr = []; itemsByInvoiceNum.set(key, arr); }
+          arr.push(it);
         }
+      }
 
-        if (isPurchase) {
-          totalCredit += actualCost;
-        } else {
-          totalDebit += actualCost;
+      const invsByCustId = new Map<string, any[]>();
+      const invsByCustName = new Map<string, any[]>();
+      for (let i = 0; i < invoicesList.length; i++) {
+        const inv = invoicesList[i];
+        if (inv.customerId) {
+          let arr = invsByCustId.get(inv.customerId);
+          if (!arr) { arr = []; invsByCustId.set(inv.customerId, arr); }
+          arr.push(inv);
         }
-      });
+        if (inv.customerName) {
+          let arr = invsByCustName.get(inv.customerName);
+          if (!arr) { arr = []; invsByCustName.set(inv.customerName, arr); }
+          arr.push(inv);
+        }
+      }
 
-      const customerTransactions = transactionsList.filter(tx => 
-        ((customerId && tx.customerId === customerId) || (customerName && tx.customerName === customerName)) &&
-        !tx.isReversed &&
-        !tx.isReversal &&
-        tx.status !== 'reversed' &&
-        tx.status !== 'reversal'
-      );
+      const txsByCustId = new Map<string, any[]>();
+      const txsByCustName = new Map<string, any[]>();
+      for (let i = 0; i < transactionsList.length; i++) {
+        const tx = transactionsList[i];
+        if (tx.isReversed || tx.isReversal || tx.status === 'reversed' || tx.status === 'reversal') continue;
+        if (tx.customerId) {
+          let arr = txsByCustId.get(tx.customerId);
+          if (!arr) { arr = []; txsByCustId.set(tx.customerId, arr); }
+          arr.push(tx);
+        }
+        if (tx.customerName) {
+          let arr = txsByCustName.get(tx.customerName);
+          if (!arr) { arr = []; txsByCustName.set(tx.customerName, arr); }
+          arr.push(tx);
+        }
+      }
 
-      customerTransactions.forEach(tx => {
-        const liabilityAmount = (tx.liabilityAmount !== undefined && tx.liabilityAmount !== null && !isNaN(Number(tx.liabilityAmount))) 
-          ? Number(tx.liabilityAmount) 
-          : Math.abs(Number(tx.amount || 0));
+      // 1. Outstanding Invoices & Debts Check (Calculated exactly like Customer Account Statement)
+      const customerMap = new Map<string, any>();
 
-        if (tx.type === 'receipt' || tx.type === 'invoice_payment') {
-          totalCredit += liabilityAmount;
-        } else if (tx.type === 'payment') {
-          totalDebit += liabilityAmount;
+      customersList.forEach(c => {
+        if (c && (c.id || c.name)) {
+          const key = c.id || c.name;
+          customerMap.set(key, c);
         }
       });
 
-      const outstandingBalance = totalDebit - totalCredit;
-      const currency = cust.liabilityCurrency || 'USD';
-
-      if (outstandingBalance > 0.05) {
-        const latestInv = customerInvs.length > 0 ? customerInvs[customerInvs.length - 1] : null;
-
-        generatedAlerts.push({
-          id: `outstanding-${cust.id || cust.name}`,
-          type: 'outstanding',
-          title: 'مستحقات وذمم عميل',
-          message: `العميل (${cust.name}) متبقي بذمته مبلغ ${outstandingBalance.toLocaleString('en-US')} ${currency}`,
-          customerId: cust.id || '',
-          customerNumber: cust.customerNumber || (cust.id ? cust.id.substring(0, 5) : ''),
-          customerName: cust.name,
-          customerPhone: cust.phone1 || cust.phone || (latestInv ? latestInv.customerPhone : ''),
-          companyName: cust.companyName || '',
-          hasWhatsapp: cust.hasWhatsapp !== undefined ? cust.hasWhatsapp : true,
-          createdAt: cust.createdAt || (latestInv ? latestInv.createdAt : null),
-          latestInvoiceNumber: latestInv?.invoiceNumber || '',
-          allInvoiceNumbers: customerInvs.map(inv => String(inv.invoiceNumber || '')).filter(Boolean),
-          remainingAmount: outstandingBalance,
-          totalCost: totalDebit,
-          amountPaid: totalCredit,
-          currency: currency,
-          severity: outstandingBalance > 100 ? 'high' : 'medium'
-        });
-      }
-    });
-
-    // 2. Warranty Check on delivered items
-    itemsList.forEach(item => {
-      if ((item.status === '60' || item.status === 'delivered') && item.deliveredAt) {
-        const deliveredTime = Number(item.deliveredAt);
-        const expiryTime = deliveredTime + warrantyDurationMs;
-        const diffMs = expiryTime - now;
-        const diffDays = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
-
-        const formattedDate = new Date(expiryTime).toLocaleDateString('ar-EG', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric'
-        });
-
-        if (diffDays >= 0 && diffDays <= 3) {
-          generatedAlerts.push({
-            id: `war-exp-soon-${item.id}`,
-            type: 'warranty_soon',
-            title: 'ضمان ينتهي قريباً',
-            message: `الجهاز (${item.deviceType} - ${item.deviceName}) للفاتورة #${item.invoiceNumber || '-'} ينتهي ضمانه خلال ${diffDays === 0 ? 'اليوم' : diffDays === 1 ? 'يوم واحد' : diffDays === 2 ? 'يومين' : `${diffDays} أيام`} بتاريخ ${formattedDate}`,
-            itemId: item.id,
-            deviceName: item.deviceName,
-            deviceType: item.deviceType,
-            invoiceNumber: item.invoiceNumber,
-            customerName: item.customerName || '',
-            expiryDate: formattedDate,
-            diffDays,
-            severity: 'medium'
+      invoicesList.forEach(inv => {
+        if (inv.customerId && !customerMap.has(inv.customerId)) {
+          customerMap.set(inv.customerId, {
+            id: inv.customerId,
+            name: inv.customerName,
+            phone1: inv.customerPhone,
+            liabilityCurrency: inv.currency || 'USD'
           });
-        } else if (diffDays < 0 && diffDays >= -7) {
-          const expiredDaysAgo = Math.abs(diffDays);
-          generatedAlerts.push({
-            id: `war-expired-${item.id}`,
-            type: 'warranty_expired',
-            title: 'انتهى ضمان الجهاز',
-            message: `الجهاز (${item.deviceType} - ${item.deviceName}) للفاتورة #${item.invoiceNumber || '-'} انتهى ضمانه منذ ${expiredDaysAgo === 1 ? 'يوم واحد' : expiredDaysAgo === 2 ? 'يومين' : `${expiredDaysAgo} أيام`} بتاريخ ${formattedDate}`,
-            itemId: item.id,
-            deviceName: item.deviceName,
-            deviceType: item.deviceType,
-            invoiceNumber: item.invoiceNumber,
-            customerName: item.customerName || '',
-            expiryDate: formattedDate,
-            diffDays: expiredDaysAgo,
-            severity: 'low'
+        } else if (!inv.customerId && inv.customerName && !customerMap.has(inv.customerName)) {
+          customerMap.set(inv.customerName, {
+            name: inv.customerName,
+            phone1: inv.customerPhone,
+            liabilityCurrency: inv.currency || 'USD'
           });
         }
-      }
-    });
+      });
 
-    setActiveAlerts(generatedAlerts);
+      customerMap.forEach((cust) => {
+        const customerId = cust.id;
+        const customerName = cust.name || '';
+        if (!customerName && !customerId) return;
+
+        const invSet = new Set<any>();
+        if (customerId) {
+          const listById = invsByCustId.get(customerId);
+          if (listById) listById.forEach(inv => invSet.add(inv));
+        }
+        if (customerName) {
+          const listByName = invsByCustName.get(customerName);
+          if (listByName) listByName.forEach(inv => invSet.add(inv));
+        }
+        const customerInvs = Array.from(invSet);
+
+        let totalDebit = 0;
+        let totalCredit = 0;
+
+        customerInvs.forEach(inv => {
+          const invItems = itemsByInvoiceNum.get(inv.invoiceNumber) || [];
+          const actualCost = getInvoiceActualCost(invItems, inv);
+
+          const explicitType = inv.invoiceType || inv.templateType || inv.type || '';
+          let isPurchase = explicitType === 'purchase' || String(explicitType).startsWith('purchase') || inv.type === 'purchase' || String(inv.invoiceNumber).startsWith('PUR-') || String(inv.invoiceNumber).startsWith('DIS-');
+          if (inv.notes && (inv.notes.includes('شراء') || inv.notes.includes('مورد') || inv.notes.includes('مشتريات'))) {
+            isPurchase = true;
+          }
+
+          if (isPurchase) {
+            totalCredit += actualCost;
+          } else {
+            totalDebit += actualCost;
+          }
+        });
+
+        const txSet = new Set<any>();
+        if (customerId) {
+          const txsId = txsByCustId.get(customerId);
+          if (txsId) txsId.forEach(tx => txSet.add(tx));
+        }
+        if (customerName) {
+          const txsName = txsByCustName.get(customerName);
+          if (txsName) txsName.forEach(tx => txSet.add(tx));
+        }
+
+        txSet.forEach(tx => {
+          const liabilityAmount = (tx.liabilityAmount !== undefined && tx.liabilityAmount !== null && !isNaN(Number(tx.liabilityAmount))) 
+            ? Number(tx.liabilityAmount) 
+            : Math.abs(Number(tx.amount || 0));
+
+          if (tx.type === 'receipt' || tx.type === 'invoice_payment') {
+            totalCredit += liabilityAmount;
+          } else if (tx.type === 'payment') {
+            totalDebit += liabilityAmount;
+          }
+        });
+
+        const outstandingBalance = totalDebit - totalCredit;
+        const currency = cust.liabilityCurrency || 'USD';
+
+        if (outstandingBalance > 0.05) {
+          const latestInv = customerInvs.length > 0 ? customerInvs[customerInvs.length - 1] : null;
+
+          generatedAlerts.push({
+            id: `outstanding-${cust.id || cust.name}`,
+            type: 'outstanding',
+            title: 'مستحقات وذمم عميل',
+            message: `العميل (${cust.name}) متبقي بذمته مبلغ ${outstandingBalance.toLocaleString('en-US')} ${currency}`,
+            customerId: cust.id || '',
+            customerNumber: cust.customerNumber || (cust.id ? cust.id.substring(0, 5) : ''),
+            customerName: cust.name,
+            customerPhone: cust.phone1 || cust.phone || (latestInv ? latestInv.customerPhone : ''),
+            companyName: cust.companyName || '',
+            hasWhatsapp: cust.hasWhatsapp !== undefined ? cust.hasWhatsapp : true,
+            createdAt: cust.createdAt || (latestInv ? latestInv.createdAt : null),
+            latestInvoiceNumber: latestInv?.invoiceNumber || '',
+            allInvoiceNumbers: customerInvs.map(inv => String(inv.invoiceNumber || '')).filter(Boolean),
+            remainingAmount: outstandingBalance,
+            totalCost: totalDebit,
+            amountPaid: totalCredit,
+            currency: currency,
+            severity: outstandingBalance > 100 ? 'high' : 'medium'
+          });
+        }
+      });
+
+      // 2. Warranty Check on delivered items
+      itemsList.forEach(item => {
+        if ((item.status === '60' || item.status === 'delivered') && item.deliveredAt) {
+          const deliveredTime = Number(item.deliveredAt);
+          const expiryTime = deliveredTime + warrantyDurationMs;
+          const diffMs = expiryTime - now;
+          const diffDays = Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+
+          const formattedDate = new Date(expiryTime).toLocaleDateString('ar-EG', {
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+          });
+
+          if (diffDays >= 0 && diffDays <= 3) {
+            generatedAlerts.push({
+              id: `war-exp-soon-${item.id}`,
+              type: 'warranty_soon',
+              title: 'ضمان ينتهي قريباً',
+              message: `الجهاز (${item.deviceType} - ${item.deviceName}) للفاتورة #${item.invoiceNumber || '-'} ينتهي ضمانه خلال ${diffDays === 0 ? 'اليوم' : diffDays === 1 ? 'يوم واحد' : diffDays === 2 ? 'يومين' : `${diffDays} أيام`} بتاريخ ${formattedDate}`,
+              itemId: item.id,
+              deviceName: item.deviceName,
+              deviceType: item.deviceType,
+              invoiceNumber: item.invoiceNumber,
+              customerName: item.customerName || '',
+              expiryDate: formattedDate,
+              diffDays,
+              severity: 'medium'
+            });
+          } else if (diffDays < 0 && diffDays >= -7) {
+            const expiredDaysAgo = Math.abs(diffDays);
+            generatedAlerts.push({
+              id: `war-expired-${item.id}`,
+              type: 'warranty_expired',
+              title: 'انتهى ضمان الجهاز',
+              message: `الجهاز (${item.deviceType} - ${item.deviceName}) للفاتورة #${item.invoiceNumber || '-'} انتهى ضمانه منذ ${expiredDaysAgo === 1 ? 'يوم واحد' : expiredDaysAgo === 2 ? 'يومين' : `${expiredDaysAgo} أيام`} بتاريخ ${formattedDate}`,
+              itemId: item.id,
+              deviceName: item.deviceName,
+              deviceType: item.deviceType,
+              invoiceNumber: item.invoiceNumber,
+              customerName: item.customerName || '',
+              expiryDate: formattedDate,
+              diffDays: expiredDaysAgo,
+              severity: 'low'
+            });
+          }
+        }
+      });
+
+      setActiveAlerts(generatedAlerts);
+    }, 60);
+
+    return () => clearTimeout(timer);
   }, [invoicesList, itemsList, customersList, transactionsList]);
 
   // Search & sort outstanding alerts
@@ -1225,22 +1284,7 @@ export default function App() {
   const renderContent = () => {
     switch (activeTab) {
       case 'dashboard':
-        return (
-          <Dashboard 
-            onNavigate={(tab: any, subView?: any) => {
-              setVaultInitialProps(null);
-              if (tab === 'entry-exit' && subView) {
-                setEntryExitView(subView);
-              }
-              setActiveTab(tab);
-            }} 
-            shopName={shopConfig?.shopName} 
-            fiscalYear={shopConfig?.fiscalYear} 
-            activeAlertsCount={activeAlerts.length} 
-            onShowAlerts={() => setShowAllAlertsModal(true)} 
-            resetTrigger={dashboardResetTrigger}
-          />
-        );
+        return null;
       case 'device-intake':
         return (
           <DeviceIntakeHub 
@@ -1330,7 +1374,7 @@ export default function App() {
         if (storedTab === 'stock') type = 'stock';
         return <OtherServiceInvoice type={type} user={user} shopConfig={shopConfig} onBack={goToDashboard} />;
       default:
-        return <Dashboard onNavigate={setActiveTab} shopName={shopConfig?.shopName} fiscalYear={shopConfig?.fiscalYear} activeAlertsCount={activeAlerts.length} onShowAlerts={() => setShowAllAlertsModal(true)} resetTrigger={dashboardResetTrigger} />;
+        return null;
     }
   };
 
@@ -1481,7 +1525,7 @@ export default function App() {
                           ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-500 border-orange-500/20'
                           : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border-emerald-500/20'
                   }`}
-                  title="مزامنة شاملة: تنزيل وتحديث كافة البيانات من السحابة وصندوق التحديثات"
+                  title="ضغطة: مزامنة سريعة (صندوق التحديثات) | ضغطة مزدوجة أو مطولة: مزامنة شاملة"
                 >
                   <RefreshCw size={18} className={isSyncingAll ? "animate-spin" : ""} />
                   {isSyncingAll && (
@@ -1564,17 +1608,28 @@ export default function App() {
           {/* Tab Content */}
           <div className={`flex-1 ${activeTab === 'dashboard' ? 'overflow-hidden' : 'overflow-y-auto overscroll-contain'} ${['search', 'customers', 'invoices', 'inspection', 'maintenance', 'inventory', 'vault', 'device-movement', 'approval', 'entry-exit', 'device-intake', 'device-exit'].includes(activeTab) ? 'p-0 pb-28 md:pb-8' : 'p-4 md:p-8 pb-28 md:pb-8'}`}>
             <div className={`${['search', 'customers', 'invoices', 'inspection', 'maintenance', 'inventory', 'vault', 'device-movement', 'approval', 'entry-exit', 'device-intake', 'device-exit'].includes(activeTab) ? 'w-full' : 'max-w-7xl mx-auto'} min-h-full`}>
-              <AnimatePresence mode="wait">
-                <motion.div
-                  key={activeTab}
-                  initial={{ opacity: 0, y: 10 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.15 }}
-                >
+              {/* Keep Dashboard mounted permanently so returning to main screen is instantaneous */}
+              <div className={activeTab === 'dashboard' ? 'block' : 'hidden'}>
+                <Dashboard 
+                  onNavigate={(tab: any, subView?: any) => {
+                    setVaultInitialProps(null);
+                    if (tab === 'entry-exit' && subView) {
+                      setEntryExitView(subView);
+                    }
+                    setActiveTab(tab);
+                  }} 
+                  shopName={shopConfig?.shopName} 
+                  fiscalYear={shopConfig?.fiscalYear} 
+                  activeAlertsCount={activeAlerts.length} 
+                  onShowAlerts={() => setShowAllAlertsModal(true)} 
+                  resetTrigger={dashboardResetTrigger}
+                />
+              </div>
+              {activeTab !== 'dashboard' && (
+                <div key={activeTab} className="animate-in fade-in duration-100">
                   {renderContent()}
-                </motion.div>
-              </AnimatePresence>
+                </div>
+              )}
             </div>
           </div>
 

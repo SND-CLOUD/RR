@@ -220,8 +220,8 @@ export class LocalProvider implements IDataProvider {
     // Queue in Outbox
     await this.queueInOutbox(collectionName, id, 'SET', { data, options }, transactionGroupId);
 
-    // Trigger notification
-    if (!skipNotify) {
+    // Trigger notification only when observers are attached
+    if (!skipNotify && localDb.hasObservers(collectionName)) {
       const res = await localDb.query(`SELECT * FROM ${collectionName}`).catch(() => ({ values: [] }));
       localDb.notify(collectionName, res.values || []);
     }
@@ -277,8 +277,8 @@ export class LocalProvider implements IDataProvider {
     // Queue in Outbox
     await this.queueInOutbox(collectionName, id, 'UPDATE', data, transactionGroupId);
 
-    // Trigger notification
-    if (!skipNotify) {
+    // Trigger notification only when observers are attached
+    if (!skipNotify && localDb.hasObservers(collectionName)) {
       const res = await localDb.query(`SELECT * FROM ${collectionName}`).catch(() => ({ values: [] }));
       localDb.notify(collectionName, res.values || []);
     }
@@ -348,7 +348,7 @@ export class LocalProvider implements IDataProvider {
       }
     }
 
-    if (!skipNotify) {
+    if (!skipNotify && localDb.hasObservers(collectionName)) {
       const res = await localDb.query(`SELECT * FROM ${collectionName}`).catch(() => ({ values: [] }));
       localDb.notify(collectionName, res.values || []);
     }
@@ -474,10 +474,12 @@ export class LocalProvider implements IDataProvider {
           if (op.type === 'delete') await this.deleteDoc(op.ref.name, op.ref.id, txGroupId, true);
         }
 
-        // Notify each affected table ONCE at the end of the batch
+        // Notify each affected table ONCE at the end of the batch (only if observed)
         for (const table of affectedTables) {
-          const res = await localDb.query(`SELECT * FROM ${table}`).catch(() => ({ values: [] }));
-          localDb.notify(table, res.values || []);
+          if (localDb.hasObservers(table)) {
+            const res = await localDb.query(`SELECT * FROM ${table}`).catch(() => ({ values: [] }));
+            localDb.notify(table, res.values || []);
+          }
         }
 
         // Trigger one debounced sync for the whole batch
@@ -534,28 +536,35 @@ export class LocalProvider implements IDataProvider {
   }
 
   private wrapDatesInObject(obj: any) {
-    if (!obj) return;
+    if (!obj || typeof obj !== 'object') return;
+    if ((obj as any)._isTimestamp || obj instanceof Date) return;
     if (Array.isArray(obj)) {
-      obj.forEach(item => this.wrapDatesInObject(item));
+      for (let i = 0; i < obj.length; i++) {
+        this.wrapDatesInObject(obj[i]);
+      }
       return;
     }
-    if (typeof obj !== 'object') return;
 
-    const knownFields = [
-      'createdAt', 'updatedAt', 'timestamp', 'actionDate', 'deliveredAt',
-      'output_datetime', 'date', 'blockDate', 'lastLogin', 'lastLogout',
-      'created_at', 'updated_at', 'last_login', 'last_logout',
-      'exitDate', 'entryDate', 'issueDate', 'deliveryDate'
-    ];
-
-    Object.keys(obj).forEach(field => {
+    const keys = Object.keys(obj);
+    for (let i = 0; i < keys.length; i++) {
+      const field = keys[i];
       const val = obj[field];
-      if (val === null || val === undefined) return;
+      if (val === null || val === undefined || typeof val === 'boolean') continue;
+      if (typeof val === 'number' && val < 946684800) continue;
 
       const lower = field.toLowerCase();
-      const isDateField = knownFields.includes(field) || lower.includes('date') || lower.includes('time') || lower.includes('timestamp') || lower.includes('created') || lower.includes('updated') || lower.endsWith('at');
+      const isDateField =
+        lower === 'createdat' || lower === 'updatedat' || lower === 'timestamp' ||
+        lower === 'actiondate' || lower === 'deliveredat' || lower === 'output_datetime' ||
+        lower === 'date' || lower === 'blockdate' || lower === 'lastlogin' ||
+        lower === 'lastlogout' || lower === 'created_at' || lower === 'updated_at' ||
+        lower === 'last_login' || lower === 'last_logout' || lower === 'exitdate' ||
+        lower === 'entrydate' || lower === 'issuedate' || lower === 'deliverydate' ||
+        lower.includes('date') || lower.includes('time') || lower.includes('created') ||
+        lower.includes('updated') || lower.endsWith('at');
 
       if (isDateField) {
+        if (typeof val === 'object' && (val as any)._isTimestamp) continue;
         const d = parseDate(val);
         if (d && !isNaN(d.getTime())) {
           obj[field] = {
@@ -566,19 +575,22 @@ export class LocalProvider implements IDataProvider {
           };
         }
       } else if (typeof val === 'object') {
-        const d = parseDate(val);
-        if (d && !isNaN(d.getTime())) {
-          obj[field] = {
-            toDate: () => d,
-            toMillis: () => d.getTime(),
-            toISOString: () => d.toISOString(),
-            _isTimestamp: true
-          };
-        } else {
-          this.wrapDatesInObject(val);
+        if ((val as any)._isTimestamp || val instanceof Date) continue;
+        if (!Array.isArray(val) && (val.seconds !== undefined || val._seconds !== undefined || val.$date !== undefined || val.date !== undefined || val.timestamp !== undefined)) {
+          const d = parseDate(val);
+          if (d && !isNaN(d.getTime())) {
+            obj[field] = {
+              toDate: () => d,
+              toMillis: () => d.getTime(),
+              toISOString: () => d.toISOString(),
+              _isTimestamp: true
+            };
+            continue;
+          }
         }
+        this.wrapDatesInObject(val);
       }
-    });
+    }
   }
 }
 

@@ -52,6 +52,42 @@ const getItemTimestamp = (item: any): number => {
   );
 };
 
+const normalizeComparableVal = (val: any): any => {
+  if (val === null || val === undefined || val === '') return null;
+  if (typeof val === 'object') {
+    if (typeof val.toISOString === 'function') {
+      try { return val.toISOString(); } catch (_) {}
+    }
+    if (typeof val.toDate === 'function') {
+      try { return val.toDate().toISOString(); } catch (_) {}
+    }
+    if (Array.isArray(val)) return val.map(normalizeComparableVal);
+    const out: Record<string, any> = {};
+    const keys = Object.keys(val).sort();
+    for (const k of keys) {
+      const nv = normalizeComparableVal(val[k]);
+      if (nv !== null) out[k] = nv;
+    }
+    return out;
+  }
+  if (typeof val === 'boolean') return val ? 1 : 0;
+  return val;
+};
+
+const areDocsSemanticallyEqual = (cloudDoc: any, localDoc: any): boolean => {
+  if (!cloudDoc || !localDoc) return cloudDoc === localDoc;
+  const allKeys = new Set([...Object.keys(cloudDoc), ...Object.keys(localDoc)]);
+  for (const k of allKeys) {
+    if (k === '_isTimestamp') continue;
+    const cv = normalizeComparableVal(cloudDoc[k]);
+    const lv = normalizeComparableVal(localDoc[k]);
+    if (cv === lv) continue;
+    if (cv === null && lv === null) continue;
+    if (JSON.stringify(cv) !== JSON.stringify(lv)) return false;
+  }
+  return true;
+};
+
 export class SyncEngine {
   private static syncing = false;
   private static paused = false;
@@ -210,6 +246,8 @@ export class SyncEngine {
           const pendingIds = new Set((pendingRes.values || []).map((r: any) => r.recordId));
 
           const processItems = snapshot.docChanges ? snapshot.docChanges() : snapshot.docs.map((doc: any) => ({ type: 'added', doc }));
+          let batchChanged = false;
+          const touchedTablesFromTombstones = new Set<string>();
 
           for (const change of processItems) {
             const doc = change.doc || change;
@@ -224,7 +262,8 @@ export class SyncEngine {
 
             if (table === 'deleted_records') {
               if (type === 'removed') {
-                await LocalProviderInstance.deleteDoc('deleted_records', docId, 'BYPASS_OUTBOX');
+                await LocalProviderInstance.deleteDoc('deleted_records', docId, 'BYPASS_OUTBOX', true);
+                batchChanged = true;
               } else {
                 const tombstone = cloudItem;
                 if (tombstone && tombstone.tableName && tombstone.recordId) {
@@ -250,11 +289,13 @@ export class SyncEngine {
 
                     if (shouldDelete) {
                       console.log(`SyncEngine [Tombstone]: Deleting local ${tombstone.tableName}/${tombstone.recordId} from remote tombstone.`);
-                      await LocalProviderInstance.deleteDoc(tombstone.tableName, tombstone.recordId, 'BYPASS_OUTBOX');
+                      await LocalProviderInstance.deleteDoc(tombstone.tableName, tombstone.recordId, 'BYPASS_OUTBOX', true);
                       await localDb.run("DELETE FROM outbox WHERE tableName = ? AND recordId = ?", [tombstone.tableName, tombstone.recordId]).catch(() => {});
+                      touchedTablesFromTombstones.add(tombstone.tableName);
                     }
                   }
-                  await LocalProviderInstance.setDoc('deleted_records', tombstone.id, tombstone, undefined, 'BYPASS_OUTBOX').catch(() => {});
+                  await LocalProviderInstance.setDoc('deleted_records', tombstone.id, tombstone, undefined, 'BYPASS_OUTBOX', true).catch(() => {});
+                  batchChanged = true;
                 }
               }
               continue;
@@ -262,8 +303,9 @@ export class SyncEngine {
 
             if (type === 'removed') {
               console.log(`SyncEngine [Realtime]: Deleting ${table}/${docId} locally due to cloud removal.`);
-              await LocalProviderInstance.deleteDoc(table, docId, 'BYPASS_OUTBOX');
+              await LocalProviderInstance.deleteDoc(table, docId, 'BYPASS_OUTBOX', true);
               await localDb.run("DELETE FROM outbox WHERE tableName = ? AND recordId = ?", [table, docId]).catch(() => {});
+              batchChanged = true;
               continue;
             }
 
@@ -298,23 +340,21 @@ export class SyncEngine {
             } else if (table === 'fin_funds') {
               const localBal = parseFundBalance(localItem.balance);
               const cloudBal = parseFundBalance(cloudItem.balance);
-              if (localBal !== cloudBal || cloudUpdatedMs > localUpdatedMs || JSON.stringify(cloudItem) !== JSON.stringify(localItem)) {
+              if (localBal !== cloudBal || cloudUpdatedMs > localUpdatedMs || !areDocsSemanticallyEqual(cloudItem, localItem)) {
                 needsDownload = true;
               }
             } else if (cloudUpdatedMs > 0 && localUpdatedMs > 0) {
               if (cloudUpdatedMs > localUpdatedMs) {
                 needsDownload = true;
               } else if (cloudUpdatedMs === localUpdatedMs) {
-                if (JSON.stringify(cloudItem) !== JSON.stringify(localItem)) {
+                if (!areDocsSemanticallyEqual(cloudItem, localItem)) {
                   needsDownload = true;
                 }
               }
             } else if (cloudUpdatedMs > 0 && localUpdatedMs === 0) {
               needsDownload = true;
             } else if (cloudUpdatedMs === 0 && localUpdatedMs === 0) {
-              const cStr = JSON.stringify(cloudItem);
-              const lStr = JSON.stringify(localItem);
-              if (cStr !== lStr) {
+              if (!areDocsSemanticallyEqual(cloudItem, localItem)) {
                 needsDownload = true;
               }
             }
@@ -322,7 +362,8 @@ export class SyncEngine {
             if (needsDownload) {
               console.log(`SyncEngine [Realtime]: Down-syncing ${table}/${docId} from cloud.`);
               try {
-                await LocalProviderInstance.setDoc(table, docId, cloudItem, undefined, 'BYPASS_OUTBOX');
+                await LocalProviderInstance.setDoc(table, docId, cloudItem, undefined, 'BYPASS_OUTBOX', true);
+                batchChanged = true;
                 if (table === 'fin_funds') {
                   await localDb.run("UPDATE fin_funds SET balance = ? WHERE id = ?", [cloudItem.balance, docId]).catch(() => {});
                   await localDb.run("DELETE FROM outbox WHERE tableName = 'fin_funds' AND recordId = ?", [docId]).catch(() => {});
@@ -344,6 +385,17 @@ export class SyncEngine {
               } catch (docErr) {
                 console.error(`SyncEngine [Realtime]: Failed down-syncing ${table}/${docId}:`, docErr);
               }
+            }
+          }
+
+          if (batchChanged && localDb.hasObservers(table)) {
+            const res = await localDb.query(`SELECT * FROM ${table}`).catch(() => ({ values: [] }));
+            localDb.notify(table, res.values || []);
+          }
+          for (const touched of touchedTablesFromTombstones) {
+            if (localDb.hasObservers(touched)) {
+              const res = await localDb.query(`SELECT * FROM ${touched}`).catch(() => ({ values: [] }));
+              localDb.notify(touched, res.values || []);
             }
           }
         }, (err: any) => {
@@ -394,9 +446,10 @@ export class SyncEngine {
 
     try {
       // 1. Process Outbox (Local -> Cloud) in chronological order (FIFO)
-      const outboxRes = await localDb.query(
-        "SELECT * FROM outbox WHERE status IN ('PENDING', 'FAILED') ORDER BY timestamp ASC, id ASC"
-      );
+      const outboxQuery = force
+        ? "SELECT * FROM outbox WHERE status IN ('PENDING', 'FAILED') ORDER BY timestamp ASC, id ASC"
+        : "SELECT * FROM outbox WHERE status = 'PENDING' OR (status = 'FAILED' AND COALESCE(retryCount, 0) < 5) ORDER BY timestamp ASC, id ASC";
+      const outboxRes = await localDb.query(outboxQuery);
 
       const items = outboxRes.values || [];
       if (items.length > 0) {
@@ -730,23 +783,21 @@ export class SyncEngine {
             } else if (table === 'fin_funds') {
               const localBal = parseFundBalance(localItem.balance);
               const cloudBal = parseFundBalance(cloudItem.balance);
-              if (localBal !== cloudBal || cloudUpdatedMs > localUpdatedMs || JSON.stringify(cloudItem) !== JSON.stringify(localItem)) {
+              if (localBal !== cloudBal || cloudUpdatedMs > localUpdatedMs || !areDocsSemanticallyEqual(cloudItem, localItem)) {
                 needsDownload = true;
               }
             } else if (cloudUpdatedMs > 0 && localUpdatedMs > 0) {
               if (cloudUpdatedMs > localUpdatedMs) {
                 needsDownload = true;
               } else if (cloudUpdatedMs === localUpdatedMs) {
-                if (JSON.stringify(cloudItem) !== JSON.stringify(localItem)) {
+                if (!areDocsSemanticallyEqual(cloudItem, localItem)) {
                   needsDownload = true;
                 }
               }
             } else if (cloudUpdatedMs > 0 && localUpdatedMs === 0) {
               needsDownload = true;
             } else if (cloudUpdatedMs === 0 && localUpdatedMs === 0) {
-              const cStr = JSON.stringify(cloudItem);
-              const lStr = JSON.stringify(localItem);
-              if (cStr !== lStr) {
+              if (!areDocsSemanticallyEqual(cloudItem, localItem)) {
                 needsDownload = true;
               }
             }
@@ -754,7 +805,7 @@ export class SyncEngine {
             if (needsDownload) {
               // Bypass outbox queuing during down-sync by using the 'BYPASS_OUTBOX' txGroupId
               try {
-                await LocalProviderInstance.setDoc(table, cloudItem.id, cloudItem, undefined, 'BYPASS_OUTBOX');
+                await LocalProviderInstance.setDoc(table, cloudItem.id, cloudItem, undefined, 'BYPASS_OUTBOX', true);
                 if (table === 'fin_funds') {
                   await localDb.run("UPDATE fin_funds SET balance = ? WHERE id = ?", [cloudItem.balance, cloudItem.id]).catch(() => {});
                   await localDb.run("DELETE FROM outbox WHERE tableName = 'fin_funds' AND recordId = ?", [cloudItem.id]).catch(() => {});
@@ -804,13 +855,14 @@ export class SyncEngine {
 
               // Local record was removed from cloud: Delete locally with BYPASS_OUTBOX
               console.log(`SyncEngine [Differential]: Purging deleted record ${table}/${localItem.id} locally`);
-              await LocalProviderInstance.deleteDoc(table, localItem.id, 'BYPASS_OUTBOX');
+              await LocalProviderInstance.deleteDoc(table, localItem.id, 'BYPASS_OUTBOX', true);
               syncedCount++;
             }
           }
         }
-        // Notify localDb for all updated tables so React components update live
+        // Notify localDb only for observed tables so React components update live without useless reads
         for (const t of tables) {
+          if (!localDb.hasObservers(t)) continue;
           try {
             const res = await localDb.query(`SELECT * FROM ${t}`).catch(() => ({ values: [] }));
             localDb.notify(t, res.values || []);

@@ -45,8 +45,26 @@ class LocalDatabase {
   private initializingPromise: Promise<void> | null = null;
   private queue: Promise<any> = Promise.resolve();
   private columnCache: Map<string, string[]> = new Map();
+  private tableCache: Map<string, any[]> = new Map();
+  private inFlightFetches: Map<string, Promise<any[]>> = new Map();
   private isWebPlatform: boolean | null = null;
   private saveToStoreTimer: any = null;
+
+  private invalidateCacheFromSql(sql: string): void {
+    const trimmed = sql.trim();
+    if (!trimmed) return;
+    // Ignore read-only pragmas or table creation DDL
+    if (/^(?:SELECT|PRAGMA|CREATE\s+(?:TABLE|INDEX))/i.test(trimmed)) return;
+    const match = trimmed.match(/^(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|REPLACE\s+INTO|UPDATE(?:\s+OR\s+\w+)?|DELETE\s+FROM|DROP\s+TABLE(?:\s+IF\s+EXISTS)?|ALTER\s+TABLE)\s+[`"\[]?([a-zA-Z0-9_]+)[`"\]]?/i);
+    if (match && match[1]) {
+      this.tableCache.delete(match[1]);
+      this.inFlightFetches.delete(match[1]);
+    } else {
+      // Multi-statement or unknown write SQL: safely clear entire cache
+      this.tableCache.clear();
+      this.inFlightFetches.clear();
+    }
+  }
 
   private scheduleSaveToStore(): void {
     if (this.saveToStoreTimer) clearTimeout(this.saveToStoreTimer);
@@ -56,7 +74,7 @@ class LocalDatabase {
       } catch (err) {
         console.warn('Failed to save sqlite to store:', err);
       }
-    }, 150);
+    }, 400);
   }
 
   async flushSaveToStore(): Promise<void> {
@@ -1452,53 +1470,52 @@ class LocalDatabase {
   async query(sql: string, params: any[] = []) {
     return this.enqueue(async () => {
       if (!this.db) {
-        if (this.initializingPromise) {
-          console.log('Database is currently initializing, waiting for connection...');
-        } else {
-          console.warn('Database connection not active. Initializing database...');
-        }
         await this.initialize();
-      } else {
-        try {
-          const isOpen = await this.db.isDBOpen();
-          if (!isOpen.result) {
-            console.warn('Database exists but is closed. Re-opening...');
-            await this.db.open();
-          }
-        } catch (err) {
-          console.warn('Failed to verify/open database inside query:', err);
-        }
       }
       if (!this.db) throw new Error('Failed to initialize local database connection.');
       const cleanParams = (params || []).map(sanitizeSqliteParam);
-      return this.db.query(sql, cleanParams);
+      try {
+        return await this.db.query(sql, cleanParams);
+      } catch (err: any) {
+        const msg = String(err?.message || err || '').toLowerCase();
+        if (msg.includes('not open') || msg.includes('closed')) {
+          try {
+            const isOpen = await this.db.isDBOpen();
+            if (!isOpen.result) await this.db.open();
+            return await this.db.query(sql, cleanParams);
+          } catch (_) {}
+        }
+        throw err;
+      }
     });
   }
 
   // Generic Execute
   async run(sql: string, params: any[] = []) {
+    this.invalidateCacheFromSql(sql);
     return this.enqueue(async () => {
       if (!this.db) {
-        if (this.initializingPromise) {
-          console.log('Database is currently initializing, waiting for connection...');
-        } else {
-          console.warn('Database connection not active. Initializing database...');
-        }
         await this.initialize();
-      } else {
-        try {
-          const isOpen = await this.db.isDBOpen();
-          if (!isOpen.result) {
-            console.warn('Database exists but is closed. Re-opening...');
-            await this.db.open();
-          }
-        } catch (err) {
-          console.warn('Failed to verify/open database inside run:', err);
-        }
       }
       if (!this.db) throw new Error('Failed to initialize local database connection.');
       const cleanParams = (params || []).map(sanitizeSqliteParam);
-      const result = await this.db.run(sql, cleanParams);
+      let result: any;
+      try {
+        result = await this.db.run(sql, cleanParams);
+      } catch (err: any) {
+        const msg = String(err?.message || err || '').toLowerCase();
+        if (msg.includes('not open') || msg.includes('closed')) {
+          try {
+            const isOpen = await this.db.isDBOpen();
+            if (!isOpen.result) await this.db.open();
+            result = await this.db.run(sql, cleanParams);
+          } catch (_) {
+            throw err;
+          }
+        } else {
+          throw err;
+        }
+      }
       
       if (this.isWebPlatform === null) {
         const info = await Device.getInfo().catch(() => ({ platform: 'web' }));
@@ -1573,12 +1590,41 @@ class LocalDatabase {
     });
   }
 
-  // Notify observers
+  hasObservers(table: string): boolean {
+    const obs = this.observers.get(table);
+    return Boolean(obs && obs.size > 0);
+  }
+
+  // Notify observers & update cache
   notify(table: string, data: any[]) {
+    this.tableCache.set(table, data);
     const tableObservers = this.observers.get(table);
     if (tableObservers) {
       tableObservers.forEach(callback => callback(data));
     }
+  }
+
+  private getTableRowsCached(table: string): Promise<any[]> {
+    if (this.tableCache.has(table)) {
+      return Promise.resolve(this.tableCache.get(table)!);
+    }
+    const existing = this.inFlightFetches.get(table);
+    if (existing) return existing;
+
+    const p = this.query(`SELECT * FROM ${table}`)
+      .then(res => {
+        const rows = res.values || [];
+        this.tableCache.set(table, rows);
+        return rows;
+      })
+      .finally(() => {
+        if (this.inFlightFetches.get(table) === p) {
+          this.inFlightFetches.delete(table);
+        }
+      });
+
+    this.inFlightFetches.set(table, p);
+    return p;
   }
 
   subscribe(table: string, callback: (data: any[]) => void) {
@@ -1586,18 +1632,26 @@ class LocalDatabase {
       this.observers.set(table, new Set());
     }
     this.observers.get(table)!.add(callback);
-    
-    // Initial fetch
-    this.query(`SELECT * FROM ${table}`)
-      .then(res => {
-        callback(res.values || []);
-      })
-      .catch(err => {
-        console.warn(`[localDb.subscribe] Query failed on table ${table}:`, err);
-        callback([]);
+
+    let active = true;
+    const cached = this.tableCache.get(table);
+    if (cached !== undefined) {
+      queueMicrotask(() => {
+        if (active) callback(cached);
       });
+    } else {
+      this.getTableRowsCached(table)
+        .then(rows => {
+          if (active) callback(rows);
+        })
+        .catch(err => {
+          console.warn(`[localDb.subscribe] Query failed on table ${table}:`, err);
+          if (active) callback([]);
+        });
+    }
 
     return () => {
+      active = false;
       this.observers.get(table)?.delete(callback);
     };
   }
