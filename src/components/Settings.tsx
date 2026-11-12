@@ -116,8 +116,10 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
   const [dbMode, setDbMode] = useState<'LOCAL' | 'CLOUD' | 'AUTO'>('LOCAL');
   const [showDbModeConfirm, setShowDbModeConfirm] = useState(false);
   const [pendingDbMode, setPendingDbMode] = useState<'LOCAL' | 'CLOUD' | 'AUTO' | null>(null);
-  const [hybridDbType, setHybridDbType] = useState<'none' | 'CLOUD' | 'LOCAL'>('none');
+  const [hybridDbType, setHybridDbType] = useState<'none' | 'CLOUD' | 'LOCAL' | 'BOTH'>('none');
   const [hybridAdvancedTab, setHybridAdvancedTab] = useState<'reset' | 'transfer'>('reset');
+  const [hybridBothDbApproved, setHybridBothDbApproved] = useState(false);
+  const [showHybridBothConfirm, setShowHybridBothConfirm] = useState(false);
   const [hybridSelectedTables, setHybridSelectedTables] = useState<string[]>(DEFAULT_HYBRID_TABLES);
   const [preciseResetLoading, setPreciseResetLoading] = useState(false);
   const [dataTransferLoading, setDataTransferLoading] = useState(false);
@@ -1312,6 +1314,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
     }
 
     let SE: any = null;
+    let shouldKeepLocalPausedForReload = false;
     try {
       SE = (await import("../data/SyncEngine")).SyncEngine;
       if (SE && typeof SE.acquireGlobalLock === 'function') {
@@ -1436,6 +1439,9 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         console.error('Error resetting settings in SQLite:', e);
       }
 
+      // Flush SQLite store to IndexedDB immediately on Web before reload
+      await localDb.flushSaveToStore().catch(() => {});
+
       // Notify localDb subscribers for clean React state
       for (const table of collectionsToClear) {
         try {
@@ -1450,6 +1456,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
       sessionStorage.removeItem('alertsClosed');
       sessionStorage.removeItem('snd_user');
 
+      shouldKeepLocalPausedForReload = true;
       setProgress({ active: false, value: 100, label: 'تمت التهيئة بنجاح!' });
       setSaving(false);
       
@@ -1476,6 +1483,9 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
           } else if (typeof SE.resumeSync === 'function') {
             SE.resumeSync();
           }
+          if (shouldKeepLocalPausedForReload && typeof SE.pauseSync === 'function') {
+            SE.pauseSync();
+          }
         } catch (err) {}
       }
     }
@@ -1497,31 +1507,26 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
       }
     } catch (e) {}
     
-    const targetIsCloud = hybridDbType === 'CLOUD';
-    const dbLabel = targetIsCloud ? 'السحابية' : 'المحلية';
+    const targetIsBoth = hybridDbType === 'BOTH';
+    const targetIsCloud = hybridDbType === 'CLOUD' || targetIsBoth;
+    const targetIsLocal = hybridDbType === 'LOCAL' || targetIsBoth;
+    const dbLabel = targetIsBoth ? 'المحلية والسحابية معاً' : (targetIsCloud ? 'السحابية' : 'المحلية');
     
     setProgress({ active: true, value: 5, label: `جاري التهيئة الدقيقة للقاعدة ${dbLabel}...` });
 
     const failures: string[] = [];
+    let shouldKeepLocalPausedForReload = false;
 
     try {
-      const mainTables = [
-        'invoices', 'invoice_items', 'customers', 'maintenance_actions', 
-        'approval_actions', 'vault_transactions', 'inventory_items', 'document_outputs'
-      ];
-      const categoryTables = ['device_categories', 'device_models'];
-      const engineerTables = ['engineers'];
-      const shopTables = ['company_details', 'settings'];
-      const financialTables = ['fin_transaction_types', 'fin_funds', 'fin_currencies', 'fin_payment_methods', 'user_devices', 'job_titles'];
-
       const allTables = hybridSelectedTables;
 
       if (targetIsCloud) {
         // 1. Clear CLOUD tables using batch clear (fast, zero tombstone multiplication)
+        const cloudMaxPct = targetIsBoth ? 40 : 60;
         let idx = 0;
         for (const table of allTables) {
           idx++;
-          const percent = Math.round(5 + (idx / allTables.length) * 60);
+          const percent = Math.round(5 + (idx / Math.max(1, allTables.length)) * cloudMaxPct);
           setProgress({ active: true, value: percent, label: `جاري مسح السحاب: ${TABLE_ARABIC_NAMES[table] || table}...` });
           
           if (table === 'users') continue; // Handled separately
@@ -1530,7 +1535,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
             await FirebaseProviderInstance.clearCollection(table);
           } catch (e: any) {
             console.error(`Error clearing Firestore table ${table}:`, e);
-            failures.push(`جدول ${table}: ${e.message || e}`);
+            failures.push(`جدول السحاب ${table}: ${e.message || e}`);
           }
         }
 
@@ -1541,7 +1546,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
 
         // Re-create settings/app in CLOUD with all counters reset
         if (allTables.includes('settings')) {
-          setProgress({ active: true, value: 75, label: 'جاري إعادة ضبط العدادات في السحاب...' });
+          setProgress({ active: true, value: targetIsBoth ? 43 : 75, label: 'جاري إعادة ضبط العدادات في السحاب...' });
           try {
             await FirebaseProviderInstance.setDoc('settings', 'app', { 
               lastInvoiceNumber: 0,
@@ -1551,13 +1556,13 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
             });
           } catch (e: any) {
             console.error('Failed to reset app settings in Firestore:', e);
-            failures.push(`إعادة تعيين العدادات: ${e.message || e}`);
+            failures.push(`إعادة تعيين العدادات في السحاب: ${e.message || e}`);
           }
         }
 
         // Clear users except primary admin in CLOUD
         if (allTables.includes('users')) {
-          setProgress({ active: true, value: 85, label: 'جاري تهيئة حسابات المستخدمين في السحاب...' });
+          setProgress({ active: true, value: targetIsBoth ? 47 : 85, label: 'جاري تهيئة حسابات المستخدمين في السحاب...' });
           try {
             await FirebaseProviderInstance.clearCollection('users');
             await FirebaseProviderInstance.setDoc('users', 'primary-admin', {
@@ -1572,16 +1577,19 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
             });
           } catch (e: any) {
             console.error('Failed to reset users in Firestore:', e);
-            failures.push(`تهيئة المستخدمين: ${e.message || e}`);
+            failures.push(`تهيئة المستخدمين في السحاب: ${e.message || e}`);
           }
         }
+      }
 
-      } else {
+      if (targetIsLocal) {
         // 2. Clear LOCAL tables directly with SQL (Fast, zero tombstones)
+        const localStartPct = targetIsBoth ? 50 : 5;
+        const localSpanPct = targetIsBoth ? 35 : 60;
         let idx = 0;
         for (const table of allTables) {
           idx++;
-          const percent = Math.round(5 + (idx / allTables.length) * 60);
+          const percent = Math.round(localStartPct + (idx / Math.max(1, allTables.length)) * localSpanPct);
           setProgress({ active: true, value: percent, label: `جاري مسح جدول المحلي: ${TABLE_ARABIC_NAMES[table] || table}...` });
           
           if (table === 'users') continue; // Handled separately
@@ -1595,27 +1603,27 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
               console.warn(`Table ${table} does not exist locally, skipping clear:`, e);
             } else {
               console.error(`Error clearing SQLite table ${table}:`, e);
-              failures.push(`جدول ${table}: ${e.message || e}`);
+              failures.push(`جدول المحلي ${table}: ${e.message || e}`);
             }
           }
         }
 
         // Clear users except primary admin in LOCAL
         if (allTables.includes('users')) {
-          setProgress({ active: true, value: 75, label: 'جاري تهيئة حسابات المستخدمين في المحلي...' });
+          setProgress({ active: true, value: targetIsBoth ? 88 : 75, label: 'جاري تهيئة حسابات المستخدمين في المحلي...' });
           try {
             await localDb.run(`DELETE FROM users`);
             await localDb.run(`INSERT INTO users (id, username, password, name, role, isPrimary, userNumber, isActive) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, 
               ['primary-admin', 'admin', 'admin', 'المدير العام', 'admin', 1, 100, 1]);
           } catch (e: any) {
             console.error(`Error resetting users in SQLite:`, e);
-            failures.push(`تهيئة المستخدمين: ${e.message || e}`);
+            failures.push(`تهيئة المستخدمين في المحلي: ${e.message || e}`);
           }
         }
 
         // Reset local funds balances
         if (allTables.includes('fin_funds')) {
-          setProgress({ active: true, value: 85, label: 'جاري إعادة تعيين الخزائن...' });
+          setProgress({ active: true, value: targetIsBoth ? 90 : 85, label: 'جاري إعادة تعيين الخزائن...' });
           try {
             await localDb.run(`UPDATE fin_funds SET balance = 0`);
           } catch (e: any) {
@@ -1642,9 +1650,20 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
             failures.push(`إعادة تعيين العدادات المحلية: ${e.message || e}`);
           }
         }
+
+        // Flush SQLite store to IndexedDB immediately on Web before reload
+        await localDb.flushSaveToStore().catch(() => {});
+
+        // Notify subscribers for cleared local tables
+        for (const table of allTables) {
+          if (table === 'users') continue;
+          try {
+            localDb.notify(table, []);
+          } catch (_) {}
+        }
       }
 
-      // Common final tasks
+      // Common final tasks (Executed while sync lock is still held!)
       setProgress({ active: true, value: 95, label: 'جاري إنهاء العملية...' });
       localStorage.removeItem('snd_has_bio_credentials');
       localStorage.removeItem('snd_bio_credentials');
@@ -1661,9 +1680,10 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
           message: `حدثت بعض الأخطاء أثناء التهيئة الدقيقة لـ ${dbLabel}:\n` + failures.join('\n')
         });
       } else {
+        shouldKeepLocalPausedForReload = true;
         setHybridResult({ 
           type: 'success', 
-          message: `تمت التهيئة الدقيقة لجميع جداول ومكونات القاعدة ${dbLabel} بنجاح! سيتم إعادة تحميل التطبيق تلقائياً بعد ثانيتين...` 
+          message: `تمت التهيئة الدقيقة لجميع الجداول المحددة في القاعدة ${dbLabel} بنجاح! سيتم إعادة تحميل التطبيق تلقائياً بعد ثانيتين...` 
         });
         
         setTimeout(() => {
@@ -1680,6 +1700,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         message: `فشلت التهيئة الدقيقة: ${error.message || error}` 
       });
     } finally {
+      // Only release global sync lock after BOTH local and cloud operations finish!
       if (SE) {
         try {
           if (typeof SE.releaseGlobalLock === 'function') {
@@ -1687,13 +1708,16 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
           } else if (typeof SE.resumeSync === 'function') {
             SE.resumeSync();
           }
+          if (shouldKeepLocalPausedForReload && typeof SE.pauseSync === 'function') {
+            SE.pauseSync();
+          }
         } catch (err) {}
       }
     }
   };
 
   const handleTransferData = async () => {
-    if (hybridDbType === 'none') return;
+    if (hybridDbType === 'none' || hybridDbType === 'BOTH') return;
     
     setDataTransferLoading(true);
     setHybridResult({ type: null, message: '' });
@@ -1737,7 +1761,8 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         'document_outputs',
         'saved_pdfs',
         'user_devices',
-        'job_titles'
+        'job_titles',
+        'deleted_records'
       ];
       
       const tables = hybridSelectedTables;
@@ -1899,6 +1924,10 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         }, { merge: true }, 'BYPASS_OUTBOX');
       } catch (err) {
         console.warn('Failed to recalibrate target counters after transfer:', err);
+      }
+
+      if (sourceIsCloud) {
+        await localDb.flushSaveToStore().catch(() => {});
       }
 
       setProgress({ active: false, value: 100, label: '' });
@@ -3871,6 +3900,9 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                               <button
                                 type="button"
                                 onClick={() => {
+                                  setHybridDbType('none');
+                                  setHybridBothDbApproved(false);
+                                  setShowHybridBothConfirm(false);
                                   setHybridResult({ type: null, message: '' });
                                   setShowHybridAdvancedModal(true);
                                 }}
@@ -4457,7 +4489,12 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                 </div>
                 <button
                   type="button"
-                  onClick={() => setShowHybridAdvancedModal(false)}
+                  onClick={() => {
+                    setHybridBothDbApproved(false);
+                    setShowHybridBothConfirm(false);
+                    if (hybridDbType === 'BOTH') setHybridDbType('none');
+                    setShowHybridAdvancedModal(false);
+                  }}
                   className="p-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all cursor-pointer"
                 >
                   <X size={20} />
@@ -4473,6 +4510,8 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                     onClick={() => {
                       setHybridAdvancedTab('transfer');
                       setHybridDbType('none');
+                      setHybridBothDbApproved(false);
+                      setShowHybridBothConfirm(false);
                       setHybridResult({ type: null, message: '' });
                     }}
                     className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${hybridAdvancedTab === 'transfer' ? 'bg-orange-600 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
@@ -4484,6 +4523,8 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                     onClick={() => {
                       setHybridAdvancedTab('reset');
                       setHybridDbType('none');
+                      setHybridBothDbApproved(false);
+                      setShowHybridBothConfirm(false);
                       setHybridResult({ type: null, message: '' });
                     }}
                     className={`flex-1 py-2.5 rounded-xl text-xs font-bold transition-all ${hybridAdvancedTab === 'reset' ? 'bg-red-600 text-white shadow-lg' : 'text-gray-400 hover:text-white hover:bg-white/5'}`}
@@ -4492,13 +4533,51 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                   </button>
                 </div>
 
+                {/* New Option (Visible only in Precise Reset tab, before Select Database) */}
+                {hybridAdvancedTab === 'reset' && (
+                  <label className={`flex items-center justify-between p-4 rounded-2xl border transition-all cursor-pointer text-right ${
+                    hybridBothDbApproved
+                      ? 'bg-red-500/15 border-red-500/40 shadow-[0_0_20px_rgba(239,68,68,0.12)]'
+                      : 'bg-white/5 border-white/10 hover:bg-white/10'
+                  }`}>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="checkbox"
+                        checked={hybridBothDbApproved}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setShowHybridBothConfirm(true);
+                          } else {
+                            setHybridBothDbApproved(false);
+                            if (hybridDbType === 'BOTH') {
+                              setHybridDbType('none');
+                            }
+                          }
+                        }}
+                        className="w-4 h-4 rounded text-red-600 focus:ring-red-500 bg-black/50 border-white/20 cursor-pointer shrink-0"
+                      />
+                      <div>
+                        <span className="text-xs font-black text-white block">القاعدة المحلية والسحابة معاً</span>
+                        <span className="text-[10px] text-gray-400 block mt-0.5">
+                          مسح الجداول المحددة من المحلي والسحاب معاً مع إبقاء قفل المزامنة مغلقاً حتى الانتهاء
+                        </span>
+                      </div>
+                    </div>
+                    {hybridBothDbApproved && (
+                      <span className="text-[10px] font-bold bg-red-500/20 text-red-400 px-2.5 py-1 rounded-lg border border-red-500/30 shrink-0">
+                        مُفعّل
+                      </span>
+                    )}
+                  </label>
+                )}
+
                 {/* Select Database */}
                 <div className="p-4 md:p-5 bg-white/5 rounded-2xl space-y-3 text-right">
                   <label className="text-xs font-bold text-gray-300 block">حدد نوع قاعدة البيانات المستهدفة كـ (القاعدة 1):</label>
                   <select
                     value={hybridDbType}
                     onChange={(e) => {
-                      setHybridDbType(e.target.value as 'none' | 'CLOUD' | 'LOCAL');
+                      setHybridDbType(e.target.value as 'none' | 'CLOUD' | 'LOCAL' | 'BOTH');
                       setHybridResult({ type: null, message: '' });
                     }}
                     className="w-full bg-black/50 border border-white/10 rounded-xl px-4 py-3 text-xs font-bold text-white focus:border-orange-500 outline-none transition-all font-cairo text-right"
@@ -4506,6 +4585,9 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                     <option value="none">حدد نوع القاعدة المستهدفة كقاعدة 1</option>
                     <option value="CLOUD">قاعدة بيانات سحابية (CLOUD)</option>
                     <option value="LOCAL">قاعدة بيانات محلية (LOCAL)</option>
+                    {hybridAdvancedTab === 'reset' && hybridBothDbApproved && (
+                      <option value="BOTH">القاعدة المحلية والسحابة معاً (LOCAL + CLOUD)</option>
+                    )}
                   </select>
                 </div>
 
@@ -4671,6 +4753,8 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                       <p className="text-xs text-gray-400 leading-relaxed">
                         {hybridDbType === 'none' 
                           ? 'يرجى تحديد نوع قاعدة البيانات لتفعيل التهيئة.'
+                          : hybridDbType === 'BOTH'
+                          ? 'سيتم مسح جميع البيانات وتصفير العدادات وأرصدة الخزائن تماماً من القاعدة المحلية والقاعدة السحابية معاً (للجداول المحددة فقط) دون فتح قفل المزامنة إلا بعد انتهاء القاعدتين.'
                           : hybridDbType === 'CLOUD'
                           ? 'سيتم مسح البيانات وتصفير العدادات تماماً من السحابة (للجداول المحددة فقط).'
                           : 'سيتم مسح البيانات وتصفير أرصدة الخزائن تماماً من قاعدة البيانات المحلية (للجداول المحددة فقط).'}
@@ -4694,7 +4778,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                     <div className="flex-1 space-y-1">
                       <span className="block text-sm font-black text-orange-500">نقل ومزامنة البيانات</span>
                       <p className="text-xs text-gray-400 leading-relaxed">
-                        {hybridDbType === 'none'
+                        {hybridDbType === 'none' || hybridDbType === 'BOTH'
                           ? 'يرجى تحديد نوع قاعدة البيانات لتفعيل نقل البيانات.'
                           : hybridDbType === 'CLOUD'
                           ? 'سيتم نقل كافة السجلات ومحتويات الجداول المحددة بالكامل من السحابة (القاعدة 1) إلى قاعدة البيانات المحلية (القاعدة 2).'
@@ -4704,7 +4788,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                     <button
                       type="button"
                       onClick={handleTransferData}
-                      disabled={hybridDbType === 'none' || dataTransferLoading}
+                      disabled={hybridDbType === 'none' || hybridDbType === 'BOTH' || dataTransferLoading}
                       className="w-full bg-orange-600 hover:bg-orange-700 disabled:opacity-30 disabled:hover:bg-orange-600 text-white font-bold py-3 px-4 rounded-xl text-xs flex items-center justify-center gap-2 transition-all cursor-pointer shadow-md font-cairo mt-2"
                     >
                       {dataTransferLoading ? <RefreshCw size={14} className="animate-spin" /> : <Upload size={14} />}
@@ -4738,10 +4822,72 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
               <div className="p-5 md:p-6 bg-[#1a1a1a] border-t border-white/5 flex justify-end">
                 <button
                   type="button"
-                  onClick={() => setShowHybridAdvancedModal(false)}
+                  onClick={() => {
+                    setHybridBothDbApproved(false);
+                    setShowHybridBothConfirm(false);
+                    if (hybridDbType === 'BOTH') setHybridDbType('none');
+                    setShowHybridAdvancedModal(false);
+                  }}
                   className="bg-white/5 hover:bg-white/10 text-white font-bold py-2.5 px-6 rounded-xl text-xs font-cairo transition-all cursor-pointer"
                 >
                   إغلاق النافذة
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+
+        {/* Confirmation Dialog for Local & Cloud Simultaneous Reset */}
+        {showHybridBothConfirm && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[250] flex items-center justify-center p-4 bg-black/85 backdrop-blur-md"
+            dir="rtl"
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              exit={{ scale: 0.9, opacity: 0, y: 20 }}
+              className="bg-[#1a1a1a] w-full max-w-md rounded-[2rem] border border-red-500/40 shadow-2xl p-6 text-center space-y-6 font-cairo"
+            >
+              <div className="p-4 bg-red-500/10 text-red-500 rounded-full w-16 h-16 mx-auto flex items-center justify-center border border-red-500/25 shadow-inner">
+                <AlertTriangle size={34} />
+              </div>
+
+              <div className="space-y-2">
+                <h3 className="text-lg font-black text-white">تنبيه هام</h3>
+                <p className="text-gray-300 text-sm font-bold leading-relaxed">
+                  سوف يتم مسح جميع البيانات في الجداول المحددة في القاعدة المحلية والقاعدة السحابية معاً!
+                </p>
+                <p className="text-gray-400 text-xs leading-relaxed">
+                  سيبقى قفل المزامنة السحابية مغلقاً طوال فترة التنفيذ ولن يُفتح إلا بعد اكتمال مسح القاعدتين تماماً.
+                </p>
+              </div>
+
+              <div className="flex gap-3 justify-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHybridBothDbApproved(true);
+                    setHybridDbType('BOTH');
+                    setHybridResult({ type: null, message: '' });
+                    setShowHybridBothConfirm(false);
+                  }}
+                  className="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 px-4 rounded-xl font-bold text-xs transition-all shadow-lg active:scale-95 cursor-pointer"
+                >
+                  موافق
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setHybridBothDbApproved(false);
+                    setShowHybridBothConfirm(false);
+                  }}
+                  className="flex-1 bg-white/10 hover:bg-white/20 text-white py-3 px-4 rounded-xl font-bold text-xs transition-all active:scale-95 border border-white/10 cursor-pointer"
+                >
+                  إلغاء الأمر
                 </button>
               </div>
             </motion.div>

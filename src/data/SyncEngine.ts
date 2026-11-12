@@ -290,8 +290,7 @@ export class SyncEngine {
               if (tombstoneRes.values && tombstoneRes.values.length > 0) {
                 const tombstoneTime = new Date(tombstoneRes.values[0].deletedAt || 0).getTime();
                 if (cloudUpdatedMs <= tombstoneTime) {
-                  console.log(`SyncEngine [Tombstone Defense]: Blocking resurrection of deleted ${table}/${docId}. Purging from cloud.`);
-                  FirebaseProviderInstance.deleteDoc(table, docId, 'BYPASS_OUTBOX').catch(() => {});
+                  console.log(`SyncEngine [Tombstone Defense]: Blocking resurrection of deleted ${table}/${docId}.`);
                   continue;
                 }
               }
@@ -373,9 +372,21 @@ export class SyncEngine {
   }
 
   static async syncAll(force = false): Promise<{ success: boolean; message: string; syncedCount?: number }> {
-    if (this.isPaused()) return { success: true, message: "Paused", syncedCount: 0 };
-    if (this.syncing && !force) {
-      return { success: false, message: 'عملية المزامنة قيد التشغيل حالياً.' };
+    if (force) {
+      this.paused = false;
+      this.globalLockActive = false;
+    } else if (this.isPaused()) {
+      return { success: true, message: "Paused", syncedCount: 0 };
+    }
+    if (this.syncing) {
+      if (!force) {
+        return { success: false, message: 'عملية المزامنة قيد التشغيل حالياً.' };
+      }
+      let waits = 0;
+      while (this.syncing && waits < 10) {
+        await new Promise(r => setTimeout(r, 150));
+        waits++;
+      }
     }
 
     this.syncing = true;
@@ -695,7 +706,13 @@ export class SyncEngine {
             }
 
             let needsDownload = false;
-            if (!localItem) {
+            if (force) {
+              needsDownload = true;
+              await localDb.run(
+                "DELETE FROM deleted_records WHERE tableName = ? AND recordId = ?",
+                [table, cloudItem.id]
+              ).catch(() => {});
+            } else if (!localItem) {
               // Tombstone Defense: Check if this record was deleted locally
               const tombstoneRes = await localDb.query(
                 "SELECT deletedAt FROM deleted_records WHERE tableName = ? AND recordId = ?",
@@ -705,8 +722,7 @@ export class SyncEngine {
               if (tombstoneRes.values && tombstoneRes.values.length > 0) {
                 const tombstoneTime = new Date(tombstoneRes.values[0].deletedAt || 0).getTime();
                 if (cloudUpdatedMs <= tombstoneTime) {
-                  console.log(`SyncEngine [Pull Tombstone Defense]: Blocking resurrection of deleted ${table}/${cloudItem.id}. Purging from cloud.`);
-                  FirebaseProviderInstance.deleteDoc(table, cloudItem.id, 'BYPASS_OUTBOX').catch(() => {});
+                  console.log(`SyncEngine [Pull Tombstone Defense]: Stale local tombstone for ${table}/${cloudItem.id}. Skipping.`);
                   continue;
                 }
               }
@@ -793,6 +809,13 @@ export class SyncEngine {
             }
           }
         }
+        // Notify localDb for all updated tables so React components update live
+        for (const t of tables) {
+          try {
+            const res = await localDb.query(`SELECT * FROM ${t}`).catch(() => ({ values: [] }));
+            localDb.notify(t, res.values || []);
+          } catch (_) {}
+        }
       }
 
       window.dispatchEvent(new CustomEvent('snd_data_synced'));
@@ -808,6 +831,32 @@ export class SyncEngine {
       return { success: false, message: `فشلت المزامنة: ${error.message || error}` };
     } finally {
       this.syncing = false;
+    }
+  }
+
+  /**
+   * Clears any stale local tombstones and pulls all active records from Cloud Firestore into Local SQLite.
+   */
+  static async downloadAllFromCloud(): Promise<{ success: boolean; message: string; count: number }> {
+    try {
+      console.log('SyncEngine: downloadAllFromCloud initiated...');
+      this.paused = false;
+      this.globalLockActive = false;
+      // 1. Purge stale local tombstones so they cannot block cloud downloads
+      await localDb.run("DELETE FROM deleted_records").catch(() => {});
+      await localDb.run("DELETE FROM outbox WHERE action = 'DELETE'").catch(() => {});
+
+      // 2. Force down-sync
+      const res = await this.syncAll(true);
+      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+      return {
+        success: res.success,
+        message: res.message,
+        count: res.syncedCount || 0
+      };
+    } catch (e: any) {
+      console.error('downloadAllFromCloud failed:', e);
+      return { success: false, message: e.message || String(e), count: 0 };
     }
   }
 

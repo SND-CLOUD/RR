@@ -59,6 +59,24 @@ class LocalDatabase {
     }, 150);
   }
 
+  async flushSaveToStore(): Promise<void> {
+    if (this.saveToStoreTimer) {
+      clearTimeout(this.saveToStoreTimer);
+      this.saveToStoreTimer = null;
+    }
+    if (this.isWebPlatform === null) {
+      const info = await Device.getInfo().catch(() => ({ platform: 'web' }));
+      this.isWebPlatform = info.platform === 'web';
+    }
+    if (this.isWebPlatform) {
+      try {
+        await this.getSqlite().saveToStore('snd_system');
+      } catch (err) {
+        console.warn('Failed to flush sqlite to store:', err);
+      }
+    }
+  }
+
   private async enqueue<T>(operation: () => Promise<T>): Promise<T> {
     return new Promise<T>((resolve, reject) => {
       this.queue = this.queue.then(async () => {

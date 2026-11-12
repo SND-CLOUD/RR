@@ -156,6 +156,11 @@ export default function App() {
 
     try {
       const { SyncEngine } = await import('./data/SyncEngine');
+      if (force) {
+        // Clear stale local tombstones that might be blocking download of cloud data
+        await localDb.run("DELETE FROM deleted_records").catch(() => {});
+        await localDb.run("DELETE FROM outbox WHERE action = 'DELETE'").catch(() => {});
+      }
       // force = false: Fast outbox sync, force = true: Comprehensive down/up sync
       const result = await SyncEngine.syncAll(force);
 
@@ -238,8 +243,8 @@ export default function App() {
       clearTimeout(clickTimeoutRef.current);
     }
     clickTimeoutRef.current = setTimeout(() => {
-      handleManualSync(false); // Single Click -> Fast Sync
-    }, 220);
+      handleManualSync(true); // Single Click -> Comprehensive Sync (downloads all cloud data and syncs outbox)
+    }, 150);
   };
 
   const handleSyncDoubleClick = () => {
@@ -1043,6 +1048,17 @@ export default function App() {
         } catch (adminErr) {
           console.warn("Could not check/create admin, might be offline:", adminErr);
         }
+        // Automatic full cloud download on app startup/reload to populate SQLite
+        try {
+          import('./data/SyncEngine').then(({ SyncEngine }) => {
+            console.log('[App Init] Triggering automatic full cloud download...');
+            SyncEngine.downloadAllFromCloud().then(res => {
+              console.log('[App Init] Cloud download finished:', res);
+            }).catch(err => {
+              console.warn('[App Init] Cloud download error:', err);
+            });
+          }).catch(() => {});
+        } catch (_) {}
       } catch (e) {
         console.error("Initialization error", e);
       } finally {
@@ -1056,6 +1072,13 @@ export default function App() {
     setUser(loggedInUser);
     sessionStorage.setItem('snd_user', JSON.stringify(loggedInUser));
     sessionStorage.setItem('snd_security_unlocked', 'true');
+    
+    // Automatically pull latest cloud data upon login
+    try {
+      import('./data/SyncEngine').then(({ SyncEngine }) => {
+        SyncEngine.downloadAllFromCloud().catch(() => {});
+      }).catch(() => {});
+    } catch (_) {}
     
     // Check if shop config exists in Cloud or SQLite before prompting for setup
     try {
@@ -1458,7 +1481,7 @@ export default function App() {
                           ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-500 border-orange-500/20'
                           : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border-emerald-500/20'
                   }`}
-                  title="نقرة واحدة: مزامنة صندوق التحديثات (سريعة) | نقرة مزدوجة أو مطولة: مزامنة متقدمة شاملة لكامل البرنامج"
+                  title="مزامنة شاملة: تنزيل وتحديث كافة البيانات من السحابة وصندوق التحديثات"
                 >
                   <RefreshCw size={18} className={isSyncingAll ? "animate-spin" : ""} />
                   {isSyncingAll && (

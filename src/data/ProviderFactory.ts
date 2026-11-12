@@ -39,10 +39,17 @@ export class ProviderFactory {
         }
       });
 
-      // Trigger sync on startup if online and AUTO
-      if (this.getMode() === 'AUTO') {
+      // Trigger full cloud sync and restore on startup if online
+      if (this.isOnline) {
         setTimeout(async () => {
           try {
+            // Automatic clean recovery: clear stale local tombstones
+            try {
+              const { localDb } = await import('../lib/local-db');
+              await localDb.run("DELETE FROM deleted_records").catch(() => {});
+              await localDb.run("DELETE FROM outbox WHERE action = 'DELETE'").catch(() => {});
+            } catch (_) {}
+
             // Ensure inventory_items exists in Firestore
             try {
               const { FirebaseProviderInstance } = await import('./FirebaseProvider');
@@ -50,13 +57,15 @@ export class ProviderFactory {
             } catch (_) {}
 
             const { SyncEngine } = await import('./SyncEngine');
-            console.log('Starting startup auto-sync...');
-            await SyncEngine.syncAll();
-            SyncEngine.startCloudListener();
+            console.log('Starting startup auto-sync and full cloud download...');
+            await SyncEngine.syncAll(true);
+            if (this.getMode() === 'AUTO') {
+              SyncEngine.startCloudListener();
+            }
           } catch (e) {
             console.error('Failed to run startup auto-sync:', e);
           }
-        }, 3000);
+        }, 800);
       }
 
       // Periodic background auto-sync every 30 seconds if AUTO mode is selected
