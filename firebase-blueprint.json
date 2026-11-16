@@ -589,6 +589,29 @@
         "isFrozen": { "type": "boolean" }
       },
       "required": ["serialImei", "deviceName", "linkedUserName"]
+    },
+    "SystemRestorePoint": {
+      "title": "System Restore Point",
+      "description": "Cloud restore point metadata and chunk documents for system rollback",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "docKind": { "type": "string", "enum": ["POINT_META", "POINT_CHUNK"] },
+        "pointId": { "type": "string" },
+        "title": { "type": "string" },
+        "type": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "createdBy": { "type": "string" },
+        "createdById": { "type": "string" },
+        "sourceScope": { "type": "string" },
+        "isPinned": { "type": "boolean" },
+        "totalRecords": { "type": "number" },
+        "totalSizeBytes": { "type": "number" },
+        "chunkCount": { "type": "number" },
+        "chunkIndex": { "type": "number" },
+        "payloadJson": { "type": "string" }
+      }
     }
   },
   "firestore": {
@@ -675,6 +698,10 @@
     "/disassembly_batches/{id}": {
       "schema": "DisassemblyBatch",
       "description": "Disassembly and scrap batches"
+    },
+    "/system_restore_points/{id}": {
+      "schema": "SystemRestorePoint",
+      "description": "Cloud system restore points metadata and chunked snapshot records"
     }
   }
 }

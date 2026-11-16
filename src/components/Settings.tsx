@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { db } from '../firebase';
 import { doc, getDoc, setDoc, collection, getDocs, writeBatch, updateDoc, deleteDoc, addDoc, serverTimestamp } from '../firebase';
-import { Save, RefreshCw, Smartphone, Database, Languages, LogOut, Shield, Fingerprint, Lock, Clock, HardDrive, Download, Archive, Upload, RotateCcw, FileText, User as UserIcon, Tag, X, Cpu, Calculator, ArrowLeft, ArrowRight, Edit, Phone, Mail, Facebook, MapPin, Store, ChevronLeft, ChevronDown, Globe, Settings as SettingsIcon, CheckCircle, XCircle, Bell, Printer, SunMoon, Wrench, AlertTriangle } from 'lucide-react';
+import { Save, RefreshCw, Smartphone, Database, Languages, LogOut, Shield, Fingerprint, Lock, Clock, HardDrive, Download, Archive, Upload, RotateCcw, FileText, User as UserIcon, Tag, X, Cpu, Calculator, ArrowLeft, ArrowRight, Edit, Phone, Mail, Facebook, MapPin, Store, ChevronLeft, ChevronDown, Globe, Settings as SettingsIcon, CheckCircle, XCircle, Bell, Printer, SunMoon, Wrench, AlertTriangle, Cloud } from 'lucide-react';
 import { localDb } from '../lib/local-db';
 import { FirebaseProviderInstance } from '../data/FirebaseProvider';
 import { LocalProviderInstance } from '../data/LocalProvider';
@@ -15,12 +15,14 @@ import DeviceManagement from './DeviceManagement';
 import AccountingInputs from './AccountingInputs';
 import AdvancedDatabaseMaintenance from './AdvancedDatabaseMaintenance';
 import DocumentOutputsManager from './DocumentOutputsManager';
+import CloudRestorePointsPanel from './CloudRestorePointsPanel';
 import { AnimatePresence, motion } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Device } from '@capacitor/device';
 import { NativeBiometric } from 'capacitor-native-biometric';
 import { exportBackupFile, restoreBackupData, archiveOldData, getFormattedBackupTimestamp } from '../lib/backup';
+import { createCloudRestorePoint } from '../lib/restorePoints';
 import { usePermissions } from '../hooks/usePermissions';
 import { useBackHandler } from '../hooks/useBackHandler';
 import { registerBiometricCredentials, clearBiometricCredentials } from '../lib/biometricAuth';
@@ -80,6 +82,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
   const hasHybridDbPermission = user.role === 'admin' || user.role === 'manager' || !!user.permissions?.settings_hybrid_db?.view;
 
   const canViewBackupSync = user.role === 'admin' || user.isPrimary || hasPermission('settings_backup_sync', 'view');
+  const canViewRestorePoints = user.isPrimary || hasPermission('settings_restore_points', 'view');
   const canViewAdvancedMaintenance = user.role === 'admin' || user.isPrimary || hasPermission('settings_advanced_maintenance', 'view');
   const canViewPrintManagement = user.role === 'admin' || user.isPrimary || hasPermission('print_management', 'view');
 
@@ -87,7 +90,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
     if (catId === 'general' || catId === 'security') return true;
     if (catId === 'accounting-inputs') return hasPermission('settings_main_data', 'view');
     if (catId === 'categories-engineers') return hasPermission('settings_devices_engineers', 'view');
-    if (catId === 'advanced-management') return user.role === 'admin' || user.isPrimary || hasPermission('settings_advanced_management', 'view') || canViewPrintManagement;
+    if (catId === 'advanced-management') return user.role === 'admin' || user.isPrimary || hasPermission('settings_advanced_management', 'view') || canViewBackupSync || canViewRestorePoints || canViewPrintManagement;
     if (catId === 'users') return true;
     return true;
   };
@@ -97,12 +100,14 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
   const [saving, setSaving] = useState(false);
   const [progress, setProgress] = useState<{ active: boolean; value: number; label: string }>({ active: false, value: 0, label: '' });
   const [activeTab, setActiveTab ] = useState<'main' | 'general' | 'security' | 'backup' | 'users' | 'categories-engineers' | 'accounting-inputs' | 'advanced-management'>('main');
-  const [backupSubTab, setBackupSubTab] = useState<'list' | 'stats' | 'backup_manual' | 'export' | 'import' | 'archive' | 'reset' | 'audit'>('list');
-  const [advancedDbView, setAdvancedDbView] = useState<'list' | 'stats' | 'backup_manual' | 'export' | 'import' | 'archive' | 'reset' | 'audit'>('list');
+  const [backupSubTab, setBackupSubTab] = useState<'list' | 'stats' | 'backup_manual' | 'export' | 'import' | 'archive' | 'reset' | 'audit' | 'restore_points'>('list');
+  const [advancedDbView, setAdvancedDbView] = useState<'list' | 'stats' | 'backup_manual' | 'export' | 'import' | 'archive' | 'reset' | 'audit' | 'restore_points'>('list');
   const [advancedTab, setAdvancedTab] = useState<'database' | 'devices'>('database');
   const [advancedDbSubTab, setAdvancedDbSubTab] = useState<'sync' | 'backup'>('sync');
   const [backupLoading, setBackupLoading] = useState(false);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [createSafetyRestoreOnReset, setCreateSafetyRestoreOnReset] = useState(true);
+  const [createSafetyRestoreOnHybrid, setCreateSafetyRestoreOnHybrid] = useState(true);
   const [resetStatus, setResetStatus] = useState<{ type: 'success' | 'error' | null; message: string }>({ type: null, message: '' });
 
   // Shop details states
@@ -1327,6 +1332,21 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
     try {
       setSaving(true);
       console.log('Starting factory reset process...');
+
+      if (createSafetyRestoreOnReset && typeof navigator !== 'undefined' && navigator.onLine && ProviderFactory.getMode() !== 'LOCAL') {
+        setProgress({ active: true, value: 2, label: 'جاري إنشاء نقطة أمان سحابية تلقائية قبل ضبط المصنع...' });
+        try {
+          await createCloudRestorePoint({
+            type: 'auto_before_reset',
+            createdBy: user.name || user.username || 'المدير العام',
+            createdById: user.id || 'system',
+            sourceScope: ProviderFactory.getMode()
+          });
+        } catch (rpErr) {
+          console.warn('Pre-reset auto restore point skipped:', rpErr);
+        }
+      }
+
       setProgress({ active: true, value: 5, label: 'جاري بدء تهيئة النظام الشاملة...' });
 
       const collectionsToClear = [
@@ -1519,6 +1539,25 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
 
     try {
       const allTables = hybridSelectedTables;
+
+      if (createSafetyRestoreOnHybrid && typeof navigator !== 'undefined' && navigator.onLine) {
+        const snapshotTables = allTables.filter(t => t !== 'deleted_records');
+        if (snapshotTables.length > 0) {
+          setProgress({ active: true, value: 2, label: 'جاري إنشاء نقطة أمان سحابية تلقائية قبل التهيئة الدقيقة...' });
+          try {
+            await createCloudRestorePoint({
+              type: 'auto_before_precise_reset',
+              createdBy: user.name || user.username || 'المدير العام',
+              createdById: user.id || 'system',
+              sourceScope: targetIsBoth ? 'AUTO' : (targetIsCloud ? 'CLOUD' : 'LOCAL'),
+              tablesOverride: snapshotTables,
+              includeSavedPdfs: snapshotTables.includes('saved_pdfs')
+            });
+          } catch (rpErr) {
+            console.warn('Pre-precise-reset auto restore point skipped:', rpErr);
+          }
+        }
+      }
 
       if (targetIsCloud) {
         // 1. Clear CLOUD tables using batch clear (fast, zero tombstone multiplication)
@@ -1817,6 +1856,25 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
           message: `عذراً، قاعدة البيانات المصدر (${sourceLabel}) فارغة تماماً ولا تحتوي على أي بيانات أو فواتير أو عملاء لنقلها!` 
         });
         return;
+      }
+
+      if (createSafetyRestoreOnHybrid && typeof navigator !== 'undefined' && navigator.onLine) {
+        const snapshotTables = tables.filter(t => t !== 'deleted_records');
+        if (snapshotTables.length > 0) {
+          setProgress({ active: true, value: 4, label: `جاري إنشاء نقطة أمان سحابية للقاعدة المستهدفة (${destLabel}) قبل النقل...` });
+          try {
+            await createCloudRestorePoint({
+              type: 'auto_before_transfer',
+              createdBy: user.name || user.username || 'المدير العام',
+              createdById: user.id || 'system',
+              sourceScope: sourceIsCloud ? 'LOCAL' : 'CLOUD',
+              tablesOverride: snapshotTables,
+              includeSavedPdfs: snapshotTables.includes('saved_pdfs')
+            });
+          } catch (rpErr) {
+            console.warn('Pre-transfer auto restore point skipped:', rpErr);
+          }
+        }
       }
 
       let tableIdx = 0;
@@ -3375,6 +3433,24 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                           </div>
                         </motion.button>
 
+                        {/* Cloud Restore Points Block */}
+                        {canViewRestorePoints && (
+                          <motion.button
+                            whileHover={{ scale: 1.005 }}
+                            whileTap={{ scale: 0.995 }}
+                            onClick={() => setBackupSubTab('restore_points')}
+                            className="w-full bg-indigo-500/10 text-white p-3.5 rounded-[1.2rem] border border-indigo-500/25 flex items-center gap-3 shadow-xl relative group overflow-hidden cursor-pointer"
+                          >
+                            <div className="flex-1 rtl:text-right">
+                               <h3 className="text-base font-bold font-cairo text-indigo-300">نقاط استعادة النظام السحابية</h3>
+                               <p className="text-[9px] text-indigo-400/80 font-bold uppercase tracking-widest mt-0.5">حفظ واسترجاع اللقطات السحابية الكاملة والانتقائية</p>
+                            </div>
+                            <div className="p-2.5 bg-indigo-600/20 text-indigo-400 rounded-xl">
+                               <Cloud size={22} />
+                            </div>
+                          </motion.button>
+                        )}
+
 
                         {/* Reset Block */}
                         <motion.button
@@ -3621,6 +3697,10 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                             </section>
                          )}
 
+                         {backupSubTab === 'restore_points' && canViewRestorePoints && (
+                            <CloudRestorePointsPanel user={user} />
+                         )}
+
                       </motion.div>
                     )}
                   </div>
@@ -3662,7 +3742,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
       </button>
 
       {/* 2. Backup Option */}
-      {canViewBackupSync && (
+      {(canViewBackupSync || canViewRestorePoints) && (
         <button
           type="button"
           onClick={() => {
@@ -3934,98 +4014,121 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                           <h4 className="font-bold text-white text-sm">أدوات الصيانة والنسخ الاحتياطي</h4>
                           
                           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                            {/* Stats */}
-                            <button
-                              type="button"
-                              onClick={() => setAdvancedDbView('stats')}
-                              className="flex items-center gap-3 p-4 bg-[#1e1e1e] hover:bg-[#252525] rounded-2xl border border-white/5 hover:border-orange-500/30 text-right transition-all group shadow-md"
-                            >
-                              <div className="p-3 bg-blue-500/10 text-blue-500 rounded-xl">
-                                <Database size={20} />
-                              </div>
-                              <div className="flex-1">
-                                <span className="block text-sm font-bold text-white">إحصائيات البيانات</span>
-                                <span className="block text-[10px] text-gray-500 mt-0.5">تفاصيل وحجم قاعدة البيانات الحالية</span>
-                              </div>
-                            </button>
+                            {canViewBackupSync && (
+                              <>
+                                {/* Stats */}
+                                <button
+                                  type="button"
+                                  onClick={() => setAdvancedDbView('stats')}
+                                  className="flex items-center gap-3 p-4 bg-[#1e1e1e] hover:bg-[#252525] rounded-2xl border border-white/5 hover:border-orange-500/30 text-right transition-all group shadow-md"
+                                >
+                                  <div className="p-3 bg-blue-500/10 text-blue-500 rounded-xl">
+                                    <Database size={20} />
+                                  </div>
+                                  <div className="flex-1">
+                                    <span className="block text-sm font-bold text-white">إحصائيات البيانات</span>
+                                    <span className="block text-[10px] text-gray-500 mt-0.5">تفاصيل وحجم قاعدة البيانات الحالية</span>
+                                  </div>
+                                </button>
 
-                            {/* Backup */}
-                            <button
-                              type="button"
-                              onClick={() => setAdvancedDbView('backup_manual')}
-                              className="flex items-center gap-3 p-4 bg-[#1e1e1e] hover:bg-[#252525] rounded-2xl border border-white/5 hover:border-orange-500/30 text-right transition-all group shadow-md"
-                            >
-                              <div className="p-3 bg-purple-500/10 text-purple-500 rounded-xl">
-                                <HardDrive size={20} />
-                              </div>
-                              <div className="flex-1">
-                                <span className="block text-sm font-bold text-white">النسخ الاحتياطي واليدوي</span>
-                                <span className="block text-[10px] text-gray-500 mt-0.5">إعداد النسخ التلقائي وبدء نسخ فوري</span>
-                              </div>
-                            </button>
+                                {/* Backup */}
+                                <button
+                                  type="button"
+                                  onClick={() => setAdvancedDbView('backup_manual')}
+                                  className="flex items-center gap-3 p-4 bg-[#1e1e1e] hover:bg-[#252525] rounded-2xl border border-white/5 hover:border-orange-500/30 text-right transition-all group shadow-md"
+                                >
+                                  <div className="p-3 bg-purple-500/10 text-purple-500 rounded-xl">
+                                    <HardDrive size={20} />
+                                  </div>
+                                  <div className="flex-1">
+                                    <span className="block text-sm font-bold text-white">النسخ الاحتياطي واليدوي</span>
+                                    <span className="block text-[10px] text-gray-500 mt-0.5">إعداد النسخ التلقائي وبدء نسخ فوري</span>
+                                  </div>
+                                </button>
 
-                            {/* Export */}
-                            <button
-                              type="button"
-                              onClick={() => setAdvancedDbView('export')}
-                              className="flex items-center gap-3 p-4 bg-[#1e1e1e] hover:bg-[#252525] rounded-2xl border border-white/5 hover:border-orange-500/30 text-right transition-all group shadow-md"
-                            >
-                              <div className="p-3 bg-emerald-500/10 text-emerald-500 rounded-xl">
-                                <Download size={20} />
-                              </div>
-                              <div className="flex-1">
-                                <span className="block text-sm font-bold text-white">تصدير بلاس JSON</span>
-                                <span className="block text-[10px] text-gray-500 mt-0.5">تصدير ملف شامل ومنظم لكافة البيانات</span>
-                              </div>
-                            </button>
+                                {/* Export */}
+                                <button
+                                  type="button"
+                                  onClick={() => setAdvancedDbView('export')}
+                                  className="flex items-center gap-3 p-4 bg-[#1e1e1e] hover:bg-[#252525] rounded-2xl border border-white/5 hover:border-orange-500/30 text-right transition-all group shadow-md"
+                                >
+                                  <div className="p-3 bg-emerald-500/10 text-emerald-500 rounded-xl">
+                                    <Download size={20} />
+                                  </div>
+                                  <div className="flex-1">
+                                    <span className="block text-sm font-bold text-white">تصدير بلاس JSON</span>
+                                    <span className="block text-[10px] text-gray-500 mt-0.5">تصدير ملف شامل ومنظم لكافة البيانات</span>
+                                  </div>
+                                </button>
 
-                            {/* Import */}
-                            <button
-                              type="button"
-                              onClick={() => setAdvancedDbView('import')}
-                              className="flex items-center gap-3 p-4 bg-[#1e1e1e] hover:bg-[#252525] rounded-2xl border border-white/5 hover:border-orange-500/30 text-right transition-all group shadow-md"
-                            >
-                              <div className="p-3 bg-orange-500/10 text-orange-500 rounded-xl">
-                                <Upload size={20} />
-                              </div>
-                              <div className="flex-1">
-                                <span className="block text-sm font-bold text-white">الاستيراد والاستعادة</span>
-                                <span className="block text-[10px] text-gray-500 mt-0.5">استعادة السجلات من ملف نسخة احتياطية</span>
-                              </div>
-                            </button>
+                                {/* Import */}
+                                <button
+                                  type="button"
+                                  onClick={() => setAdvancedDbView('import')}
+                                  className="flex items-center gap-3 p-4 bg-[#1e1e1e] hover:bg-[#252525] rounded-2xl border border-white/5 hover:border-orange-500/30 text-right transition-all group shadow-md"
+                                >
+                                  <div className="p-3 bg-orange-500/10 text-orange-500 rounded-xl">
+                                    <Upload size={20} />
+                                  </div>
+                                  <div className="flex-1">
+                                    <span className="block text-sm font-bold text-white">الاستيراد والاستعادة</span>
+                                    <span className="block text-[10px] text-gray-500 mt-0.5">استعادة السجلات من ملف نسخة احتياطية</span>
+                                  </div>
+                                </button>
 
-                            {/* Archive */}
-                            <button
-                              type="button"
-                              onClick={() => setAdvancedDbView('archive')}
-                              className="flex items-center gap-3 p-4 bg-[#1e1e1e] hover:bg-[#252525] rounded-2xl border border-white/5 hover:border-orange-500/30 text-right transition-all group shadow-md"
-                            >
-                              <div className="p-3 bg-gray-500/10 text-gray-400 rounded-xl">
-                                <Archive size={20} />
-                              </div>
-                              <div className="flex-1">
-                                <span className="block text-sm font-bold text-white">أرشفة السجلات القديمة</span>
-                                <span className="block text-[10px] text-gray-500 mt-0.5">مسح ونقل السجلات الأقدم من سنة للأرشيف</span>
-                              </div>
-                            </button>
+                                {/* Archive */}
+                                <button
+                                  type="button"
+                                  onClick={() => setAdvancedDbView('archive')}
+                                  className="flex items-center gap-3 p-4 bg-[#1e1e1e] hover:bg-[#252525] rounded-2xl border border-white/5 hover:border-orange-500/30 text-right transition-all group shadow-md"
+                                >
+                                  <div className="p-3 bg-gray-500/10 text-gray-400 rounded-xl">
+                                    <Archive size={20} />
+                                  </div>
+                                  <div className="flex-1">
+                                    <span className="block text-sm font-bold text-white">أرشفة السجلات القديمة</span>
+                                    <span className="block text-[10px] text-gray-500 mt-0.5">مسح ونقل السجلات الأقدم من سنة للأرشيف</span>
+                                  </div>
+                                </button>
+                              </>
+                            )}
+
+                            {/* Cloud Restore Points */}
+                            {canViewRestorePoints && (
+                              <button
+                                type="button"
+                                onClick={() => setAdvancedDbView('restore_points')}
+                                className="flex items-center gap-3 p-4 bg-indigo-500/10 hover:bg-indigo-500/15 rounded-2xl border border-indigo-500/25 hover:border-indigo-500/40 text-right transition-all group shadow-md cursor-pointer"
+                              >
+                                <div className="p-3 bg-indigo-500/20 text-indigo-400 rounded-xl">
+                                  <Cloud size={20} />
+                                </div>
+                                <div className="flex-1">
+                                  <span className="block text-sm font-bold text-indigo-300">نقاط استعادة النظام السحابية</span>
+                                  <span className="block text-[10px] text-indigo-400/75 mt-0.5">حفظ واستعادة النظام بالكامل أو لجداول محددة من السحابة</span>
+                                </div>
+                              </button>
+                            )}
 
                             {/* Factory Reset */}
-                            <button
-                              type="button"
-                              onClick={() => {
-                                console.log('Advanced DB - Reset Button clicked');
-                                resetAllDataTemp();
-                              }}
-                              className="flex items-center gap-3 p-4 bg-red-500/5 hover:bg-red-500/10 rounded-2xl border border-red-500/10 hover:border-red-500/30 text-right transition-all group shadow-md col-span-full cursor-pointer"
-                            >
-                              <div className="p-3 bg-red-500/10 text-red-500 rounded-xl">
-                                <RotateCcw size={20} />
-                              </div>
-                              <div className="flex-1">
-                                <span className="block text-sm font-bold text-red-500">تهيئة النظام (ضبط المصنع)</span>
-                                <span className="block text-[10px] text-red-400/75 mt-0.5">تحذير: مسح وتصفير كافة بيانات ومبيعات وإعدادات النظام نهائياً</span>
-                              </div>
-                            </button>
+                            {canViewBackupSync && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  console.log('Advanced DB - Reset Button clicked');
+                                  resetAllDataTemp();
+                                }}
+                                className="flex items-center gap-3 p-4 bg-red-500/5 hover:bg-red-500/10 rounded-2xl border border-red-500/10 hover:border-red-500/30 text-right transition-all group shadow-md col-span-full cursor-pointer"
+                              >
+                                <div className="p-3 bg-red-500/10 text-red-500 rounded-xl">
+                                  <RotateCcw size={20} />
+                                </div>
+                                <div className="flex-1">
+                                  <span className="block text-sm font-bold text-red-500">تهيئة النظام (ضبط المصنع)</span>
+                                  <span className="block text-[10px] text-red-400/75 mt-0.5">تحذير: مسح وتصفير كافة بيانات ومبيعات وإعدادات النظام نهائياً</span>
+                                </div>
+                              </button>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -4254,6 +4357,9 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                              </div>
                           </section>
                         )}
+                        {advancedDbView === 'restore_points' && canViewRestorePoints && (
+                          <CloudRestorePointsPanel user={user} />
+                        )}
                             </motion.div>
                   )}
                 </div>
@@ -4388,6 +4494,18 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                   تحذير: سيتم حذف كافة البيانات من التطبيق نهائياً (بما في ذلك الفواتير، العملاء، الحركات المالية، الإعدادات، والحسابات الإضافية) وتصفير جميع العدادات والمبيعات. لا يمكن التراجع عن هذا الإجراء!
                 </p>
               </div>
+
+              <label className="flex items-center gap-2.5 p-3 rounded-xl bg-indigo-500/10 border border-indigo-500/25 text-right cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={createSafetyRestoreOnReset}
+                  onChange={(e) => setCreateSafetyRestoreOnReset(e.target.checked)}
+                  className="w-4 h-4 rounded text-indigo-500 shrink-0"
+                />
+                <span className="text-xs font-bold text-indigo-300 font-cairo">
+                  إنشاء نقطة استعادة سحابية تلقائية قبل المسح (عند توفر الإنترنت)
+                </span>
+              </label>
 
               <div className="flex gap-3 justify-center">
                 <button
@@ -4742,6 +4860,25 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                     </div>
                   </div>
                 </div>
+
+                {/* Auto Safety Cloud Restore Point Option */}
+                <label className="flex items-center justify-between p-3.5 rounded-2xl bg-indigo-500/10 border border-indigo-500/25 cursor-pointer text-right">
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="checkbox"
+                      checked={createSafetyRestoreOnHybrid}
+                      onChange={(e) => setCreateSafetyRestoreOnHybrid(e.target.checked)}
+                      className="w-4 h-4 rounded text-indigo-500 bg-black/50 border-white/20 cursor-pointer shrink-0"
+                    />
+                    <div>
+                      <span className="text-xs font-black text-indigo-300 block">إنشاء نقطة استعادة سحابية تلقائية قبل التنفيذ</span>
+                      <span className="text-[10px] text-gray-400 block mt-0.5">
+                        يحفظ لقطة للجداول المستهدفة في السحابة تلقائياً قبل الحذف أو النقل (عند توفر الإنترنت)
+                      </span>
+                    </div>
+                  </div>
+                  <Cloud size={16} className="text-indigo-400 shrink-0" />
+                </label>
 
                 {/* Actions Grid */}
                 <div>

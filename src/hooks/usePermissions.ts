@@ -40,6 +40,7 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
         targetSection === 'settings_advanced_management' ||
         targetSection === 'settings_backup_sync' ||
         targetSection === 'settings_advanced_maintenance' ||
+        targetSection === 'settings_restore_points' ||
         targetSection === 'print_management' ||
         targetSection === 'reports_comprehensive' || 
         targetSection === 'reports_financial' ||
@@ -60,6 +61,7 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
           targetSection === 'settings_advanced_management' ||
           targetSection === 'settings_backup_sync' ||
           targetSection === 'settings_advanced_maintenance' ||
+          targetSection === 'settings_restore_points' ||
           targetSection === 'print_management' ||
           targetSection === 'reports' ||
           (typeof targetSection === 'string' && targetSection.startsWith('settings_'))
@@ -75,7 +77,8 @@ export function usePermissions(currentUser: User | null, section?: keyof AppPerm
         targetSection === 'settings_advanced_management' || 
         targetSection === 'settings_backup_sync' || 
         targetSection === 'settings_advanced_maintenance' || 
-        targetSection === 'settings_hybrid_db'
+        targetSection === 'settings_hybrid_db' ||
+        targetSection === 'settings_restore_points'
       ) {
         return false;
       }

@@ -3,7 +3,7 @@ import { parseDate } from '../lib/dateUtils';
 import { collection, query, onSnapshot, doc, updateDoc, deleteDoc, addDoc, setDoc, where, getDocs, serverTimestamp } from '../firebase';
 import { db } from '../firebase';
 import { User, AppPermissions } from '../types';
-import { Smartphone, Wifi, WifiOff, CheckCircle2, PauseCircle, XCircle, ShieldCheck, UserPlus, Trash2, Edit2, ShieldAlert, Loader2, Save, X, ArrowLeft, Check, Lock, Package, Wallet, Users, FileText, BarChart, BarChart3, Coins, Settings, UserCircle, Cpu, UserCheck, UserX, Eye, EyeOff, Power, Database, RefreshCw, Wrench, Printer } from 'lucide-react';
+import { Smartphone, Wifi, WifiOff, CheckCircle2, PauseCircle, XCircle, ShieldCheck, UserPlus, Trash2, Edit2, ShieldAlert, Loader2, Save, X, ArrowLeft, Check, Lock, Package, Wallet, Users, FileText, BarChart, BarChart3, Coins, Settings, UserCircle, Cpu, UserCheck, UserX, Eye, EyeOff, Power, Database, RefreshCw, Wrench, Printer, Cloud } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 
@@ -44,6 +44,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
     settings_backup_sync: { view: false },
     settings_advanced_maintenance: { view: false },
     settings_hybrid_db: { view: false, edit: false, advancedView: false },
+    settings_restore_points: { view: false, add: false, edit: false, delete: false, print: false, advancedView: false },
     print_management: { view: false, delete: false }
   };
 
@@ -125,6 +126,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
       'settings_backup_sync',
       'settings_advanced_maintenance',
       'settings_hybrid_db',
+      'settings_restore_points',
       'print_management'
     ];
     
@@ -184,6 +186,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
     settings_backup_sync: { label: 'نسخ البيانات والمزامنة', icon: RefreshCw },
     settings_advanced_maintenance: { label: 'صيانة متقدمة لقاعدة البيانات', icon: Wrench },
     settings_hybrid_db: { label: 'التحكم المتقدم بالوضع الهجين', icon: Database },
+    settings_restore_points: { label: 'نقاط استعادة النظام السحابية', icon: Cloud },
     print_management: { label: 'إدارة المطبوعات', icon: Printer }
   };
 
@@ -194,7 +197,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
     add: 'إضافة',
     edit: 'تعديل',
     delete: 'حذف',
-    print: 'طباعة',
+    print: 'طباعة / نسخ',
     advancedView: 'متقدم'
   };
 
@@ -216,6 +219,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
       'settings_backup_sync',
       'settings_advanced_maintenance',
       'settings_hybrid_db',
+      'settings_restore_points',
       'print_management'
     ];
     
