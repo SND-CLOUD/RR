@@ -90,10 +90,29 @@ const areDocsSemanticallyEqual = (cloudDoc: any, localDoc: any): boolean => {
 
 export class SyncEngine {
   private static syncing = false;
+  private static syncingComprehensive = false;
+  private static syncHasChanges = false;
+  private static syncProgress: { completedTables: number; totalTables: number } | null = null;
   private static paused = false;
   private static globalLockActive = false;
   private static lockUnsub: (() => void) | null = null;
   private static activeListeners: (() => void)[] = [];
+
+  private static emitSyncState(detail: {
+    syncing: boolean;
+    force: boolean;
+    phase?: 'outbox' | 'tombstones' | 'tables' | 'done';
+    completedTables?: number;
+    totalTables?: number;
+    hasChanges?: boolean;
+    changedRecords?: number;
+    success?: boolean;
+    offline?: boolean;
+  }) {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent('snd_sync_state', { detail }));
+    }
+  }
 
   static pauseSync() { this.paused = true; console.log("Sync paused"); }
   static resumeSync() { this.paused = false; console.log("Sync resumed"); }
@@ -423,6 +442,18 @@ export class SyncEngine {
     return this.syncing;
   }
 
+  static isSyncingComprehensive(): boolean {
+    return this.syncing && this.syncingComprehensive;
+  }
+
+  static hasSyncRealChanges(): boolean {
+    return this.syncing && this.syncingComprehensive && this.syncHasChanges;
+  }
+
+  static getSyncProgress(): { completedTables: number; totalTables: number } | null {
+    return this.syncProgress;
+  }
+
   static async syncAll(force = false): Promise<{ success: boolean; message: string; syncedCount?: number }> {
     if (force) {
       this.paused = false;
@@ -442,7 +473,14 @@ export class SyncEngine {
     }
 
     this.syncing = true;
+    this.syncingComprehensive = force;
+    this.syncHasChanges = false;
+    this.syncProgress = null;
     let syncedCount = 0;
+    let realChangedCount = 0;
+    let completedNormally = false;
+    let wasOffline = false;
+    this.emitSyncState({ syncing: true, force, hasChanges: false, changedRecords: 0, phase: 'outbox' });
 
     try {
       // 1. Process Outbox (Local -> Cloud) in chronological order (FIFO)
@@ -453,6 +491,15 @@ export class SyncEngine {
 
       const items = outboxRes.values || [];
       if (items.length > 0) {
+        this.syncHasChanges = true;
+        realChangedCount += items.length;
+        this.emitSyncState({
+          syncing: true,
+          force,
+          hasChanges: true,
+          changedRecords: realChangedCount,
+          phase: 'outbox'
+        });
         console.log(`SyncEngine: Found ${items.length} pending operations in outbox.`);
         const processedIds = new Set<string>();
 
@@ -518,6 +565,7 @@ export class SyncEngine {
             } catch (err: any) {
               if (isUnavailableError(err)) {
                 console.log(`SyncEngine: Cloud Firestore is unreachable (offline). Pausing group sync.`);
+                wasOffline = true;
                 this.syncing = false;
                 return { success: false, message: 'الخادم السحابي غير متاح حالياً (وضع عدم الاتصال).' };
               }
@@ -612,6 +660,7 @@ export class SyncEngine {
             } catch (err: any) {
               if (isUnavailableError(err)) {
                 console.log(`SyncEngine: Cloud Firestore is unreachable (offline). Pausing outbox sync.`);
+                wasOffline = true;
                 this.syncing = false;
                 return { success: false, message: 'الخادم السحابي غير متاح حالياً (وضع عدم الاتصال).' };
               }
@@ -667,6 +716,17 @@ export class SyncEngine {
 
               if (shouldDelete) {
                 console.log(`SyncEngine [Pull]: Removing local record ${tombstone.tableName}/${tombstone.recordId} matched with remote tombstone`);
+                realChangedCount++;
+                if (!this.syncHasChanges) {
+                  this.syncHasChanges = true;
+                  this.emitSyncState({
+                    syncing: true,
+                    force,
+                    hasChanges: true,
+                    changedRecords: realChangedCount,
+                    phase: 'tombstones'
+                  });
+                }
                 await LocalProviderInstance.deleteDoc(tombstone.tableName, tombstone.recordId, 'BYPASS_OUTBOX');
                 await localDb.run("DELETE FROM outbox WHERE tableName = ? AND recordId = ?", [tombstone.tableName, tombstone.recordId]).catch(() => {});
                 syncedCount++;
@@ -677,6 +737,7 @@ export class SyncEngine {
         } catch (e: any) {
           if (isUnavailableError(e)) {
             console.log('SyncEngine: Cloud Firestore is unreachable (offline mode). Skipping remote pull.');
+            wasOffline = true;
             return { success: true, message: 'الخادم السحابي غير متاح حالياً (وضع عدم الاتصال).', syncedCount: 0 };
           }
           console.warn('SyncEngine: Could not fetch deleted_records from cloud:', e);
@@ -710,7 +771,19 @@ export class SyncEngine {
           'saved_pdfs'
         ];
 
-        for (const table of tables) {
+        for (let tableIdx = 0; tableIdx < tables.length; tableIdx++) {
+          const table = tables[tableIdx];
+          this.syncProgress = { completedTables: tableIdx, totalTables: tables.length };
+          this.emitSyncState({
+            syncing: true,
+            force: true,
+            hasChanges: this.syncHasChanges,
+            changedRecords: realChangedCount,
+            phase: 'tables',
+            completedTables: tableIdx,
+            totalTables: tables.length
+          });
+
           // Find IDs of documents with pending local writes in the outbox
           const pendingRes = await localDb.query(
             "SELECT recordId FROM outbox WHERE tableName = ? AND status IN ('PENDING', 'FAILED')",
@@ -730,6 +803,7 @@ export class SyncEngine {
           } catch (err) {
             if (isUnavailableError(err)) {
               console.log('SyncEngine: Cloud Firestore is unreachable (offline mode). Skipping remote pull.');
+              wasOffline = true;
               break;
             }
             console.warn(`SyncEngine: Could not fetch cloud records for table ${table}:`, err);
@@ -803,6 +877,28 @@ export class SyncEngine {
             }
 
             if (needsDownload) {
+              const isRealDiff =
+                !localItem ||
+                (table === 'fin_funds'
+                  ? parseFundBalance(localItem.balance) !== parseFundBalance(cloudItem.balance) || !areDocsSemanticallyEqual(cloudItem, localItem)
+                  : !areDocsSemanticallyEqual(cloudItem, localItem));
+
+              if (isRealDiff) {
+                realChangedCount++;
+                if (!this.syncHasChanges) {
+                  this.syncHasChanges = true;
+                  this.emitSyncState({
+                    syncing: true,
+                    force: true,
+                    hasChanges: true,
+                    changedRecords: realChangedCount,
+                    phase: 'tables',
+                    completedTables: tableIdx,
+                    totalTables: tables.length
+                  });
+                }
+              }
+
               // Bypass outbox queuing during down-sync by using the 'BYPASS_OUTBOX' txGroupId
               try {
                 await LocalProviderInstance.setDoc(table, cloudItem.id, cloudItem, undefined, 'BYPASS_OUTBOX', true);
@@ -855,6 +951,19 @@ export class SyncEngine {
 
               // Local record was removed from cloud: Delete locally with BYPASS_OUTBOX
               console.log(`SyncEngine [Differential]: Purging deleted record ${table}/${localItem.id} locally`);
+              realChangedCount++;
+              if (!this.syncHasChanges) {
+                this.syncHasChanges = true;
+                this.emitSyncState({
+                  syncing: true,
+                  force: true,
+                  hasChanges: true,
+                  changedRecords: realChangedCount,
+                  phase: 'tables',
+                  completedTables: tableIdx,
+                  totalTables: tables.length
+                });
+              }
               await LocalProviderInstance.deleteDoc(table, localItem.id, 'BYPASS_OUTBOX', true);
               syncedCount++;
             }
@@ -871,6 +980,7 @@ export class SyncEngine {
       }
 
       window.dispatchEvent(new CustomEvent('snd_data_synced'));
+      completedNormally = !wasOffline;
 
       return {
         success: true,
@@ -882,7 +992,20 @@ export class SyncEngine {
       console.error('SyncEngine: Data synchronization failed:', error);
       return { success: false, message: `فشلت المزامنة: ${error.message || error}` };
     } finally {
+      const hadRealChanges = this.syncHasChanges || realChangedCount > 0;
       this.syncing = false;
+      this.syncingComprehensive = false;
+      this.syncHasChanges = false;
+      this.syncProgress = null;
+      this.emitSyncState({
+        syncing: false,
+        force,
+        hasChanges: hadRealChanges,
+        changedRecords: realChangedCount,
+        phase: 'done',
+        success: completedNormally && !wasOffline,
+        offline: wasOffline
+      });
       if (typeof window !== 'undefined') {
         window.dispatchEvent(new CustomEvent('snd_outbox_changed'));
       }

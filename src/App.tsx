@@ -137,6 +137,7 @@ export default function App() {
   const [settleAmount, setSettleAmount] = useState<string>('');
   const [isSettling, setIsSettling] = useState(false);
   const [isSyncingAll, setIsSyncingAll] = useState(false);
+  const [isAutoDownloading, setIsAutoDownloading] = useState(false);
   const [syncMode, setSyncMode] = useState<'quick' | 'advanced' | null>(null);
   const [syncToast, setSyncToast] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null);
   const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
@@ -145,6 +146,17 @@ export default function App() {
   const clickTimeoutRef = useRef<any>(null);
   const lastTapTimeRef = useRef<number>(0);
   const ignoreClickUntilRef = useRef<number>(0);
+  const isManualSyncingRef = useRef<boolean>(false);
+  const wasAutoDownloadingRef = useRef<boolean>(false);
+  const syncToastTimerRef = useRef<any>(null);
+
+  const scheduleSyncToastClear = (delayMs: number) => {
+    if (syncToastTimerRef.current) clearTimeout(syncToastTimerRef.current);
+    syncToastTimerRef.current = setTimeout(() => {
+      setSyncToast(null);
+      syncToastTimerRef.current = null;
+    }, delayMs);
+  };
 
   const refreshPendingSyncCount = async () => {
     try {
@@ -177,8 +189,94 @@ export default function App() {
     };
   }, [user?.id]);
 
+  // Reflect initial comprehensive cloud download on the Sync button ONLY on the very first open of a new device
+  // (manual comprehensive sync handles its own indicator via handleManualSync; subsequent background syncs stay silent)
+  useEffect(() => {
+    let mounted = true;
+    const isInitialSyncCompleted = () => {
+      try {
+        return localStorage.getItem('snd_initial_sync_done') === 'true';
+      } catch {
+        return false;
+      }
+    };
+    const markInitialSyncCompleted = () => {
+      try {
+        localStorage.setItem('snd_initial_sync_done', 'true');
+      } catch {}
+    };
+
+    import('./data/SyncEngine').then(({ SyncEngine }) => {
+      if (!mounted) return;
+      if (!isInitialSyncCompleted() && ProviderFactory.getMode() !== 'LOCAL' && SyncEngine.hasSyncRealChanges()) {
+        wasAutoDownloadingRef.current = true;
+        setIsAutoDownloading(true);
+        if (!isManualSyncingRef.current) {
+          const prog = SyncEngine.getSyncProgress();
+          const msg = prog && prog.totalTables > 0
+            ? `جاري تنزيل وتحديث البيانات... (${prog.completedTables}/${prog.totalTables})`
+            : 'جاري تنزيل وتحديث البيانات...';
+          setSyncToast({ message: msg, type: 'info' });
+        }
+      }
+    }).catch(() => {});
+
+    const handleSyncState = (e: Event) => {
+      const detail = (e as CustomEvent).detail || {};
+      if (!detail.force || ProviderFactory.getMode() === 'LOCAL') return;
+
+      if (detail.syncing) {
+        if (isInitialSyncCompleted() || !detail.hasChanges) {
+          return;
+        }
+        wasAutoDownloadingRef.current = true;
+        setIsAutoDownloading(true);
+        if (!isManualSyncingRef.current) {
+          if (syncToastTimerRef.current) {
+            clearTimeout(syncToastTimerRef.current);
+            syncToastTimerRef.current = null;
+          }
+          const hasProgress = typeof detail.completedTables === 'number' && typeof detail.totalTables === 'number' && detail.totalTables > 0;
+          const msg = hasProgress
+            ? `جاري تنزيل وتحديث البيانات... (${detail.completedTables}/${detail.totalTables})`
+            : 'جاري تنزيل وتحديث البيانات...';
+          setSyncToast({ message: msg, type: 'info' });
+        }
+      } else {
+        setIsAutoDownloading(false);
+        refreshPendingSyncCount();
+        const wasFirstOpenPending = !isInitialSyncCompleted();
+        if (detail.success && !detail.offline) {
+          markInitialSyncCompleted();
+        }
+        if (!isManualSyncingRef.current && wasAutoDownloadingRef.current && wasFirstOpenPending) {
+          wasAutoDownloadingRef.current = false;
+          if (detail.success && detail.hasChanges) {
+            setSyncToast({ message: 'اكتمل تحديث ومزامنة البيانات', type: 'success' });
+            scheduleSyncToastClear(3000);
+          } else {
+            setSyncToast(prev => (prev?.type === 'info' ? null : prev));
+          }
+        } else {
+          wasAutoDownloadingRef.current = false;
+        }
+      }
+    };
+
+    window.addEventListener('snd_sync_state', handleSyncState);
+    return () => {
+      mounted = false;
+      window.removeEventListener('snd_sync_state', handleSyncState);
+    };
+  }, []);
+
   const handleManualSync = async (force: boolean = false) => {
-    if (isSyncingAll) return;
+    if (isSyncingAll || isAutoDownloading) return;
+    isManualSyncingRef.current = true;
+    if (syncToastTimerRef.current) {
+      clearTimeout(syncToastTimerRef.current);
+      syncToastTimerRef.current = null;
+    }
     setIsSyncingAll(true);
     setSyncMode(force ? 'advanced' : 'quick');
     setSyncToast({
@@ -225,16 +323,14 @@ export default function App() {
       }
 
       setSyncToast({ message: successMsg, type: 'success' });
-      setTimeout(() => {
-        setSyncToast(prev => (prev?.message === successMsg ? null : prev));
-      }, 3000);
+      scheduleSyncToastClear(3000);
     } catch (e: any) {
       console.error("Manual sync failed:", e);
       setSyncToast({ message: "فشلت المزامنة", type: 'error' });
-      setTimeout(() => {
-        setSyncToast(null);
-      }, 3500);
+      scheduleSyncToastClear(3500);
     } finally {
+      isManualSyncingRef.current = false;
+      wasAutoDownloadingRef.current = false;
       setIsSyncingAll(false);
       setSyncMode(null);
       refreshPendingSyncCount();
@@ -242,7 +338,7 @@ export default function App() {
   };
 
   const handleSyncPressStart = () => {
-    if (isSyncingAll) return;
+    if (isSyncingAll || isAutoDownloading) return;
     isLongPressRef.current = false;
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = setTimeout(() => {
@@ -1580,10 +1676,10 @@ export default function App() {
                   onTouchStart={handleSyncPressStart}
                   onTouchEnd={handleSyncPressEnd}
                   onTouchCancel={handleSyncPressEnd}
-                  disabled={isSyncingAll}
-                  className={`p-2 rounded-xl transition-all relative border mr-1 cursor-pointer flex items-center justify-center select-none active:scale-95 disabled:opacity-50 ${
-                    isSyncingAll
-                      ? syncMode === 'advanced'
+                  disabled={isSyncingAll || isAutoDownloading}
+                  className={`p-2 rounded-xl transition-all relative border mr-1 cursor-pointer flex items-center justify-center select-none active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed ${
+                    (isSyncingAll || isAutoDownloading)
+                      ? (syncMode === 'advanced' || isAutoDownloading)
                         ? 'bg-purple-600/20 text-purple-400 border-purple-500/50 shadow-lg shadow-purple-900/30'
                         : 'bg-emerald-600/20 text-emerald-400 border-emerald-500/50 shadow-lg shadow-emerald-900/30'
                       : ProviderFactory.getMode() === 'CLOUD' 
@@ -1593,20 +1689,22 @@ export default function App() {
                           : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border-emerald-500/20'
                   }`}
                   title={
-                    pendingSyncCount > 0
-                      ? `ملفات/عمليات بانتظار المزامنة: ${pendingSyncCount} | ضغطة: مزامنة سريعة | ضغطة مزدوجة أو مطولة: مزامنة شاملة`
-                      : 'ضغطة: مزامنة سريعة (صندوق التحديثات) | ضغطة مزدوجة أو مطولة: مزامنة شاملة'
+                    isAutoDownloading
+                      ? 'جاري تنزيل ومزامنة البيانات من السحابة...'
+                      : pendingSyncCount > 0
+                        ? `ملفات/عمليات بانتظار المزامنة: ${pendingSyncCount} | ضغطة: مزامنة سريعة | ضغطة مزدوجة أو مطولة: مزامنة شاملة`
+                        : 'ضغطة: مزامنة سريعة (صندوق التحديثات) | ضغطة مزدوجة أو مطولة: مزامنة شاملة'
                   }
                 >
-                  <RefreshCw size={18} className={isSyncingAll ? "animate-spin" : ""} />
-                  {!isSyncingAll && pendingSyncCount > 0 && (
-                    <span className="absolute -top-1.5 -right-1.5 bg-amber-600 text-white text-[10px] font-black rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center shadow-sm theme-preserve-white font-mono">
+                  <RefreshCw size={18} className={(isSyncingAll || isAutoDownloading) ? "animate-spin" : ""} />
+                  {pendingSyncCount > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 bg-amber-600 text-white text-[10px] font-black rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center shadow-sm theme-preserve-white font-mono z-10">
                       {pendingSyncCount > 99 ? '99+' : pendingSyncCount}
                     </span>
                   )}
-                  {isSyncingAll && (
-                    <span className="absolute -top-1 -right-1 text-[8px] font-black px-1 rounded bg-black/90 text-amber-400 border border-amber-500/30">
-                      {syncMode === 'advanced' ? 'شاملة' : 'سريعة'}
+                  {(isSyncingAll || isAutoDownloading) && (
+                    <span className="absolute -bottom-1.5 -left-1.5 text-[8px] font-black px-1 rounded bg-black/90 text-amber-400 border border-amber-500/30 z-10">
+                      {isAutoDownloading && !isSyncingAll ? 'تنزيل' : syncMode === 'advanced' ? 'شاملة' : 'سريعة'}
                     </span>
                   )}
                 </button>
