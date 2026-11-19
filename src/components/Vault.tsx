@@ -241,9 +241,12 @@ export function computeFundChronologicalStatement(
   // 2. Accumulate running balance
   let running = 0;
   return sorted.map(tx => {
-    const rawType = String(tx.type || '');
-    const isReceipt = rawType === 'receipt' || rawType === 'deposit' || rawType === 'invoice_payment' || rawType === 'inflow';
-    const amount = Math.abs(Number(tx.amount || 0));
+    const rawType = String(tx.type || '').toLowerCase().trim();
+    const isReceipt = rawType === 'receipt' || rawType === 'deposit' || rawType === 'invoice_payment' || rawType === 'inflow' || rawType === 'income';
+    const rawAmt = tx.receiptAmount !== undefined && tx.receiptAmount !== null && tx.receiptAmount !== ''
+      ? Number(tx.receiptAmount)
+      : Number(tx.amount || 0);
+    const amount = Math.abs(isNaN(rawAmt) ? 0 : rawAmt);
     const debit = isReceipt ? amount : 0;
     const credit = !isReceipt ? amount : 0;
 
@@ -913,8 +916,14 @@ export default function Vault({
         headers = ['اسم الصندوق', 'النوع', 'العملة', 'مجموع الواردات', 'مجموع النفقات', 'صافي التدفق النقدي', 'الرصيد الفعلي المتوفر'];
         rows = funds.map(f => {
           const fundTxs = transactions.filter(t => (t.fundId === f.id || (!t.fundId && t.fundName === f.name)) && isAccountingTransactionValid(t));
-          const inSum = fundTxs.filter(t => t.type === 'receipt' || t.type === 'deposit' || t.type === 'invoice_payment').reduce((acc, curr) => acc + Math.abs(Number(curr.amount || 0)), 0);
-          const outSum = fundTxs.filter(t => t.type === 'payment' || t.type === 'disbursement' || t.type === 'expense').reduce((acc, curr) => acc + Math.abs(Number(curr.amount || 0)), 0);
+          const inSum = fundTxs.filter(t => t.type === 'receipt' || t.type === 'deposit' || t.type === 'invoice_payment').reduce((acc, curr) => {
+            const rawAmt = curr.receiptAmount !== undefined && curr.receiptAmount !== null && curr.receiptAmount !== '' ? Number(curr.receiptAmount) : Number(curr.amount || 0);
+            return acc + Math.abs(isNaN(rawAmt) ? 0 : rawAmt);
+          }, 0);
+          const outSum = fundTxs.filter(t => t.type === 'payment' || t.type === 'disbursement' || t.type === 'expense').reduce((acc, curr) => {
+            const rawAmt = curr.receiptAmount !== undefined && curr.receiptAmount !== null && curr.receiptAmount !== '' ? Number(curr.receiptAmount) : Number(curr.amount || 0);
+            return acc + Math.abs(isNaN(rawAmt) ? 0 : rawAmt);
+          }, 0);
           return [
             `"${f.name.replace(/"/g, '""')}"`,
             f.type === 'cash' ? 'نقدي' : 'بنك',
@@ -1045,6 +1054,7 @@ export default function Vault({
   const [transferNotes, setTransferNotes] = useState<string>('');
   
   const [transferExchangeRate, setTransferExchangeRate] = useState<string>('1');
+  const [transferRateDirection, setTransferRateDirection] = useState<'multiply' | 'divide'>('multiply');
 
   // Track active user input in voucher & transfer forms to protect against background sync wipes
   const isFormDirty = Boolean(
@@ -1311,6 +1321,7 @@ export default function Vault({
     setTransferAmount('');
     setTransferNotes('');
     setTransferExchangeRate('1');
+    setTransferRateDirection('multiply');
 
     // 3. Clear messages/preview
     setErrorMsg(null);
@@ -1416,12 +1427,40 @@ export default function Vault({
     }
   }, [selectedCurrency, liabilityCurrency]);
 
+  const getCurrencyStrengthRank = (currCode: string): number => {
+    const norm = normalizeCurrencyCode(currCode);
+    if (norm === 'EUR') return 4;
+    if (norm === 'USD') return 3;
+    if (norm === 'SAR') return 2;
+    if (norm === 'YER') return 1;
+    return 2.5;
+  };
+
+  const computeTransferDestAmount = (
+    amountVal: number,
+    srcCurrency: string,
+    destCurrency: string,
+    rateStr: string,
+    direction: 'multiply' | 'divide'
+  ): number => {
+    if (!amountVal || isNaN(amountVal) || amountVal <= 0) return 0;
+    const normSrc = normalizeCurrencyCode(srcCurrency);
+    const normDest = normalizeCurrencyCode(destCurrency);
+    if (normSrc === normDest) {
+      return roundCurrencyAmount(amountVal, destCurrency);
+    }
+    const rate = parseFloat(rateStr);
+    if (isNaN(rate) || rate <= 0) return 0;
+    const rawDest = direction === 'multiply' ? amountVal * rate : amountVal / rate;
+    return roundCurrencyAmount(rawDest, destCurrency);
+  };
+
   const prevTransferPairRef = useRef({ src: '', dest: '' });
   useEffect(() => {
     const src = funds.find(f => f.id === transferSourceFundId);
     const dest = funds.find(f => f.id === transferDestFundId);
-    const srcCurr = src?.currency || '';
-    const destCurr = dest?.currency || '';
+    const srcCurr = src ? normalizeCurrencyCode(src.currency) : '';
+    const destCurr = dest ? normalizeCurrencyCode(dest.currency) : '';
 
     if (
       prevTransferPairRef.current.src === srcCurr &&
@@ -1431,15 +1470,20 @@ export default function Vault({
     }
     prevTransferPairRef.current = { src: srcCurr, dest: destCurr };
 
-    if (src && dest && src.currency !== dest.currency) {
-      setTransferExchangeRate(prev => {
-        if (prev && prev !== '1' && prev !== '3.8') return prev;
-        if ((src.currency === 'SAR' && dest.currency === 'USD') || (src.currency === 'USD' && dest.currency === 'SAR')) {
-          return '3.8';
-        }
-        return '1';
-      });
+    if (src && dest && srcCurr !== destCurr) {
+      const srcRank = getCurrencyStrengthRank(srcCurr);
+      const destRank = getCurrencyStrengthRank(destCurr);
+      // Stronger source currency -> weaker destination currency: multiply (e.g., 1 USD * 3.8 = 3.8 SAR, 1 USD * 535 = 535 YER)
+      // Weaker source currency -> stronger destination currency: divide (e.g., 3.8 SAR / 3.8 = 1 USD)
+      setTransferRateDirection(srcRank >= destRank ? 'multiply' : 'divide');
+
+      if ((srcCurr === 'SAR' && destCurr === 'USD') || (srcCurr === 'USD' && destCurr === 'SAR')) {
+        setTransferExchangeRate('3.8');
+      } else {
+        setTransferExchangeRate('1');
+      }
     } else {
+      setTransferRateDirection('multiply');
       setTransferExchangeRate('1');
     }
   }, [transferSourceFundId, transferDestFundId, funds]);
@@ -1634,8 +1678,9 @@ export default function Vault({
   const handlePostTransfer = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isPosting) return;
-    
-    if (!transferSourceFundId || !transferDestFundId || !transferAmount || parseFloat(transferAmount) <= 0) {
+
+    const rawParsedAmount = parseFloat(transferAmount);
+    if (!transferSourceFundId || !transferDestFundId || !transferAmount || isNaN(rawParsedAmount) || rawParsedAmount <= 0) {
       setErrorMsg('الرجاء تعبئة بيانات التحويل بشكل صحيح والمبلغ أكبر من صفر');
       return;
     }
@@ -1649,65 +1694,157 @@ export default function Vault({
     const destFund = funds.find(f => f.id === transferDestFundId);
 
     if (!sourceFund || !destFund) {
-      setErrorMsg('أحد الصناديق غير موجود');
+      setErrorMsg('أحد الصناديق المحددة غير موجود');
       return;
     }
 
-    if (sourceFund.currency !== destFund.currency) {
-      const rate = parseFloat(transferExchangeRate);
-      if (isNaN(rate) || rate <= 0) {
-        setErrorMsg('الرجاء إدخال سعر صرف صحيح أكبر من الصفر');
-        return;
-      }
+    const srcCurrNorm = normalizeCurrencyCode(sourceFund.currency);
+    const destCurrNorm = normalizeCurrencyCode(destFund.currency);
+    const isCrossCurrency = srcCurrNorm !== destCurrNorm;
+
+    const rate = isCrossCurrency ? parseFloat(transferExchangeRate) : 1;
+    if (isCrossCurrency && (isNaN(rate) || rate <= 0)) {
+      setErrorMsg('الرجاء إدخال سعر صرف صحيح أكبر من الصفر');
+      return;
+    }
+
+    const sourceOutAmount = roundCurrencyAmount(rawParsedAmount, sourceFund.currency);
+    const destAmount = computeTransferDestAmount(
+      sourceOutAmount,
+      sourceFund.currency,
+      destFund.currency,
+      transferExchangeRate,
+      transferRateDirection
+    );
+
+    if (sourceOutAmount <= 0 || destAmount <= 0) {
+      setErrorMsg('قيمة التحويل المحسوبة للصندوق الوجهة تساوي صفراً! يرجى التحقق من المبلغ وسعر الصرف واتجاه التحويل (× أو ÷).');
+      return;
     }
 
     setIsPosting(true);
     try {
-      const parsedAmount = parseFloat(transferAmount);
       const timestampIso = new Date().toISOString();
+      const txGroupId = `transfer_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
 
-      let destAmount = parsedAmount;
-      let finalTransferNotesSrc = transferNotes ? ' - ' + transferNotes : '';
-      let finalTransferNotesDest = transferNotes ? ' - ' + transferNotes : '';
+      // Ensure required columns exist in local SQLite before writing
+      try {
+        await localDb.run('ALTER TABLE vault_transactions ADD COLUMN linkedTxId TEXT');
+      } catch (_) {}
+      try {
+        await localDb.run('ALTER TABLE vault_transactions ADD COLUMN statementNote TEXT');
+      } catch (_) {}
 
-      if (sourceFund.currency !== destFund.currency) {
-        const rate = parseFloat(transferExchangeRate) || 1;
-        destAmount = rate > 0 ? Math.round((parsedAmount / rate) * 100) / 100 : 0;
-        
-        const rateNotes = ` [سعر الصرف: ${rate} لعملة ${sourceFund.currency} مقابل ${destFund.currency}]`;
-        finalTransferNotesSrc += rateNotes;
-        finalTransferNotesDest += rateNotes;
-      }
+      // Fetch authoritative next voucher numbers directly from SQLite to prevent collisions
+      let baseVoucherNum = Number(nextVoucherNum || 1) - 1;
+      try {
+        const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+        baseVoucherNum = Number(resNum.values?.[0]?.maxNum || 0);
+      } catch (_) {}
+      const outVoucherNum = baseVoucherNum + 1;
+      const inVoucherNum = baseVoucherNum + 2;
 
-      // Create transaction for Source (payment/outgoing)
+      const userNote = transferNotes.trim();
+      const opSymbol = transferRateDirection === 'multiply' ? '×' : '÷';
+      const rateSuffix = isCrossCurrency
+        ? ` [سعر الصرف: ${rate} (${opSymbol}) | ${sourceOutAmount} ${srcCurrNorm} -> ${destAmount} ${destCurrNorm}]`
+        : '';
+      const notesTail = (userNote ? ` - ${userNote}` : '') + rateSuffix;
+
       const txIdOut = `vtx-${Math.random().toString(36).substring(2, 8)}`;
       const txIdIn = `vtx-${Math.random().toString(36).substring(2, 8)}`;
-      await ProviderFactory.getProvider().setDoc('vault_transactions', txIdOut, {
-          linkedTxId: txIdIn,
-          id: txIdOut, currency: sourceFund.currency, amount: -parsedAmount, customerName: 'تحويل داخلي', invoiceNumber: '',
-          userName: user.name || 'المدير العام', userNumber: user.userNumber || 1, userId: user.id || 'none', timestamp: timestampIso, type: 'payment',
-          notes: `تحويل صادر إلى الصندوق: ${destFund.name}${finalTransferNotesSrc}`, updatedAt: timestampIso, voucherNumber: nextVoucherNum, transactionCategory: 'تحويل بين الصناديق',
-          fundId: sourceFund.id, fundName: sourceFund.name, customerId: ''
-      });
+      const provider = ProviderFactory.getProvider();
 
-      // Create transaction for Dest (receipt/incoming)
-      await ProviderFactory.getProvider().setDoc('vault_transactions', txIdIn, {
-          linkedTxId: txIdOut,
-          id: txIdIn, currency: destFund.currency, amount: destAmount, customerName: 'تحويل داخلي', invoiceNumber: '',
-          userName: user.name || 'المدير العام', userNumber: user.userNumber || 1, userId: user.id || 'none', timestamp: timestampIso, type: 'receipt',
-          notes: `تحويل وارد من الصندوق: ${sourceFund.name}${finalTransferNotesDest}`, updatedAt: timestampIso, voucherNumber: Number(nextVoucherNum) + 1, transactionCategory: 'تحويل بين الصناديق',
-          fundId: destFund.id, fundName: destFund.name, customerId: ''
-      });
+      const outStatementNote = `تحويل صادر من ${sourceFund.name} إلى ${destFund.name} بمبلغ ${sourceOutAmount.toLocaleString('en-US')} ${sourceFund.currency}${userNote ? ` - ${userNote}` : ''}`;
+      const inStatementNote = `تحويل وارد إلى ${destFund.name} من ${sourceFund.name} بمبلغ ${destAmount.toLocaleString('en-US')} ${destFund.currency}${userNote ? ` - ${userNote}` : ''}`;
 
-      // Adjust balances
-      await ProviderFactory.getProvider().updateDoc('fin_funds', sourceFund.id, { balance: { type: 'increment', value: -parsedAmount } });
-      await ProviderFactory.getProvider().updateDoc('fin_funds', destFund.id, { balance: { type: 'increment', value: destAmount } });
+      // 1. Create outgoing voucher for Source Fund (grouped atomically)
+      await provider.setDoc('vault_transactions', txIdOut, {
+        id: txIdOut,
+        linkedTxId: txIdIn,
+        currency: sourceFund.currency,
+        amount: -sourceOutAmount,
+        customerName: 'تحويل داخلي',
+        invoiceNumber: '',
+        invoiceId: '',
+        userName: user.name || 'المدير العام',
+        userNumber: user.userNumber || 1,
+        userId: user.id || 'none',
+        timestamp: timestampIso,
+        createdAt: timestampIso,
+        updatedAt: timestampIso,
+        type: 'payment',
+        notes: `تحويل صادر إلى الصندوق: ${destFund.name}${notesTail}`,
+        voucherNumber: outVoucherNum,
+        transactionCategory: 'تحويل بين الصناديق',
+        fundId: sourceFund.id,
+        fundName: sourceFund.name,
+        customerId: '',
+        isReversed: 0,
+        isReversal: 0,
+        reversalOf: '',
+        status: 'active',
+        paymentType: sourceFund.type === 'cash' ? 1 : 2,
+        receiptCurrency: sourceFund.currency,
+        receiptAmount: sourceOutAmount,
+        liabilityCurrency: sourceFund.currency,
+        liabilityAmount: sourceOutAmount,
+        exchangeRate: isCrossCurrency ? rate : 1,
+        statementNote: outStatementNote
+      }, undefined, txGroupId, true);
 
-      setSuccessMsg(`تم التحويل بنجاح من ${sourceFund.name} إلى ${destFund.name}`);
-      setTimeout(() => setSuccessMsg(null), 3000);
-      
+      // 2. Create incoming voucher for Destination Fund (grouped atomically)
+      await provider.setDoc('vault_transactions', txIdIn, {
+        id: txIdIn,
+        linkedTxId: txIdOut,
+        currency: destFund.currency,
+        amount: destAmount,
+        customerName: 'تحويل داخلي',
+        invoiceNumber: '',
+        invoiceId: '',
+        userName: user.name || 'المدير العام',
+        userNumber: user.userNumber || 1,
+        userId: user.id || 'none',
+        timestamp: timestampIso,
+        createdAt: timestampIso,
+        updatedAt: timestampIso,
+        type: 'receipt',
+        notes: `تحويل وارد من الصندوق: ${sourceFund.name}${notesTail}`,
+        voucherNumber: inVoucherNum,
+        transactionCategory: 'تحويل بين الصناديق',
+        fundId: destFund.id,
+        fundName: destFund.name,
+        customerId: '',
+        isReversed: 0,
+        isReversal: 0,
+        reversalOf: '',
+        status: 'active',
+        paymentType: destFund.type === 'cash' ? 1 : 2,
+        receiptCurrency: destFund.currency,
+        receiptAmount: destAmount,
+        liabilityCurrency: destFund.currency,
+        liabilityAmount: destAmount,
+        exchangeRate: isCrossCurrency ? rate : 1,
+        statementNote: inStatementNote
+      }, undefined, txGroupId, true);
+
+      // 3. Adjust both fund balances atomically with updatedAt
+      await provider.updateDoc('fin_funds', sourceFund.id, {
+        balance: { type: 'increment', value: -sourceOutAmount },
+        updatedAt: timestampIso
+      }, txGroupId, true);
+      await provider.updateDoc('fin_funds', destFund.id, {
+        balance: { type: 'increment', value: destAmount },
+        updatedAt: timestampIso
+      }, txGroupId, false);
+
+      setSuccessMsg(
+        `تم التحويل بنجاح: خصم ${sourceOutAmount.toLocaleString('en-US')} ${sourceFund.currency} من (${sourceFund.name}) وإيداع ${destAmount.toLocaleString('en-US')} ${destFund.currency} في (${destFund.name})`
+      );
+      setTimeout(() => setSuccessMsg(null), 4000);
+
       resetForm();
-      
+
       await loadDatabaseData();
       await calculateNextVoucherNumber();
 
@@ -1743,16 +1880,34 @@ export default function Vault({
     console.log("handleReverseEntry proceeding to post reversal");
     try {
       const timestampIso = new Date().toISOString();
-      
-      let txsToReverse = [tx];
-      if (tx.linkedTxId) {
-         try {
-           const resLinked = await localDb.query("SELECT * FROM vault_transactions WHERE id = ?", [tx.linkedTxId]);
-           if (resLinked.values && resLinked.values.length > 0) {
-             txsToReverse.push(resLinked.values[0]);
-           }
-         } catch(e) {}
-      }
+      const txGroupId = `rev_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+
+      const txsToReverseMap = new Map<string, any>();
+      txsToReverseMap.set(tx.id, tx);
+
+      // Search both in-memory transactions and local SQLite for linked transfer counterpart
+      transactions.forEach(t => {
+        if (
+          (tx.linkedTxId && t.id === tx.linkedTxId) ||
+          (t.linkedTxId && t.linkedTxId === tx.id)
+        ) {
+          txsToReverseMap.set(t.id, t);
+        }
+      });
+
+      try {
+        const resLinked = await localDb.query(
+          "SELECT * FROM vault_transactions WHERE id = ? OR linkedTxId = ?",
+          [tx.linkedTxId || '___none___', tx.id]
+        );
+        (resLinked.values || []).forEach((row: any) => {
+          if (row?.id && !txsToReverseMap.has(row.id)) {
+            txsToReverseMap.set(row.id, row);
+          }
+        });
+      } catch (e) {}
+
+      const txsToReverse = Array.from(txsToReverseMap.values());
 
       // Get next voucher number
       const resNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
@@ -1763,7 +1918,7 @@ export default function Vault({
           currentNextNum += 1;
 
           const rawType = String(t.type || '');
-          const isOriginalReceipt = rawType === 'receipt' || rawType === 'invoice_payment' || rawType === 'deposit' || rawType === 'income';
+          const isOriginalReceipt = rawType === 'receipt' || rawType === 'invoice_payment' || rawType === 'deposit' || rawType === 'income' || rawType === 'inflow';
           const reverseAmount = -Number(t.amount);
           const originalVoucherNotes = t.notes || '';
           const updatedOriginalNotes = `${originalVoucherNotes} [تم عكس القيد بواسطة القيد رقم ${currentNextNum}]`;
@@ -1814,7 +1969,7 @@ export default function Vault({
             status: 'reversed',
             notes: updatedOriginalNotes, 
             updatedAt: timestampIso 
-          });
+          }, txGroupId, true);
           await localDb.run("UPDATE vault_transactions SET isReversed = 1, status = 'reversed', notes = ?, updatedAt = ? WHERE id = ?", [updatedOriginalNotes, timestampIso, t.id]);
 
           // 4. Insert reversal counter-transaction across LocalProvider, SQLite, and Firestore
@@ -1847,7 +2002,7 @@ export default function Vault({
             receiptCurrency: t.receiptCurrency || t.currency
           };
 
-          await ProviderFactory.getProvider().setDoc('vault_transactions', reversalTxId, reversalTxPayload);
+          await ProviderFactory.getProvider().setDoc('vault_transactions', reversalTxId, reversalTxPayload, undefined, txGroupId, true);
 
           // 5. Adjust target Fund Balance immediately across all layers:
           // Reversing a receipt decreases fund balance (-fundAmount); reversing a payment increases fund balance (+fundAmount)
@@ -1855,11 +2010,14 @@ export default function Vault({
             const fundDelta = isOriginalReceipt ? -fundAmount : fundAmount;
 
             try {
-              await ProviderFactory.getProvider().updateDoc('fin_funds', targetFundId, { balance: { type: 'increment', value: fundDelta } });
+              await ProviderFactory.getProvider().updateDoc('fin_funds', targetFundId, {
+                balance: { type: 'increment', value: fundDelta },
+                updatedAt: timestampIso
+              }, txGroupId);
             } catch (e) {}
 
             try {
-              await localDb.run("UPDATE fin_funds SET balance = balance + ? WHERE id = ?", [fundDelta, targetFundId]);
+              await localDb.run("UPDATE fin_funds SET balance = balance + ?, updatedAt = ? WHERE id = ?", [fundDelta, timestampIso, targetFundId]);
             } catch (e) {}
 
             try {
@@ -1997,51 +2155,85 @@ export default function Vault({
     if (!tx || !tx.id) return;
     setIsDeletingTx(true);
     try {
-      // 1. Identify all linked transactions in the pair (Original + Reversal counterpart)
+      // 1. Identify all linked transactions (Reversal pairs + Linked transfer counterparts)
       const txGroupMap = new Map<string, any>();
       txGroupMap.set(tx.id, tx);
 
-      // A. If tx is a reversal entry, find its original
-      if (tx.reversalOf) {
-        const origFromState = transactions.find(t => t.id === tx.reversalOf);
-        if (origFromState) txGroupMap.set(origFromState.id, origFromState);
-        else txGroupMap.set(tx.reversalOf, { id: tx.reversalOf });
-      }
-
-      // B. If tx is an original entry that was reversed, find all counterpart reversals
-      transactions.forEach(t => {
-        if (t.reversalOf === tx.id || (tx.reversalOf && t.id === tx.reversalOf)) {
-          txGroupMap.set(t.id, t);
-        }
-      });
-
-      // C. Also query SQLite to discover any counterpart record not in current memory state
-      try {
-        const dbLinks = await localDb.query(
-          `SELECT * FROM vault_transactions 
-           WHERE id = ? OR reversalOf = ? OR id = ? OR (reversalOf IS NOT NULL AND reversalOf = ?)`,
-          [tx.reversalOf || '___none___', tx.id, tx.id, tx.reversalOf || '___none___']
-        );
-        (dbLinks.values || []).forEach((row: any) => {
-          if (row && row.id) {
-            if (!txGroupMap.has(row.id) || !txGroupMap.get(row.id).fundId) {
-              txGroupMap.set(row.id, row);
-            }
-            if (row.reversalOf && !txGroupMap.has(row.reversalOf)) {
-              txGroupMap.set(row.reversalOf, { id: row.reversalOf });
-            }
+      const collectFromState = () => {
+        let added = false;
+        const currentIds = Array.from(txGroupMap.keys());
+        const currentValues = Array.from(txGroupMap.values());
+        for (const item of currentValues) {
+          if (item?.reversalOf && !txGroupMap.has(item.reversalOf)) {
+            const match = transactions.find(t => t.id === item.reversalOf);
+            txGroupMap.set(item.reversalOf, match || { id: item.reversalOf });
+            added = true;
           }
-        });
-      } catch (e) {
-        console.warn("SQLite lookup for linked counterparts:", e);
+          if (item?.linkedTxId && !txGroupMap.has(item.linkedTxId)) {
+            const match = transactions.find(t => t.id === item.linkedTxId);
+            txGroupMap.set(item.linkedTxId, match || { id: item.linkedTxId });
+            added = true;
+          }
+        }
+        for (const t of transactions) {
+          if (
+            !txGroupMap.has(t.id) &&
+            (
+              (t.reversalOf && currentIds.includes(t.reversalOf)) ||
+              (t.linkedTxId && currentIds.includes(t.linkedTxId))
+            )
+          ) {
+            txGroupMap.set(t.id, t);
+            added = true;
+          }
+        }
+        return added;
+      };
+
+      for (let pass = 0; pass < 4; pass++) {
+        const changedState = collectFromState();
+        let changedDb = false;
+        try {
+          const seedIds = Array.from(txGroupMap.keys());
+          const extraLinkIds = Array.from(txGroupMap.values())
+            .flatMap(v => [v?.reversalOf, v?.linkedTxId])
+            .filter((id): id is string => Boolean(id));
+          const lookupIds = Array.from(new Set([...seedIds, ...extraLinkIds]));
+          if (lookupIds.length > 0) {
+            const ph = lookupIds.map(() => '?').join(',');
+            const dbLinks = await localDb.query(
+              `SELECT * FROM vault_transactions
+               WHERE id IN (${ph}) OR reversalOf IN (${ph}) OR linkedTxId IN (${ph})`,
+              [...lookupIds, ...lookupIds, ...lookupIds]
+            );
+            (dbLinks.values || []).forEach((row: any) => {
+              if (row && row.id) {
+                const prev = txGroupMap.get(row.id);
+                if (!prev || !prev.fundId) {
+                  txGroupMap.set(row.id, row);
+                  changedDb = true;
+                }
+                if (row.reversalOf && !txGroupMap.has(row.reversalOf)) {
+                  txGroupMap.set(row.reversalOf, { id: row.reversalOf });
+                  changedDb = true;
+                }
+                if (row.linkedTxId && !txGroupMap.has(row.linkedTxId)) {
+                  txGroupMap.set(row.linkedTxId, { id: row.linkedTxId });
+                  changedDb = true;
+                }
+              }
+            });
+          }
+        } catch (e) {
+          console.warn("SQLite lookup for linked counterparts:", e);
+        }
+        if (!changedState && !changedDb) break;
       }
 
       const allTxsToDelete = Array.from(txGroupMap.values());
       const allIdsToDelete = Array.from(txGroupMap.keys());
 
       // 2. Adjust Fund Balance(s) based on net effect of deleting the set
-      // When deleting both an original receipt and its reversal payment in the same fund,
-      // the net effect is (+amt - amt) = 0, perfectly preserving the physical fund balance!
       const fundAdjustments = new Map<string, number>();
 
       for (const item of allTxsToDelete) {
@@ -2053,7 +2245,7 @@ export default function Vault({
         ));
         if (fundAmt <= 0) continue;
 
-        const isReceipt = item.type === 'receipt' || item.type === 'invoice_payment' || item.type === 'deposit';
+        const isReceipt = item.type === 'receipt' || item.type === 'invoice_payment' || item.type === 'deposit' || item.type === 'income' || item.type === 'inflow';
         // Deleting receipt decreases fund balance (-fundAmt); deleting payment increases fund balance (+fundAmt)
         const delta = isReceipt ? -fundAmt : fundAmt;
 
@@ -2061,13 +2253,15 @@ export default function Vault({
         fundAdjustments.set(item.fundId, currentAdj + delta);
       }
 
+      const deleteNowIso = new Date().toISOString();
       for (const [fId, adj] of fundAdjustments.entries()) {
         if (Math.abs(adj) > 0.0001) {
           try {
             await ProviderFactory.getProvider().updateDoc('fin_funds', fId, {
-              balance: { type: 'increment', value: adj }
+              balance: { type: 'increment', value: adj },
+              updatedAt: deleteNowIso
             });
-            await localDb.run("UPDATE fin_funds SET balance = balance + ? WHERE id = ?", [adj, fId]);
+            await localDb.run("UPDATE fin_funds SET balance = balance + ?, updatedAt = ? WHERE id = ?", [adj, deleteNowIso, fId]);
           } catch (e) {
             console.warn(`Fund ${fId} balance adjustment error:`, e);
           }
@@ -4166,157 +4360,240 @@ export default function Vault({
           })()}
 
           {/* TRANSFER FUNDS VIEW */}
-          {activeSegment === 'transfer' && (
-            <div className="space-y-4 animate-fade-in">
-              <div className="flex items-center gap-3 border-b border-white/5 pb-3">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 bg-blue-500/10 rounded-xl text-blue-400">
-                    <ArrowRightLeft size={18} />
+          {activeSegment === 'transfer' && (() => {
+            const srcFund = funds.find(f => f.id === transferSourceFundId);
+            const destFund = funds.find(f => f.id === transferDestFundId);
+            const srcCurrNorm = srcFund ? normalizeCurrencyCode(srcFund.currency) : '';
+            const destCurrNorm = destFund ? normalizeCurrencyCode(destFund.currency) : '';
+            const isSameCurr = Boolean(srcFund && destFund && srcCurrNorm === destCurrNorm);
+            const parsedAmt = parseFloat(transferAmount) || 0;
+            const rateVal = parseFloat(transferExchangeRate) || 0;
+            const previewDestAmt = srcFund && destFund
+              ? computeTransferDestAmount(parsedAmt, srcFund.currency, destFund.currency, transferExchangeRate, transferRateDirection)
+              : 0;
+            const srcBalance = srcFund ? parseFundBalance(srcFund.balance) : 0;
+            const isOverBalance = Boolean(srcFund && parsedAmt > srcBalance);
+            const isRateOneWarning = Boolean(srcFund && destFund && !isSameCurr && rateVal === 1);
+
+            return (
+              <div className="space-y-4 animate-fade-in">
+                <div className="flex items-center justify-between gap-3 border-b border-white/5 pb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-blue-500/10 rounded-xl text-blue-400">
+                      <ArrowRightLeft size={18} />
+                    </div>
+                    <div>
+                      <h2 className="text-base font-black text-white font-cairo leading-none">التحويل بين الصناديق</h2>
+                      <p className="text-[10px] text-gray-400 font-cairo mt-1">نقل الأموال بين الصناديق المالية (بنفس العملة أو بعملات مختلفة وفق سعر الصرف)</p>
+                    </div>
                   </div>
-                  <div>
-                    <h2 className="text-base font-black text-white font-cairo leading-none">التحويل بين الصناديق</h2>
-                    <p className="text-[10px] text-gray-400 font-cairo mt-1">نقل الأموال بين الصناديق المختلفة بنفس العملة</p>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setActiveSegment('dashboard');
+                      resetForm();
+                    }}
+                    className="p-1.5 bg-white/5 hover:bg-white/10 rounded-full text-gray-400 hover:text-white transition-all cursor-pointer"
+                    title="رجوع"
+                  >
+                    <ArrowRight size={16} />
+                  </button>
                 </div>
-              </div>
 
-              <form onSubmit={handlePostTransfer} className="bg-[#141414] border border-white/5 rounded-2xl p-4 sm:p-5">
-                <div className="max-w-xl mx-auto space-y-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                    {/* Source Fund */}
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-bold text-gray-400 font-cairo flex items-center gap-1.5">
-                        <Wallet size={12} className="text-rose-400" />
-                        الصندوق المُحول منه (الرصيد يقل)
-                      </label>
-                      <select
-                        value={transferSourceFundId}
-                        onChange={(e) => setTransferSourceFundId(e.target.value)}
-                        className="w-full bg-[#101010] border border-white/10 rounded-xl px-3 py-2 text-[11px] font-cairo text-white focus:border-blue-500/50 outline-none transition-all"
-                        required
-                      >
-                        <option value="" disabled className="text-gray-600">اختر الصندوق المصدر...</option>
-                        {funds.filter(f => f.status === 'active').map(f => (
-                          <option key={f.id} value={f.id} className="bg-[#1c1c1c]">{f.name} ({f.currency}) - الرصيد: {parseFundBalance(f.balance).toLocaleString('en-US')}</option>
-                        ))}
-                      </select>
-                    </div>
-
-                    {/* Destination Fund */}
-                    <div className="space-y-1.5">
-                      <label className="text-[11px] font-bold text-gray-400 font-cairo flex items-center gap-1.5">
-                        <Wallet size={12} className="text-emerald-400" />
-                        الصندوق المُحول إليه (الرصيد يزداد)
-                      </label>
-                      <select
-                        value={transferDestFundId}
-                        onChange={(e) => setTransferDestFundId(e.target.value)}
-                        className="w-full bg-[#101010] border border-white/10 rounded-xl px-3 py-2 text-[11px] font-cairo text-white focus:border-blue-500/50 outline-none transition-all"
-                        required
-                      >
-                        <option value="" disabled className="text-gray-600">اختر الصندوق الوجهة...</option>
-                        {funds.filter(f => f.status === 'active').map(f => (
-                          <option key={f.id} value={f.id} className="bg-[#1c1c1c]">{f.name} ({f.currency}) - الرصيد: {parseFundBalance(f.balance).toLocaleString('en-US')}</option>
-                        ))}
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-gray-400 font-cairo">المبلغ المراد تحويله</label>
-                    <div className="relative">
-                      <input 
-                        type="number"
-                        min="0.01"
-                        step="0.01"
-                        dir="ltr"
-                        lang="en"
-                        onFocus={e => { e.target.select(); handleInputFocus(e); }}
-                        value={transferAmount}
-                        onChange={(e) => setTransferAmount(e.target.value)}
-                        placeholder="0.00"
-                        className="w-full bg-[#101010] border border-white/10 rounded-xl px-3 py-2 text-base font-mono font-bold text-blue-400 focus:border-blue-500/50 outline-none transition-all text-center"
-                        required
-                      />
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2 py-2 border-t border-white/5 mt-2">
-                    <div className="grid grid-cols-2 gap-2">
-                      <div>
-                        <label className="block text-[9px] text-gray-400 font-bold mb-1 font-cairo text-center">
-                          صرف التحويل
+                <form onSubmit={handlePostTransfer} className="bg-[#141414] border border-white/5 rounded-2xl p-4 sm:p-5">
+                  <div className="max-w-xl mx-auto space-y-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                      {/* Source Fund */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-gray-400 font-cairo flex items-center gap-1.5">
+                          <Wallet size={12} className="text-rose-400" />
+                          الصندوق المُحول منه (الرصيد يقل)
                         </label>
+                        <select
+                          value={transferSourceFundId}
+                          onChange={(e) => setTransferSourceFundId(e.target.value)}
+                          className="w-full bg-[#101010] border border-white/10 rounded-xl px-3 py-2 text-[11px] font-cairo text-white focus:border-blue-500/50 outline-none transition-all"
+                          required
+                        >
+                          <option value="" disabled className="text-gray-600">اختر الصندوق المصدر...</option>
+                          {funds.filter(f => f.status === 'active').map(f => (
+                            <option key={f.id} value={f.id} className="bg-[#1c1c1c]">{f.name} ({f.currency}) - الرصيد: {parseFundBalance(f.balance).toLocaleString('en-US')}</option>
+                          ))}
+                        </select>
+                      </div>
+
+                      {/* Destination Fund */}
+                      <div className="space-y-1.5">
+                        <label className="text-[11px] font-bold text-gray-400 font-cairo flex items-center gap-1.5">
+                          <Wallet size={12} className="text-emerald-400" />
+                          الصندوق المُحول إليه (الرصيد يزداد)
+                        </label>
+                        <select
+                          value={transferDestFundId}
+                          onChange={(e) => setTransferDestFundId(e.target.value)}
+                          className="w-full bg-[#101010] border border-white/10 rounded-xl px-3 py-2 text-[11px] font-cairo text-white focus:border-blue-500/50 outline-none transition-all"
+                          required
+                        >
+                          <option value="" disabled className="text-gray-600">اختر الصندوق الوجهة...</option>
+                          {funds.filter(f => f.status === 'active').map(f => (
+                            <option key={f.id} value={f.id} className="bg-[#1c1c1c]">{f.name} ({f.currency}) - الرصيد: {parseFundBalance(f.balance).toLocaleString('en-US')}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <label className="text-[11px] font-bold text-gray-400 font-cairo">
+                          المبلغ المراد تحويله {srcFund ? `(${srcFund.currency})` : ''}
+                        </label>
+                        {srcFund && (
+                          <span className="text-[10px] font-mono text-gray-400">
+                            المتاح: <strong className={srcBalance >= 0 ? 'text-emerald-400' : 'text-rose-400'}>{srcBalance.toLocaleString('en-US')} {srcFund.currency}</strong>
+                          </span>
+                        )}
+                      </div>
+                      <div className="relative">
                         <input
-                          type="text"
-                          inputMode="decimal"
+                          type="number"
+                          min="0.01"
+                          step="0.01"
                           dir="ltr"
                           lang="en"
-                          value={(() => {
-                            const src = funds.find(f => f.id === transferSourceFundId);
-                            const dest = funds.find(f => f.id === transferDestFundId);
-                            return (src && dest && src.currency === dest.currency) ? '1' : transferExchangeRate;
-                          })()}
-                          disabled={(() => {
-                            const src = funds.find(f => f.id === transferSourceFundId);
-                            const dest = funds.find(f => f.id === transferDestFundId);
-                            return !src || !dest || src.currency === dest.currency;
-                          })()}
-                          onFocus={e => e.target.select()}
-                          onChange={(e) => {
-                            const val = e.target.value.replace(/[^0-9.]/g, '');
-                            const parts = val.split('.');
-                            if (parts.length > 2) return;
-                            setTransferExchangeRate(val);
-                          }}
-                          className="w-full h-9 bg-black/40 border border-white/10 rounded-xl px-2 py-1 text-xs font-bold font-mono focus:outline-none focus:border-blue-500 text-center text-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
-                          placeholder="1.00"
+                          onFocus={e => { e.target.select(); handleInputFocus(e); }}
+                          value={transferAmount}
+                          onChange={(e) => setTransferAmount(e.target.value)}
+                          placeholder="0.00"
+                          className="w-full bg-[#101010] border border-white/10 rounded-xl px-3 py-2 text-base font-mono font-bold text-blue-400 focus:border-blue-500/50 outline-none transition-all text-center"
+                          required
                         />
                       </div>
-                      <div>
-                        <label className="block text-[9px] text-blue-400 font-bold mb-1 font-cairo text-center">
-                          المعادل بالوجهة
-                        </label>
-                        <div className="w-full h-9 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center text-center font-mono text-xs font-black text-blue-300" dir="ltr">
-                          {(() => {
-                            const src = funds.find(f => f.id === transferSourceFundId);
-                            const dest = funds.find(f => f.id === transferDestFundId);
-                            if (src && dest && src.currency === dest.currency) return (parseFloat(transferAmount) || 0).toFixed(2);
-                            const rate = parseFloat(transferExchangeRate) || 1;
-                            return rate > 0 ? ((parseFloat(transferAmount) || 0) / rate).toFixed(2) : '0.00';
-                          })()}
+                    </div>
+
+                    {isOverBalance && (
+                      <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-2.5 flex items-center gap-2 text-[11px] text-amber-300 font-cairo">
+                        <AlertTriangle size={15} className="text-amber-400 shrink-0" />
+                        <span>تنبيه: المبلغ المطلوب تحويله أكبر من الرصيد الحالي المتوفر في الصندوق المصدر ({srcBalance.toLocaleString('en-US')} {srcFund?.currency}).</span>
+                      </div>
+                    )}
+
+                    <div className="flex flex-col gap-2.5 py-2 border-t border-white/5 mt-2">
+                      {srcFund && destFund && !isSameCurr && (
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 bg-white/[0.03] border border-white/5 rounded-xl p-2.5">
+                          <span className="text-[10px] font-bold text-gray-300 font-cairo">طريقة احتساب الصرف:</span>
+                          <div className="flex items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() => setTransferRateDirection('multiply')}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold font-cairo transition-all cursor-pointer ${
+                                transferRateDirection === 'multiply'
+                                  ? 'bg-blue-600 text-white shadow'
+                                  : 'bg-white/5 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              ضرب (×)
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setTransferRateDirection('divide')}
+                              className={`px-2.5 py-1 rounded-lg text-[10px] font-bold font-cairo transition-all cursor-pointer ${
+                                transferRateDirection === 'divide'
+                                  ? 'bg-blue-600 text-white shadow'
+                                  : 'bg-white/5 text-gray-400 hover:text-white'
+                              }`}
+                            >
+                              قسمة (÷)
+                            </button>
+                          </div>
+                        </div>
+                      )}
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="block text-[9px] text-gray-400 font-bold mb-1 font-cairo text-center">
+                            صرف التحويل {srcFund && destFund && !isSameCurr ? `(${transferRateDirection === 'multiply' ? `${srcCurrNorm} × سعر = ${destCurrNorm}` : `${srcCurrNorm} ÷ سعر = ${destCurrNorm}`})` : ''}
+                          </label>
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            dir="ltr"
+                            lang="en"
+                            value={(!srcFund || !destFund || isSameCurr) ? '1' : transferExchangeRate}
+                            disabled={!srcFund || !destFund || isSameCurr}
+                            onFocus={e => e.target.select()}
+                            onChange={(e) => {
+                              const val = e.target.value.replace(/[^0-9.]/g, '');
+                              const parts = val.split('.');
+                              if (parts.length > 2) return;
+                              setTransferExchangeRate(val);
+                            }}
+                            className="w-full h-9 bg-black/40 border border-white/10 rounded-xl px-2 py-1 text-xs font-bold font-mono focus:outline-none focus:border-blue-500 text-center text-blue-400 disabled:opacity-50 disabled:cursor-not-allowed"
+                            placeholder="1.00"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[9px] text-blue-400 font-bold mb-1 font-cairo text-center">
+                            المعادل بالوجهة {destFund ? `(${destFund.currency})` : ''}
+                          </label>
+                          <div className="w-full h-9 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center justify-center text-center font-mono text-xs font-black text-blue-300" dir="ltr">
+                            {previewDestAmt.toLocaleString('en-US', {
+                              minimumFractionDigits: destCurrNorm === 'YER' ? 0 : 2,
+                              maximumFractionDigits: destCurrNorm === 'YER' ? 0 : 2
+                            })}
+                          </div>
                         </div>
                       </div>
+
+                      {srcFund && destFund && !isSameCurr && parsedAmt > 0 && rateVal > 0 && (
+                        <div className="bg-blue-500/10 border border-blue-500/20 rounded-xl px-3 py-2 text-center font-cairo text-[11px] text-blue-200">
+                          المعادلة: <span className="font-mono font-bold" dir="ltr">{parsedAmt.toLocaleString('en-US')} {srcCurrNorm} {transferRateDirection === 'multiply' ? '×' : '÷'} {rateVal} = {previewDestAmt.toLocaleString('en-US')} {destCurrNorm}</span>
+                        </div>
+                      )}
+
+                      {isRateOneWarning && (
+                        <div className="bg-rose-500/10 border border-rose-500/30 rounded-xl p-2.5 flex items-center gap-2 text-[11px] text-rose-300 font-cairo">
+                          <AlertTriangle size={15} className="text-rose-400 shrink-0" />
+                          <span>تنبيه: عملة المصدر ({srcCurrNorm}) تختلف عن عملة الوجهة ({destCurrNorm}) وسعر الصرف ما يزال (1)! يرجى إدخال سعر الصرف الحقيقي قبل التنفيذ.</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] font-bold text-gray-400 font-cairo flex items-center gap-1.5">
+                        <FileText size={12} />
+                        البيان / ملاحظات التحويل
+                      </label>
+                      <textarea
+                        value={transferNotes}
+                        onChange={(e) => setTransferNotes(e.target.value)}
+                        placeholder="أدخل سبب أو ملاحظات التحويل (اختياري)..."
+                        className="w-full bg-[#101010] border border-white/10 rounded-xl px-3 py-2 text-[11px] font-cairo text-white focus:border-blue-500/50 outline-none transition-all resize-none h-16"
+                      />
+                    </div>
+
+                    <div className="pt-2 flex items-center justify-end">
+                      <button
+                        type="submit"
+                        disabled={
+                          isPosting ||
+                          !transferSourceFundId ||
+                          !transferDestFundId ||
+                          transferSourceFundId === transferDestFundId ||
+                          !transferAmount ||
+                          parsedAmt <= 0 ||
+                          previewDestAmt <= 0
+                        }
+                        className="flex items-center gap-1.5 px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold font-cairo transition-all active:scale-95 shadow-lg shadow-blue-500/20"
+                      >
+                        {isPosting ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
+                        تنفيذ التحويل المالي
+                      </button>
                     </div>
                   </div>
-
-                  <div className="space-y-1.5">
-                    <label className="text-[11px] font-bold text-gray-400 font-cairo flex items-center gap-1.5">
-                      <FileText size={12} />
-                      البيان / ملاحظات التحويل
-                    </label>
-                    <textarea 
-                      value={transferNotes}
-                      onChange={(e) => setTransferNotes(e.target.value)}
-                      placeholder="أدخل سبب أو ملاحظات التحويل (اختياري)..."
-                      className="w-full bg-[#101010] border border-white/10 rounded-xl px-3 py-2 text-[11px] font-cairo text-white focus:border-blue-500/50 outline-none transition-all resize-none h-16"
-                    />
-                  </div>
-
-                  <div className="pt-2 flex items-center justify-end">
-                    <button 
-                      type="submit"
-                      disabled={isPosting || !transferSourceFundId || !transferDestFundId || !transferAmount || parseFloat(transferAmount) <= 0}
-                      className="flex items-center gap-1.5 px-6 py-2 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:opacity-50 text-white rounded-xl text-xs font-bold font-cairo transition-all active:scale-95 shadow-lg shadow-blue-500/20"
-                    >
-                      {isPosting ? <Loader2 size={14} className="animate-spin" /> : <Save size={14} />}
-                      تنفيذ التحويل المالي
-                    </button>
-                  </div>
-                </div>
-              </form>
-            </div>
-          )}
+                </form>
+              </div>
+            );
+          })()}
 
           {/* 2. BOX FUNDS REAL-TIME OVERLAY */}
           {activeSegment === 'funds' && (
@@ -5857,8 +6134,14 @@ export default function Vault({
                             <tbody className="divide-y divide-white/5 text-[11px] font-mono text-gray-300">
                               {funds.map(f => {
                                 const fundTxs = transactions.filter(t => (t.fundId === f.id || (!t.fundId && t.fundName === f.name)) && isAccountingTransactionValid(t));
-                                const inSum = fundTxs.filter(t => t.type === 'receipt' || t.type === 'deposit' || t.type === 'invoice_payment').reduce((acc, curr) => acc + Math.abs(Number(curr.amount || 0)), 0);
-                                const outSum = fundTxs.filter(t => t.type === 'payment' || t.type === 'disbursement' || t.type === 'expense').reduce((acc, curr) => acc + Math.abs(Number(curr.amount || 0)), 0);
+                                const inSum = fundTxs.filter(t => t.type === 'receipt' || t.type === 'deposit' || t.type === 'invoice_payment').reduce((acc, curr) => {
+                                  const rawAmt = curr.receiptAmount !== undefined && curr.receiptAmount !== null && curr.receiptAmount !== '' ? Number(curr.receiptAmount) : Number(curr.amount || 0);
+                                  return acc + Math.abs(isNaN(rawAmt) ? 0 : rawAmt);
+                                }, 0);
+                                const outSum = fundTxs.filter(t => t.type === 'payment' || t.type === 'disbursement' || t.type === 'expense').reduce((acc, curr) => {
+                                  const rawAmt = curr.receiptAmount !== undefined && curr.receiptAmount !== null && curr.receiptAmount !== '' ? Number(curr.receiptAmount) : Number(curr.amount || 0);
+                                  return acc + Math.abs(isNaN(rawAmt) ? 0 : rawAmt);
+                                }, 0);
                                 const diff = inSum - outSum;
 
                                 return (
@@ -6331,6 +6614,13 @@ export default function Vault({
           transactions.some(t => t.reversalOf === txToDelete.id || (txToDelete.reversalOf && t.id === txToDelete.reversalOf))
         );
 
+        const isLinkedToTransfer = Boolean(
+          txToDelete.linkedTxId ||
+          txToDelete.transactionCategory === 'تحويل بين الصناديق' ||
+          transactions.some(t => t.linkedTxId === txToDelete.id)
+        );
+        const isLinkedPair = isLinkedToReversal || isLinkedToTransfer;
+
         return (
           <div className="fixed inset-0 z-[160] bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in" dir="rtl">
             <div className="bg-[#121212] border border-white/10 rounded-2xl w-full max-w-md p-6 space-y-5 shadow-2xl">
@@ -6350,6 +6640,16 @@ export default function Vault({
                   <div className="text-[11px] text-amber-300 font-cairo leading-relaxed">
                     <strong className="block text-amber-200 mb-0.5">ربط القيد ومعكوسه:</strong>
                     هذا السند جزء من عملية قيد عكسي. حرصاً على توازن الصناديق وسلامة كشف الحساب، سيتم حذف القيد ومعكوسه معاً بنظام القيد المزدوج.
+                  </div>
+                </div>
+              )}
+
+              {isLinkedToTransfer && (
+                <div className="bg-blue-500/10 border border-blue-500/20 p-3 rounded-xl flex items-start gap-2.5 text-right">
+                  <ArrowRightLeft size={18} className="text-blue-400 shrink-0 mt-0.5" />
+                  <div className="text-[11px] text-blue-200 font-cairo leading-relaxed">
+                    <strong className="block text-blue-100 mb-0.5">تحويل مزدوج بين الصناديق:</strong>
+                    هذا السند مرتبط بطرف تحويل مقابل في صندوق آخر. سيتم حذف طرفي التحويل (الصادر والوارد) معاً وتعديل رصيدي الصندوقين بدقة.
                   </div>
                 </div>
               )}
@@ -6391,7 +6691,13 @@ export default function Vault({
                   className="flex-1 py-3 bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold font-cairo transition-all cursor-pointer shadow-lg shadow-rose-600/20 active:scale-95 flex items-center justify-center gap-2"
                 >
                   {isDeletingTx ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
-                  <span>{isLinkedToReversal ? 'تأكيد حذف القيد ومعكوسه' : 'تأكيد الحذف النهائي'}</span>
+                  <span>
+                    {isLinkedToReversal
+                      ? 'تأكيد حذف القيد ومعكوسه'
+                      : isLinkedPair
+                        ? 'تأكيد حذف طرفي التحويل'
+                        : 'تأكيد الحذف النهائي'}
+                  </span>
                 </button>
                 <button
                   type="button"

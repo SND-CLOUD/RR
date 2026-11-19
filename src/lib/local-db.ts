@@ -1149,7 +1149,12 @@ class LocalDatabase {
       // Attempt to add customerNumber column to existing customers table if needed
       try {
         await this.db.run('ALTER TABLE customers ADD COLUMN customerNumber INTEGER');
+      } catch (err) {
+        // Column probably already exists, which is fine
+      }
+
       // Attempt to add linkedTxId column to existing vault_transactions table if needed
+      try {
         await this.db.run('ALTER TABLE vault_transactions ADD COLUMN linkedTxId TEXT');
       } catch (err) {
         // Column probably already exists, which is fine
