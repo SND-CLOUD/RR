@@ -76,9 +76,15 @@ export default function PrintPreviewOverlay({
   const [templateType, setTemplateType] = useState<PrintTemplateType>(data?.templateType || 'entry');
   const [scale, setScale] = useState(1);
   const [userZoom, setUserZoom] = useState(1);
+  const [isPinching, setIsPinching] = useState(false);
   const [previewDate] = useState(() => new Date());
   const containerRef = useRef<HTMLDivElement>(null);
+  const zoomWrapperRef = useRef<HTMLDivElement>(null);
   const printAreaRef = useRef<HTMLDivElement>(null);
+  const scaleRef = useRef(1);
+  const userZoomRef = useRef(1);
+  const pinchRef = useRef<{ active: boolean; startDist: number; startZoom: number; docX: number; docY: number } | null>(null);
+  const pinchRafRef = useRef<number | null>(null);
   const [contentHeight, setContentHeight] = useState(1123);
   const [customersMap, setCustomersMap] = useState<Map<string, any>>(new Map());
   const [invoicesMap, setInvoicesMap] = useState<Map<string, any>>(new Map());
@@ -160,6 +166,103 @@ export default function PrintPreviewOverlay({
       window.removeEventListener('resize', handleResize);
     };
   }, [contentHeight]);
+
+  useEffect(() => {
+    scaleRef.current = scale;
+  }, [scale]);
+
+  useEffect(() => {
+    userZoomRef.current = userZoom;
+  }, [userZoom]);
+
+  // Two-finger pinch-to-zoom support for Android WebView and touchscreens
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+
+    const getDistance = (t1: Touch, t2: Touch) =>
+      Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+
+    const onTouchStart = (e: TouchEvent) => {
+      if (e.touches.length === 2) {
+        e.preventDefault();
+        const t1 = e.touches[0];
+        const t2 = e.touches[1];
+        const dist = getDistance(t1, t2);
+        if (dist <= 0) return;
+
+        const midX = (t1.clientX + t2.clientX) / 2;
+        const midY = (t1.clientY + t2.clientY) / 2;
+        const curZoom = userZoomRef.current;
+        const totalScale = scaleRef.current * curZoom;
+        const wrapperRect = zoomWrapperRef.current?.getBoundingClientRect();
+
+        const docX = wrapperRect && totalScale > 0 ? (midX - wrapperRect.left) / totalScale : 0;
+        const docY = wrapperRect && totalScale > 0 ? (midY - wrapperRect.top) / totalScale : 0;
+
+        pinchRef.current = {
+          active: true,
+          startDist: dist,
+          startZoom: curZoom,
+          docX,
+          docY
+        };
+        setIsPinching(true);
+      }
+    };
+
+    const onTouchMove = (e: TouchEvent) => {
+      if (!pinchRef.current?.active || e.touches.length !== 2) return;
+      e.preventDefault();
+
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = getDistance(t1, t2);
+      if (dist <= 0) return;
+
+      const { startDist, startZoom, docX, docY } = pinchRef.current;
+      const nextZoom = Math.min(3, Math.max(0.5, startZoom * (dist / startDist)));
+      const midX = (t1.clientX + t2.clientX) / 2;
+      const midY = (t1.clientY + t2.clientY) / 2;
+
+      userZoomRef.current = nextZoom;
+      setUserZoom(nextZoom);
+
+      if (pinchRafRef.current) cancelAnimationFrame(pinchRafRef.current);
+      pinchRafRef.current = requestAnimationFrame(() => {
+        const wrapper = zoomWrapperRef.current;
+        const container = containerRef.current;
+        if (!wrapper || !container) return;
+        const newRect = wrapper.getBoundingClientRect();
+        const newTotalScale = scaleRef.current * nextZoom;
+        const targetScreenX = newRect.left + docX * newTotalScale;
+        const targetScreenY = newRect.top + docY * newTotalScale;
+        container.scrollLeft += targetScreenX - midX;
+        container.scrollTop += targetScreenY - midY;
+      });
+    };
+
+    const onTouchEndOrCancel = (e: TouchEvent) => {
+      if (e.touches.length < 2 && pinchRef.current?.active) {
+        pinchRef.current = null;
+        setIsPinching(false);
+        setUserZoom(prev => Math.min(3, Math.max(0.5, +prev.toFixed(2))));
+      }
+    };
+
+    el.addEventListener('touchstart', onTouchStart, { passive: false });
+    el.addEventListener('touchmove', onTouchMove, { passive: false });
+    el.addEventListener('touchend', onTouchEndOrCancel, { passive: true });
+    el.addEventListener('touchcancel', onTouchEndOrCancel, { passive: true });
+
+    return () => {
+      if (pinchRafRef.current) cancelAnimationFrame(pinchRafRef.current);
+      el.removeEventListener('touchstart', onTouchStart);
+      el.removeEventListener('touchmove', onTouchMove);
+      el.removeEventListener('touchend', onTouchEndOrCancel);
+      el.removeEventListener('touchcancel', onTouchEndOrCancel);
+    };
+  }, []);
 
   const invoice = type === 'invoice' ? data.invoice : null;
   const items = type === 'invoice' ? data.items || [] : [];
@@ -1462,23 +1565,23 @@ export default function PrintPreviewOverlay({
   const totalPages = getPageCount();
 
   return (
-    <div className="fixed inset-0 z-[200] bg-black/95 flex flex-col" dir="rtl">
+    <div className="fixed inset-0 z-[200] bg-slate-100 dark:bg-[#0b0b0b] flex flex-col" dir="rtl">
       {/* Floating Page Navigator (Always Visible) */}
       {totalPages > 1 && (
-        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-white/10 backdrop-blur-md border border-white/20 px-6 py-3 rounded-full shadow-2xl flex items-center gap-6 z-[210] animate-in fade-in slide-in-from-bottom-4 duration-300 pointer-events-auto text-white">
+        <div className="fixed bottom-8 left-1/2 -translate-x-1/2 bg-white/95 dark:bg-zinc-900/90 backdrop-blur-md border border-slate-200 dark:border-white/20 px-6 py-3 rounded-full shadow-2xl flex items-center gap-6 z-[210] animate-in fade-in slide-in-from-bottom-4 duration-300 pointer-events-auto text-slate-900 dark:text-white">
           <div className="flex items-center gap-2 font-bold font-cairo">
-            <span className="text-[10px] text-gray-400">إجمالي الصفحات:</span>
-            <span className="bg-emerald-500 text-white px-2.5 py-0.5 rounded-lg text-sm font-mono">
+            <span className="text-[10px] text-slate-500 dark:text-gray-400">إجمالي الصفحات:</span>
+            <span className="bg-emerald-600 text-white px-2.5 py-0.5 rounded-lg text-sm font-mono theme-preserve-white">
               {totalPages}
             </span>
           </div>
-          <div className="h-4 w-[1px] bg-white/20"></div>
+          <div className="h-4 w-[1px] bg-slate-200 dark:bg-white/20"></div>
           <button 
             onClick={() => {
               const scrollContainer = containerRef.current;
               if (scrollContainer) scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
             }}
-            className="text-[10px] font-black text-blue-400 hover:text-blue-300 font-cairo transition-colors flex items-center gap-1"
+            className="text-[10px] font-black text-blue-600 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 font-cairo transition-colors flex items-center gap-1 cursor-pointer"
           >
             <span>العودة للأعلى</span>
             <ArrowUp size={14} />
@@ -1491,34 +1594,34 @@ export default function PrintPreviewOverlay({
       <button id="internal-wa-btn" className="hidden" onClick={handleWhatsApp}></button>
 
       {/* Top Navbar */}
-      <div className="flex justify-between items-center bg-black/50 p-4 border-b border-white/10 shrink-0 flex-wrap gap-4">
+      <div className="flex justify-between items-center bg-white dark:bg-[#141414] p-4 border-b border-slate-200 dark:border-white/10 shrink-0 flex-wrap gap-4 shadow-sm">
         <div className="flex items-center gap-2">
           {/* Mobile Back Button */}
           <button 
             type="button"
             onClick={onClose}
-            className="sm:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 transition-all shadow-md active:scale-95 cursor-pointer shrink-0 font-cairo"
+            className="sm:hidden w-10 h-10 flex items-center justify-center rounded-xl bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-800 dark:text-zinc-100 border border-slate-300 dark:border-zinc-700 transition-all shadow-sm active:scale-95 cursor-pointer shrink-0 font-cairo"
             title="الرجوع للخلف"
           >
             <ArrowRight size={18} />
           </button>
 
-          <h2 className="text-white font-bold hidden sm:block border-l border-white/20 pl-4 font-cairo">
+          <h2 className="text-slate-900 dark:text-white font-bold hidden sm:block border-l border-slate-200 dark:border-white/20 pl-4 font-cairo">
             {type === 'invoice' ? `${getTemplateName(templateType)} - #${invoice?.invoiceNumber || ''}` : (type === 'statement' ? `كشف حساب - ${statement?.customerName}` : (type === 'table' ? tableData?.title : `${voucher?.type === 'receipt' ? 'معاينة سند قبض' : 'معاينة سند صرف'} - #${voucher?.voucherNumber || voucher?.reference || ''}`))}
           </h2>
 
-          <div className="flex items-center gap-1 bg-black/40 rounded-lg p-1 border border-white/10 mr-2">
+          <div className="flex items-center gap-1 bg-slate-100 dark:bg-black/40 rounded-lg p-1 border border-slate-200 dark:border-white/10 mr-2">
             <button
-              onClick={() => setUserZoom(prev => Math.min(2.5, prev + 0.1))}
-              className="w-8 h-8 flex items-center justify-center text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-all active:scale-95"
+              onClick={() => setUserZoom(prev => Math.min(3, +(prev + 0.1).toFixed(2)))}
+              className="w-8 h-8 flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-200/80 dark:text-gray-300 dark:hover:text-white dark:hover:bg-white/10 rounded-md transition-all active:scale-95 cursor-pointer"
               title="تكبير"
             >
               <ZoomIn size={16} />
             </button>
-            <span className="text-xs font-mono text-gray-300 min-w-[4ch] text-center font-bold select-none" dir="ltr">{Math.round(userZoom * 100)}%</span>
+            <span className="text-xs font-mono text-slate-700 dark:text-gray-300 min-w-[4ch] text-center font-bold select-none" dir="ltr">{Math.round(userZoom * 100)}%</span>
             <button
-              onClick={() => setUserZoom(prev => Math.max(0.5, prev - 0.1))}
-              className="w-8 h-8 flex items-center justify-center text-gray-300 hover:text-white hover:bg-white/10 rounded-md transition-all active:scale-95"
+              onClick={() => setUserZoom(prev => Math.max(0.5, +(prev - 0.1).toFixed(2)))}
+              className="w-8 h-8 flex items-center justify-center text-slate-600 hover:text-slate-900 hover:bg-slate-200/80 dark:text-gray-300 dark:hover:text-white dark:hover:bg-white/10 rounded-md transition-all active:scale-95 cursor-pointer"
               title="تصغير"
             >
               <ZoomOut size={16} />
@@ -1526,7 +1629,7 @@ export default function PrintPreviewOverlay({
             {userZoom !== 1 && (
               <button
                 onClick={() => setUserZoom(1)}
-                className="text-[10px] px-2 h-8 text-blue-400 hover:text-blue-300 hover:bg-white/10 rounded-md transition-all active:scale-95 font-cairo font-bold"
+                className="text-[10px] px-2 h-8 text-blue-600 hover:text-blue-700 hover:bg-slate-200/80 dark:text-blue-400 dark:hover:text-blue-300 dark:hover:bg-white/10 rounded-md transition-all active:scale-95 font-cairo font-bold cursor-pointer"
                 title="إعادة ضبط"
               >
                 تلقائي
@@ -1551,7 +1654,7 @@ export default function PrintPreviewOverlay({
                 }
               }}
               disabled={isGeneratingPDF || isSaving}
-              className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-all shadow-[0_0_15px_rgba(16,185,129,0.3)] disabled:opacity-50 active:scale-95 cursor-pointer shrink-0 font-cairo"
+              className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl transition-all shadow-[0_0_15px_rgba(16,185,129,0.25)] disabled:opacity-50 active:scale-95 cursor-pointer shrink-0 font-cairo theme-preserve-white"
               title="مشاركة عبر واتساب"
             >
               {isGeneratingPDF ? (
@@ -1578,7 +1681,7 @@ export default function PrintPreviewOverlay({
                 }
               }}
               disabled={isSaving}
-              className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0 font-cairo"
+              className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0 font-cairo theme-preserve-white"
               title="طباعة"
             >
               <Printer size={18} />
@@ -1591,7 +1694,7 @@ export default function PrintPreviewOverlay({
             <button 
               onClick={onSave}
               disabled={isSaving}
-              className="h-10 px-4 md:px-5 flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold text-xs md:text-sm transition-all shadow-md active:scale-95 cursor-pointer font-cairo shrink-0"
+              className="h-10 px-4 md:px-5 flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white rounded-xl font-bold text-xs md:text-sm transition-all shadow-md active:scale-95 cursor-pointer font-cairo shrink-0 theme-preserve-white"
               title="ترحيل وحفظ التغييرات"
             >
               {isSaving ? (
@@ -1609,7 +1712,7 @@ export default function PrintPreviewOverlay({
           <button 
             type="button"
             onClick={onClose}
-            className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 border border-zinc-700 rounded-xl transition-all shadow-md active:scale-95 cursor-pointer shrink-0 font-cairo"
+            className="h-10 px-3.5 flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-zinc-800 dark:hover:bg-zinc-700 text-slate-800 dark:text-zinc-100 border border-slate-300 dark:border-zinc-700 rounded-xl transition-all shadow-sm active:scale-95 cursor-pointer shrink-0 font-cairo"
             title="الرجوع للخلف"
           >
             <ArrowRight size={18} />
@@ -1620,23 +1723,24 @@ export default function PrintPreviewOverlay({
 
       <div 
         ref={containerRef} 
-        className="flex-1 overflow-auto bg-[#1a1a1a] p-4 md:p-8 text-right w-full flex flex-col items-center scroll-smooth relative"
+        className={`flex-1 overflow-auto bg-slate-200/80 dark:bg-[#1a1a1a] p-4 md:p-8 text-right w-full flex flex-col relative touch-pan-x touch-pan-y ${isPinching ? '' : 'scroll-smooth'}`}
       >
         {pdfNotification && (
-          <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-emerald-700/95 text-white px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2 font-cairo text-sm font-bold animate-in fade-in slide-in-from-top-2 border border-emerald-500/40 backdrop-blur-md">
+          <div className="fixed top-20 left-1/2 -translate-x-1/2 z-50 bg-emerald-700/95 text-white px-5 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2 font-cairo text-sm font-bold animate-in fade-in slide-in-from-top-2 border border-emerald-500/40 backdrop-blur-md theme-preserve-white">
             <Check size={18} className="text-emerald-200" />
             <span>{pdfNotification}</span>
           </div>
         )}
         <div 
-          className="relative shrink-0 my-4 transition-all duration-150 flex justify-center"
+          ref={zoomWrapperRef}
+          className={`relative shrink-0 my-4 mx-auto flex justify-center ${isPinching ? '' : 'transition-all duration-150'}`}
           style={{ 
             width: `${794 * (scale * userZoom)}px`, 
             height: `${contentHeight * (scale * userZoom)}px`
           }}
         >
           <div 
-            className="absolute top-0 left-0 transition-transform duration-150 shrink-0 scale-wrapper origin-top-left"
+            className={`absolute top-0 left-0 shrink-0 scale-wrapper origin-top-left ${isPinching ? '' : 'transition-transform duration-150'}`}
             style={{ 
               width: '794px', 
               minHeight: '1123px',

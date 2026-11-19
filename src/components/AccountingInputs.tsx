@@ -1,5 +1,5 @@
-import React, { useEffect, useState } from 'react';
-import { parseDate } from '../lib/dateUtils';
+import React, { useEffect, useMemo, useState } from 'react';
+import { parseDate, renderSafeValue } from '../lib/dateUtils';
 import { parseFundBalance } from '../lib/fundUtils';
 import { Device } from '@capacitor/device';
 import { ProviderFactory } from '../data/ProviderFactory';
@@ -151,6 +151,7 @@ export default function AccountingInputs() {
     deviceName: string;
     deviceType: "مخصص" | "عام";
     linkedUserName: string;
+    linkedUserId?: string;
     status: 'نشط' | 'معطل' | 'محظور';
     networkStatus: 'متصل' | 'غير متصل';
     notes: string;
@@ -161,6 +162,7 @@ export default function AccountingInputs() {
     deviceName: "جهاز الورشة الرئيسية - POS-01",
     deviceType: "عام",
     linkedUserName: 'مدير النظام',
+    linkedUserId: '',
     status: 'نشط',
     networkStatus: 'متصل',
     notes: 'جهاز نُظم رئيسي مخصص لإدخال الفواتير والمبيعات والحسابات',
@@ -173,12 +175,13 @@ export default function AccountingInputs() {
   const [devFilterStatus, setDevFilterStatus] = useState<string>('all');
   const [devFilterNetwork, setDevFilterNetwork] = useState<string>('all');
   const [devSearchQuery, setDevSearchQuery] = useState<string>('');
-  const [systemUsers, setSystemUsers] = useState<{id: string, name: string}[]>([]);
+  const [systemUsers, setSystemUsers] = useState<{id: string, name: string, username: string}[]>([]);
 
   // Device Detail Popup Modal
   const [selectedDeviceForDetail, setSelectedDeviceForDetail] = useState<UserDevice | null>(null);
   const [isEditingDetailModal, setIsEditingDetailModal] = useState(false);
   const [detailForm, setDetailForm] = useState<UserDevice | null>(null);
+  const [isSavingDetail, setIsSavingDetail] = useState(false);
 
   // Load Data Helper
   const loadAllData = async () => {
@@ -230,11 +233,19 @@ export default function AccountingInputs() {
             fetchedUsers = localRes.values;
           }
         }
-        setSystemUsers(fetchedUsers.map((u, idx) => ({ id: u.id || `user-${idx}`, name: u.name || u.username || `مستخدم ${idx + 1}` })));
+        setSystemUsers(fetchedUsers.map((u, idx) => ({
+          id: u.id || `user-${idx}`,
+          name: u.name || u.username || `مستخدم ${idx + 1}`,
+          username: u.username || u.name || `user_${idx + 1}`
+        })));
       } catch (err) {
         try {
           const localRes = await localDb.query('SELECT * FROM users');
-          setSystemUsers((localRes?.values || []).map((u: any, idx: number) => ({ id: u.id || `user-${idx}`, name: u.name || u.username || `مستخدم ${idx + 1}` })));
+          setSystemUsers((localRes?.values || []).map((u: any, idx: number) => ({
+            id: u.id || `user-${idx}`,
+            name: u.name || u.username || `مستخدم ${idx + 1}`,
+            username: u.username || u.name || `user_${idx + 1}`
+          })));
         } catch (lErr) {}
       }
 
@@ -294,6 +305,7 @@ export default function AccountingInputs() {
       deviceName: "جهاز الورشة الرئيسية - POS-01",
       deviceType: "عام",
       linkedUserName: 'مدير النظام',
+      linkedUserId: '',
       status: 'نشط',
       networkStatus: 'متصل',
       notes: 'جهاز نُظم مخصص لإدخال وقراءة الفواتير والحسابات',
@@ -302,6 +314,83 @@ export default function AccountingInputs() {
     setFormValidationError(null);
     setShowDeviceForm(true);
   };
+
+  const formatDeviceDate = (val: any, fallback: string): string => {
+    try {
+      const d = parseDate(val);
+      if (!d) return fallback;
+      return d.toLocaleString('ar-YE');
+    } catch {
+      return fallback;
+    }
+  };
+
+  const refreshUserDevicesOnly = async () => {
+    try {
+      const localRes = await localDb.query('SELECT * FROM user_devices ORDER BY deviceNumber ASC');
+      if (localRes?.values) {
+        setUserDevices(localRes.values as UserDevice[]);
+      }
+    } catch (e) {
+      console.warn('Silent refresh user_devices failed:', e);
+    }
+  };
+
+  const openDeviceDetailModal = (device: UserDevice) => {
+    const normalizedDevice: UserDevice = {
+      ...device,
+      id: String(device.id || ''),
+      deviceNumber: Number(device.deviceNumber) || 0,
+      serialImei: String(renderSafeValue(device.serialImei) || ''),
+      deviceName: String(renderSafeValue(device.deviceName) || ''),
+      deviceType: (device.deviceType === 'مخصص' ? 'مخصص' : 'عام'),
+      linkedUserName: String(renderSafeValue(device.linkedUserName) || ''),
+      linkedUserId: String(renderSafeValue(device.linkedUserId) || ''),
+      status: (device.status as any) || 'نشط',
+      networkStatus: (device.networkStatus as any) || 'غير متصل',
+      createdByUserId: String(renderSafeValue(device.createdByUserId) || ''),
+      createdByUserName: String(renderSafeValue(device.createdByUserName) || ''),
+      notes: String(renderSafeValue(device.notes) || ''),
+      isFrozen: Boolean(device.isFrozen === true || Number(device.isFrozen) === 1 || String(device.isFrozen) === '1'),
+    };
+    setConfirmDeleteDeviceId(null);
+    setConfirmBlockDeviceId(null);
+    setIsEditingDetailModal(false);
+    setIsSavingDetail(false);
+    setSelectedDeviceForDetail(normalizedDevice);
+    setDetailForm(normalizedDevice);
+  };
+
+  const closeDeviceDetailModal = () => {
+    if (isSavingDetail) return;
+    setSelectedDeviceForDetail(null);
+    setDetailForm(null);
+    setIsEditingDetailModal(false);
+    setConfirmDeleteDeviceId(null);
+    setConfirmBlockDeviceId(null);
+  };
+
+  const filteredUserDevices = useMemo(() => {
+    return userDevices
+      .filter(d => {
+        if (devFilterStatus !== 'all' && d.status !== devFilterStatus) return false;
+        if (devFilterNetwork !== 'all' && d.networkStatus !== devFilterNetwork) return false;
+        if (devSearchQuery.trim()) {
+          const q = devSearchQuery.toLowerCase();
+          const matchesName = String(d.deviceName || '').toLowerCase().includes(q);
+          const matchesUser = String(d.linkedUserName || '').toLowerCase().includes(q);
+          const matchesSerial = String(d.serialImei || '').toLowerCase().includes(q);
+          const matchesNum = String(d.deviceNumber ?? '').includes(q);
+          if (!matchesName && !matchesUser && !matchesSerial && !matchesNum) return false;
+        }
+        return true;
+      })
+      .sort((a, b) => {
+        const numA = Number(a.deviceNumber) || 0;
+        const numB = Number(b.deviceNumber) || 0;
+        return devSortOrder === 'asc' ? numA - numB : numB - numA;
+      });
+  }, [userDevices, devFilterStatus, devFilterNetwork, devSearchQuery, devSortOrder]);
 
   // ----- SUBMIT HANDLERS -----
 
@@ -399,23 +488,24 @@ export default function AccountingInputs() {
 
   // Detail Modal Save
   const handleSaveDetailModal = async () => {
-    if (!detailForm) return;
-    const serial = (detailForm.serialImei || '').trim();
-    const devName = (detailForm.deviceName || '').trim();
-    const user = (detailForm.linkedUserName || '').trim();
+    if (!detailForm || isSavingDetail) return;
+    const serial = String(detailForm.serialImei || '').trim();
+    const devName = String(detailForm.deviceName || '').trim();
+    const linkedUser = String(detailForm.linkedUserName || '').trim();
 
     if (!serial || !devName) {
       triggerNotification('تنبيه: الرقم التسلسلي واسم الجهاز حقول إلزامية!');
       return;
     }
 
+    setIsSavingDetail(true);
     try {
       const updatedDev: UserDevice = {
         ...detailForm,
         serialImei: serial,
         deviceName: devName,
-        linkedUserName: user,
-        linkedUserId: user ? (detailForm.linkedUserId || '') : '',
+        linkedUserName: linkedUser,
+        linkedUserId: linkedUser ? (detailForm.linkedUserId || '') : '',
         updatedAt: new Date().toISOString()
       };
 
@@ -425,11 +515,10 @@ export default function AccountingInputs() {
         console.warn('Provider setDoc user_devices failed:', pErr);
       }
 
-      try {
-        await FirebaseProviderInstance.setDoc('user_devices', updatedDev.id, updatedDev);
-      } catch (fbErr) {
-        console.warn('Firebase setDoc user_devices failed:', fbErr);
-      }
+      // Non-blocking cloud push so offline/slow network never freezes the modal
+      FirebaseProviderInstance.setDoc('user_devices', updatedDev.id, updatedDev).catch((fbErr) => {
+        console.warn('Background Firebase setDoc user_devices failed:', fbErr);
+      });
 
       try {
         await localDb.run(
@@ -448,10 +537,10 @@ export default function AccountingInputs() {
             updatedDev.linkedUserId || '',
             updatedDev.status || 'نشط',
             updatedDev.networkStatus || 'متصل',
-            updatedDev.createdAt || new Date().toISOString(),
-            updatedDev.lastLogin || '',
-            updatedDev.lastLogout || '',
-            updatedDev.blockDate || '',
+            typeof updatedDev.createdAt === 'string' ? updatedDev.createdAt : (parseDate(updatedDev.createdAt)?.toISOString() || new Date().toISOString()),
+            typeof updatedDev.lastLogin === 'string' ? updatedDev.lastLogin : (parseDate(updatedDev.lastLogin)?.toISOString() || ''),
+            typeof updatedDev.lastLogout === 'string' ? updatedDev.lastLogout : (parseDate(updatedDev.lastLogout)?.toISOString() || ''),
+            typeof updatedDev.blockDate === 'string' ? updatedDev.blockDate : (parseDate(updatedDev.blockDate)?.toISOString() || ''),
             updatedDev.createdByUserId || '',
             updatedDev.createdByUserName || '',
             updatedDev.notes || '',
@@ -461,41 +550,46 @@ export default function AccountingInputs() {
         );
       } catch (sq) {}
 
-      // Update state
+      // Update state cleanly without unmounting the modal via setLoading(true)
       setUserDevices(prev => prev.map(d => d.id === updatedDev.id ? updatedDev : d));
       setSelectedDeviceForDetail(updatedDev);
+      setDetailForm(updatedDev);
       setIsEditingDetailModal(false);
-      triggerNotification(user ? 'تم تحديث بيانات الجهاز بنجاح!' : 'تم إلغاء ربط المستخدم وحفظ الجهاز بنجاح!');
-      loadAllData().catch(e => console.warn('Refresh data warning:', e));
+      triggerNotification(linkedUser ? 'تم تحديث بيانات الجهاز بنجاح!' : 'تم إلغاء ربط المستخدم وحفظ الجهاز بنجاح!');
+      refreshUserDevicesOnly();
     } catch (e: any) {
       triggerNotification('خطأ في حفظ التعديلات: ' + (e?.message || e));
+    } finally {
+      setIsSavingDetail(false);
     }
   };
 
   // Freeze/Unfreeze toggle handler
   const handleToggleFreeze = async (device: UserDevice) => {
+    if (isSavingDetail) return;
     const newFrozenState = !device.isFrozen;
-    const updatedDev = {
+    const updatedDev: UserDevice = {
       ...device,
       isFrozen: newFrozenState,
       updatedAt: new Date().toISOString()
     };
+    setIsSavingDetail(true);
     try {
       await ProviderFactory.getProvider().setDoc('user_devices', device.id, updatedDev);
+      FirebaseProviderInstance.setDoc('user_devices', device.id, updatedDev).catch(() => {});
       try {
-        await FirebaseProviderInstance.setDoc('user_devices', device.id, updatedDev);
-      } catch (e) {}
-      try {
-        await localDb.run('UPDATE user_devices SET isFrozen = ? WHERE id = ?', [newFrozenState ? 1 : 0, device.id]);
+        await localDb.run('UPDATE user_devices SET isFrozen = ?, updatedAt = ? WHERE id = ?', [newFrozenState ? 1 : 0, updatedDev.updatedAt, device.id]);
       } catch (sq) {}
-      
+
       setUserDevices(prev => prev.map(d => d.id === device.id ? updatedDev : d));
       setSelectedDeviceForDetail(updatedDev);
       setDetailForm(updatedDev);
       triggerNotification(newFrozenState ? 'تم تجميد الجهاز مؤقتاً' : 'تم إلغاء تجميد الجهاز');
-      loadAllData().catch(e => console.warn('Refresh data warning:', e));
+      refreshUserDevicesOnly();
     } catch (e: any) {
       triggerNotification('فشلت العملية: ' + (e?.message || e));
+    } finally {
+      setIsSavingDetail(false);
     }
   };
 
@@ -577,31 +671,33 @@ export default function AccountingInputs() {
   };
 
   const handleBlockDevice = async (device: UserDevice) => {
+    if (isSavingDetail) return;
     const nowIso = new Date().toISOString();
-    const updatedDev = {
+    const updatedDev: UserDevice = {
       ...device,
       status: 'محظور' as const,
       blockDate: nowIso,
       lastLogout: nowIso,
       updatedAt: nowIso
     };
+    setIsSavingDetail(true);
     try {
       setConfirmBlockDeviceId(null);
       await ProviderFactory.getProvider().setDoc('user_devices', device.id, updatedDev);
+      FirebaseProviderInstance.setDoc('user_devices', device.id, updatedDev).catch(() => {});
       try {
-        await FirebaseProviderInstance.setDoc('user_devices', device.id, updatedDev);
-      } catch (e) {}
-      try {
-        await localDb.run('UPDATE user_devices SET status = ?, blockDate = ?, lastLogout = ? WHERE id = ?', ['محظور', nowIso, nowIso, device.id]);
+        await localDb.run('UPDATE user_devices SET status = ?, blockDate = ?, lastLogout = ?, updatedAt = ? WHERE id = ?', ['محظور', nowIso, nowIso, nowIso, device.id]);
       } catch (sq) {}
 
       setUserDevices(prev => prev.map(d => d.id === device.id ? updatedDev : d));
       setSelectedDeviceForDetail(updatedDev);
       setDetailForm(updatedDev);
       triggerNotification('تم حظر الجهاز نهائياً من النظام');
-      loadAllData().catch(e => console.warn('Refresh data warning:', e));
+      refreshUserDevicesOnly();
     } catch (e: any) {
       triggerNotification('فشل حظر الجهاز: ' + (e?.message || e));
+    } finally {
+      setIsSavingDetail(false);
     }
   };
 
@@ -2006,13 +2102,16 @@ export default function AccountingInputs() {
                         value={deviceForm.linkedUserName}
                         onChange={(e) => {
                           const selectedName = e.target.value;
-                          const selectedUser = systemUsers.find(u => u.username === selectedName);
+                          const selectedUser = systemUsers.find(u => u.username === selectedName || u.name === selectedName);
                           setDeviceForm({ ...deviceForm, linkedUserName: selectedName, linkedUserId: selectedUser ? selectedUser.id : '' });
                           if (formValidationError) setFormValidationError(null);
                         }}
                         className={`w-full bg-[#242424] border rounded-xl px-3 py-2 text-xs text-white outline-none focus:border-amber-500 ${!String(deviceForm.linkedUserName || '').trim() && formValidationError ? 'border-red-500 bg-red-500/5' : 'border-white/10'}`}
                       >
                         <option value="">-- اختر مستخدم النظام --</option>
+                        {deviceForm.linkedUserName && !systemUsers.some(u => u.username === deviceForm.linkedUserName || u.name === deviceForm.linkedUserName) && (
+                          <option value={deviceForm.linkedUserName}>{deviceForm.linkedUserName}</option>
+                        )}
                         {systemUsers.map((u, idx) => (
                           <option key={u.id || `usr-opt1-${idx}`} value={u.username}>{u.name} ({u.username})</option>
                         ))}
@@ -2124,6 +2223,9 @@ export default function AccountingInputs() {
                         <th className="p-2 text-center text-gray-500 font-normal text-[10px]">
                           -
                         </th>
+                        <th className="p-2 text-center text-gray-500 font-normal text-[10px]">
+                          -
+                        </th>
                         <th className="p-2 w-32">
                           <select
                             value={devFilterStatus}
@@ -2162,26 +2264,7 @@ export default function AccountingInputs() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-white/5">
-                      {userDevices
-                        .filter(d => {
-                          if (devFilterStatus !== 'all' && d.status !== devFilterStatus) return false;
-                          if (devFilterNetwork !== 'all' && d.networkStatus !== devFilterNetwork) return false;
-                          if (devSearchQuery.trim()) {
-                            const q = devSearchQuery.toLowerCase();
-                            const matchesName = (d.deviceName || '').toLowerCase().includes(q);
-                            const matchesUser = (d.linkedUserName || '').toLowerCase().includes(q);
-                            const matchesSerial = (d.serialImei || '').toLowerCase().includes(q);
-                            const matchesNum = (d.deviceNumber?.toString() || '').includes(q);
-                            if (!matchesName && !matchesUser && !matchesSerial && !matchesNum) return false;
-                          }
-                          return true;
-                        })
-                        .sort((a, b) => {
-                          const numA = Number(a.deviceNumber) || 0;
-                          const numB = Number(b.deviceNumber) || 0;
-                          return devSortOrder === 'asc' ? numA - numB : numB - numA;
-                        })
-                        .map((device, idx) => (
+                      {filteredUserDevices.map((device, idx) => (
                           <tr 
                             key={device.id || `dev-${idx}`} 
                             className="hover:bg-white/[0.02] transition-colors whitespace-nowrap"
@@ -2195,60 +2278,25 @@ export default function AccountingInputs() {
                             <td className="p-3 font-bold text-white">
                               <div className="flex items-center gap-2">
                                 <Smartphone size={14} className="text-gray-400 shrink-0" />
-                                <span>{device.deviceName}</span>
-
-                                {device.isFrozen && (
-
-                                  <span className="text-[9px] bg-sky-500/20 text-sky-400 px-1.5 py-0.5 rounded font-bold border border-sky-500/30">مُجمد</span>
-
-                                )}
-
-                              </div>
-
-                            </td>
-
-
-
-                            {/* 2.5 نوع الجهاز */}
-
-                            <td className="p-3 text-gray-300">
-
-                              <div className="flex items-center gap-1.5">
-
-                                <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold ${device.deviceType === "مخصص" ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" : "bg-gray-500/10 text-gray-400 border border-gray-500/20"}`}>
-
-                                  {device.deviceType || "عام"}
-
-                                </span>
-
-                              </div>
-
-                            </td>
-
-
-
-                            {/* 2.5 نوع الجهاز */}
-
-                            <td className="p-3 text-gray-300">
-
-                              <div className="flex items-center gap-1.5">
-
-                                <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold ${device.deviceType === "مخصص" ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" : "bg-gray-500/10 text-gray-400 border border-gray-500/20"}`}>
-
-                                  {device.deviceType || "عام"}
-
-                                </span>
-                                {device.isFrozen && (
+                                <span>{renderSafeValue(device.deviceName) || 'غير مسمى'}</span>
+                                {Boolean(device.isFrozen) && (
                                   <span className="text-[9px] bg-sky-500/20 text-sky-400 px-1.5 py-0.5 rounded font-bold border border-sky-500/30">مُجمد</span>
                                 )}
                               </div>
+                            </td>
+
+                            {/* 2.5 نوع الجهاز */}
+                            <td className="p-3 text-gray-300">
+                              <span className={`text-[10px] px-2 py-0.5 rounded-md font-bold ${device.deviceType === "مخصص" ? "bg-purple-500/10 text-purple-400 border border-purple-500/20" : "bg-gray-500/10 text-gray-400 border border-gray-500/20"}`}>
+                                {renderSafeValue(device.deviceType) || "عام"}
+                              </span>
                             </td>
 
                             {/* 3. اسم المستخدم */}
                             <td className="p-3 text-gray-300">
                               <div className="flex items-center gap-1.5">
                                 <UserCheck size={13} className="text-emerald-400 shrink-0" />
-                                <span>{device.linkedUserName}</span>
+                                <span>{renderSafeValue(device.linkedUserName) || 'غير مرتبط'}</span>
                               </div>
                             </td>
 
@@ -2278,7 +2326,7 @@ export default function AccountingInputs() {
                             <td className="p-3">
                               {device.networkStatus === 'متصل' ? (
                                 <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-emerald-500/10 text-emerald-400">
-                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                                   <span>متصل</span>
                                 </span>
                               ) : (
@@ -2294,9 +2342,9 @@ export default function AccountingInputs() {
                               <div className="flex items-center justify-center gap-2">
                                 <button
                                   type="button"
-                                  disabled
-                                  className="px-3 py-1.5 bg-gray-500/10 text-gray-400 border border-white/10 rounded-xl text-xs font-bold opacity-50 cursor-not-allowed inline-flex items-center gap-1.5"
-                                  title="الزر غير مفعل للتجربة"
+                                  onClick={() => openDeviceDetailModal(device)}
+                                  className="px-3 py-1.5 bg-amber-500/15 hover:bg-amber-500 text-amber-400 hover:text-black border border-amber-500/30 rounded-xl text-xs font-bold transition-all cursor-pointer inline-flex items-center gap-1.5"
+                                  title="عرض تفاصيل الجهاز"
                                 >
                                   <Eye size={13} />
                                   <span>عرض</span>
@@ -2335,10 +2383,12 @@ export default function AccountingInputs() {
                           </tr>
                         ))}
 
-                      {userDevices.length === 0 && (
+                      {filteredUserDevices.length === 0 && (
                         <tr>
-                          <td colSpan={6} className="text-center py-8 text-gray-500">
-                            لا توجد أجهزة مسجلة في النظام حالياً. اضغط على "إضافة جهاز نظام جديد" للبدء.
+                          <td colSpan={7} className="text-center py-8 text-gray-500">
+                            {userDevices.length === 0
+                              ? 'لا توجد أجهزة مسجلة في النظام حالياً. اضغط على "إضافة جهاز نظام جديد" للبدء.'
+                              : 'لا توجد أجهزة مطابقة لخيارات البحث والتصفية الحالية.'}
                           </td>
                         </tr>
                       )}
@@ -2349,7 +2399,12 @@ export default function AccountingInputs() {
 
               {/* Popup Detail Modal: تفاصيل جهاز المستخدم */}
               {selectedDeviceForDetail && detailForm && (
-                <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-in fade-in duration-200">
+                <div
+                  className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4"
+                  onClick={(e) => {
+                    if (e.target === e.currentTarget) closeDeviceDetailModal();
+                  }}
+                >
                   <div className="bg-[#141414] border border-amber-500/30 rounded-3xl w-full max-w-2xl max-h-[90vh] overflow-y-auto p-6 space-y-6 shadow-2xl relative font-cairo">
                     
                     {/* Header Modal */}
@@ -2368,8 +2423,9 @@ export default function AccountingInputs() {
                         {/* Top Action Button: زر تحرير للتعديل */}
                         <button
                           type="button"
+                          disabled={isSavingDetail}
                           onClick={() => setIsEditingDetailModal(!isEditingDetailModal)}
-                          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${isEditingDetailModal ? 'bg-amber-500 text-black' : 'bg-white/5 hover:bg-white/10 text-amber-400 border border-amber-500/20'}`}
+                          className={`px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${isEditingDetailModal ? 'bg-amber-500 text-black' : 'bg-white/5 hover:bg-white/10 text-amber-400 border border-amber-500/20'}`}
                         >
                           <Edit2 size={13} />
                           <span>{isEditingDetailModal ? 'وضع العرض' : 'تحرير للتعديل'}</span>
@@ -2377,8 +2433,9 @@ export default function AccountingInputs() {
 
                         <button
                           type="button"
-                          onClick={() => setSelectedDeviceForDetail(null)}
-                          className="p-2 bg-white/5 hover:bg-red-500/20 text-gray-400 hover:text-red-400 rounded-xl transition-all"
+                          disabled={isSavingDetail}
+                          onClick={closeDeviceDetailModal}
+                          className="p-2 bg-white/5 hover:bg-red-500/20 text-gray-400 hover:text-red-400 rounded-xl transition-all cursor-pointer disabled:opacity-50"
                         >
                           <X size={18} />
                         </button>
@@ -2391,8 +2448,8 @@ export default function AccountingInputs() {
                       {/* 1. المعرف الفريد للجهاز UUID */}
                       <div className="bg-[#1c1c1c] p-3 rounded-2xl border border-white/5 space-y-1">
                         <span className="text-[10px] text-gray-400 font-bold block">1. المعرف الفريد للجهاز UUID</span>
-                        <div className="font-mono text-[11px] text-amber-300 font-bold truncate">
-                          {detailForm.id}
+                        <div className="font-mono text-[11px] text-amber-300 font-bold truncate" dir="ltr">
+                          {renderSafeValue(detailForm.id)}
                         </div>
                       </div>
 
@@ -2415,40 +2472,24 @@ export default function AccountingInputs() {
                             className="w-full bg-[#2a2a2a] border border-amber-500/40 rounded-lg px-2.5 py-1 text-xs text-white outline-none"
                           />
                         ) : (
-                          <div className="font-bold text-white text-xs">{detailForm.deviceName || 'غير مسمى'}</div>
+                          <div className="font-bold text-white text-xs">{renderSafeValue(detailForm.deviceName) || 'غير مسمى'}</div>
                         )}
-
                       </div>
 
-
-
                       {/* نوع الجهاز */}
-
                       <div className="bg-[#1c1c1c] p-3 rounded-2xl border border-white/5 space-y-1">
-
                         <span className="text-[10px] text-gray-400 font-bold block">نوع الجهاز</span>
-
                         {isEditingDetailModal ? (
-
                           <select
-
                             value={detailForm.deviceType || "عام"}
-
                             onChange={(e) => setDetailForm({ ...detailForm, deviceType: e.target.value as "مخصص" | "عام" })}
-
                             className="w-full bg-[#2a2a2a] border border-amber-500/40 rounded-lg px-2.5 py-1 text-xs text-white outline-none"
-
                           >
-
                             <option value="مخصص">مخصص</option>
-
                             <option value="عام">عام</option>
-
                           </select>
-
                         ) : (
-
-                          <div className="font-bold text-white text-xs">{detailForm.deviceType || "عام"}</div>
+                          <div className="font-bold text-white text-xs">{renderSafeValue(detailForm.deviceType) || "عام"}</div>
                         )}
                       </div>
 
@@ -2456,7 +2497,7 @@ export default function AccountingInputs() {
                       <div className="bg-[#1c1c1c] p-3 rounded-2xl border border-white/5 space-y-1">
                         <span className="text-[10px] text-gray-400 font-bold block">4. تاريخ تسجيل الجهاز</span>
                         <div className="font-mono text-gray-300">
-                          {parseDate(detailForm.createdAt) ? parseDate(detailForm.createdAt)!.toLocaleString('ar-SA') : 'غير مسجل'}
+                          {formatDeviceDate(detailForm.createdAt, 'غير مسجل')}
                         </div>
                       </div>
 
@@ -2467,7 +2508,7 @@ export default function AccountingInputs() {
                           <select
                             value={detailForm.status || 'نشط'}
                             onChange={(e) => setDetailForm({ ...detailForm, status: e.target.value as any })}
-                            className="w-full bg-[#2a2a2a] border border-amber-500/40 rounded-lg px-2 py-1 text-xs text-white outline-none"
+                            className="w-full bg-[#2a2a2a] border border-amber-500/40 rounded-lg px-2.5 py-1 text-xs text-white outline-none"
                           >
                             <option value="نشط">نشط</option>
                             <option value="معطل">معطل</option>
@@ -2478,6 +2519,9 @@ export default function AccountingInputs() {
                             {detailForm.status === 'نشط' && <span className="text-emerald-400">نشط (مفعل)</span>}
                             {detailForm.status === 'معطل' && <span className="text-amber-400">معطل</span>}
                             {detailForm.status === 'محظور' && <span className="text-red-400">محظور خروج نهائي</span>}
+                            {detailForm.status !== 'نشط' && detailForm.status !== 'معطل' && detailForm.status !== 'محظور' && (
+                              <span className="text-gray-300">{renderSafeValue(detailForm.status) || 'غير محدد'}</span>
+                            )}
                           </div>
                         )}
                       </div>
@@ -2486,7 +2530,7 @@ export default function AccountingInputs() {
                       <div className="bg-[#1c1c1c] p-3 rounded-2xl border border-white/5 space-y-1">
                         <span className="text-[10px] text-gray-400 font-bold block">6. اخر دخول للنظام</span>
                         <div className="font-mono text-gray-300">
-                          {parseDate(detailForm.lastLogin) ? parseDate(detailForm.lastLogin)!.toLocaleString('ar-SA') : 'لا يوجد'}
+                          {formatDeviceDate(detailForm.lastLogin, 'لا يوجد')}
                         </div>
                       </div>
 
@@ -2494,7 +2538,7 @@ export default function AccountingInputs() {
                       <div className="bg-[#1c1c1c] p-3 rounded-2xl border border-white/5 space-y-1">
                         <span className="text-[10px] text-gray-400 font-bold block">7. اخر خروج من النظام</span>
                         <div className="font-mono text-gray-300">
-                          {parseDate(detailForm.lastLogout) ? parseDate(detailForm.lastLogout)!.toLocaleString('ar-SA') : 'لا يوجد'}
+                          {formatDeviceDate(detailForm.lastLogout, 'لا يوجد')}
                         </div>
                       </div>
 
@@ -2505,7 +2549,7 @@ export default function AccountingInputs() {
                           <select
                             value={detailForm.networkStatus || 'متصل'}
                             onChange={(e) => setDetailForm({ ...detailForm, networkStatus: e.target.value as any })}
-                            className="w-full bg-[#2a2a2a] border border-amber-500/40 rounded-lg px-2 py-1 text-xs text-white outline-none"
+                            className="w-full bg-[#2a2a2a] border border-amber-500/40 rounded-lg px-2.5 py-1 text-xs text-white outline-none"
                           >
                             <option value="متصل">متصل</option>
                             <option value="غير متصل">غير متصل</option>
@@ -2525,7 +2569,7 @@ export default function AccountingInputs() {
                       <div className="bg-[#1c1c1c] p-3 rounded-2xl border border-white/5 space-y-1">
                         <span className="text-[10px] text-gray-400 font-bold block">9. تاريخ الخروج النهائي (الحظر)</span>
                         <div className="font-mono text-red-400 font-bold">
-                          {parseDate(detailForm.blockDate) ? parseDate(detailForm.blockDate)!.toLocaleString('ar-SA') : 'لا يوجد حظر'}
+                          {formatDeviceDate(detailForm.blockDate, 'لا يوجد حظر')}
                         </div>
                       </div>
 
@@ -2537,19 +2581,22 @@ export default function AccountingInputs() {
                             value={detailForm.linkedUserName || ''}
                             onChange={(e) => {
                               const selectedName = e.target.value;
-                              const selectedUser = systemUsers.find(u => u.username === selectedName);
+                              const selectedUser = systemUsers.find(u => u.username === selectedName || u.name === selectedName);
                               setDetailForm({ ...detailForm, linkedUserName: selectedName, linkedUserId: selectedUser ? selectedUser.id : '' });
                             }}
                             className="w-full bg-[#2a2a2a] border border-amber-500/40 rounded-lg px-2 py-1 text-xs text-white outline-none"
                           >
                             <option value="">-- اختر مستخدم النظام --</option>
+                            {detailForm.linkedUserName && !systemUsers.some(u => u.username === detailForm.linkedUserName || u.name === detailForm.linkedUserName) && (
+                              <option value={detailForm.linkedUserName}>{detailForm.linkedUserName}</option>
+                            )}
                             {systemUsers.map((u, idx) => (
                               <option key={u.id || `usr-opt2-${idx}`} value={u.username}>{u.name} ({u.username})</option>
                             ))}
                           </select>
                         ) : (
                           <div className="font-bold text-white">
-                            {detailForm.linkedUserName || 'غير مرتبط'} <span className="text-[10px] text-gray-500 font-mono">({detailForm.linkedUserId || 'N/A'})</span>
+                            {renderSafeValue(detailForm.linkedUserName) || 'غير مرتبط'} <span className="text-[10px] text-gray-500 font-mono">({renderSafeValue(detailForm.linkedUserId) || 'N/A'})</span>
                           </div>
                         )}
                       </div>
@@ -2558,7 +2605,7 @@ export default function AccountingInputs() {
                       <div className="bg-[#1c1c1c] p-3 rounded-2xl border border-white/5 space-y-1">
                         <span className="text-[10px] text-gray-400 font-bold block">11. مُضيف الجهاز في النظام</span>
                         <div className="font-bold text-gray-300">
-                          {detailForm.createdByUserName || 'مدير النظام'} <span className="text-[10px] text-gray-500 font-mono">({detailForm.createdByUserId || 'admin'})</span>
+                          {renderSafeValue(detailForm.createdByUserName) || 'مدير النظام'} <span className="text-[10px] text-gray-500 font-mono">({renderSafeValue(detailForm.createdByUserId) || 'admin'})</span>
                         </div>
                       </div>
 
@@ -2573,7 +2620,7 @@ export default function AccountingInputs() {
                             className="w-full bg-[#2a2a2a] border border-amber-500/40 rounded-lg px-2.5 py-1 text-xs text-white outline-none resize-none"
                           />
                         ) : (
-                          <div className="text-gray-300 text-xs">{detailForm.notes || 'لا توجد ملاحظات'}</div>
+                          <div className="text-gray-300 text-xs">{renderSafeValue(detailForm.notes) || 'لا توجد ملاحظات'}</div>
                         )}
                       </div>
 
@@ -2590,7 +2637,7 @@ export default function AccountingInputs() {
                                 className="bg-[#2a2a2a] border border-amber-500/40 rounded-lg px-2.5 py-1 text-xs font-mono text-white outline-none w-full mt-1"
                               />
                             ) : (
-                              <div className="font-mono text-sm font-bold text-white">{detailForm.serialImei || 'غير مسجل'}</div>
+                              <div className="font-mono text-sm font-bold text-white" dir="ltr">{renderSafeValue(detailForm.serialImei) || 'غير مسجل'}</div>
                             )}
                           </div>
                         </div>
@@ -2600,8 +2647,9 @@ export default function AccountingInputs() {
                           {/* Button 1: تجميد مؤقت */}
                           <button
                             type="button"
+                            disabled={isSavingDetail}
                             onClick={() => handleToggleFreeze(selectedDeviceForDetail)}
-                            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer ${selectedDeviceForDetail.isFrozen ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40' : 'bg-sky-600 hover:bg-sky-500 text-white'}`}
+                            className={`px-4 py-2 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50 ${selectedDeviceForDetail.isFrozen ? 'bg-sky-500/20 text-sky-300 border border-sky-500/40' : 'bg-sky-600 hover:bg-sky-500 text-white'}`}
                           >
                             {selectedDeviceForDetail.isFrozen ? <Unlock size={14} /> : <Lock size={14} />}
                             <span>{selectedDeviceForDetail.isFrozen ? 'إلغاء التجميد المؤقت' : 'تجميد مؤقت للجهاز'}</span>
@@ -2613,7 +2661,7 @@ export default function AccountingInputs() {
                               <span className="text-[11px] text-red-300 font-bold px-1">تأكيد حذف الجهاز نهائياً؟</span>
                               <button
                                 type="button"
-                                disabled={isDeletingDevice}
+                                disabled={isDeletingDevice || isSavingDetail}
                                 onClick={() => handleDeleteDevice(selectedDeviceForDetail)}
                                 className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-black transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
                               >
@@ -2631,8 +2679,9 @@ export default function AccountingInputs() {
                           ) : (
                             <button
                               type="button"
+                              disabled={isSavingDetail}
                               onClick={() => setConfirmDeleteDeviceId(selectedDeviceForDetail.id)}
-                              className="px-4 py-2 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+                              className="px-4 py-2 bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/30 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
                             >
                               <Trash2 size={14} />
                               <span>حذف الجهاز</span>
@@ -2646,8 +2695,9 @@ export default function AccountingInputs() {
                                 <span className="text-[11px] text-red-300 font-bold px-1">تأكيد الحظر النهائي؟</span>
                                 <button
                                   type="button"
+                                  disabled={isSavingDetail}
                                   onClick={() => handleBlockDevice(selectedDeviceForDetail)}
-                                  className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-black transition-all flex items-center gap-1 cursor-pointer"
+                                  className="px-3 py-1.5 bg-red-600 hover:bg-red-500 text-white rounded-lg text-xs font-black transition-all flex items-center gap-1 cursor-pointer disabled:opacity-50"
                                 >
                                   <ShieldAlert size={13} />
                                   <span>نعم، حظر</span>
@@ -2663,8 +2713,9 @@ export default function AccountingInputs() {
                             ) : (
                               <button
                                 type="button"
+                                disabled={isSavingDetail}
                                 onClick={() => setConfirmBlockDeviceId(selectedDeviceForDetail.id)}
-                                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-lg shadow-red-600/20"
+                                className="px-4 py-2 bg-red-600 hover:bg-red-500 text-white rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer shadow-lg shadow-red-600/20 disabled:opacity-50"
                               >
                                 <ShieldAlert size={14} />
                                 <span>حظر خروج نهائي</span>
@@ -2680,8 +2731,9 @@ export default function AccountingInputs() {
                     <div className="flex justify-between items-center pt-4 border-t border-white/10">
                       <button
                         type="button"
-                        onClick={() => setSelectedDeviceForDetail(null)}
-                        className="px-5 py-2 bg-white/5 hover:bg-white/10 text-gray-300 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                        disabled={isSavingDetail}
+                        onClick={closeDeviceDetailModal}
+                        className="px-5 py-2 bg-white/5 hover:bg-white/10 text-gray-300 rounded-xl text-xs font-bold transition-colors cursor-pointer disabled:opacity-50"
                       >
                         إغلاق
                       </button>
@@ -2689,11 +2741,12 @@ export default function AccountingInputs() {
                       {isEditingDetailModal && (
                         <button
                           type="button"
+                          disabled={isSavingDetail}
                           onClick={handleSaveDetailModal}
-                          className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-lg shadow-emerald-600/20 flex items-center gap-1.5"
+                          className="px-6 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-black transition-all cursor-pointer shadow-lg shadow-emerald-600/20 flex items-center gap-1.5 disabled:opacity-50"
                         >
                           <Save size={14} />
-                          <span>تعديل وحفظ التغييرات</span>
+                          <span>{isSavingDetail ? 'جاري الحفظ...' : 'تعديل وحفظ التغييرات'}</span>
                         </button>
                       )}
                     </div>

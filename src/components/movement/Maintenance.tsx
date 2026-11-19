@@ -1133,7 +1133,7 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                    </button>
                    <button 
                      onClick={() => handleUpdateCurrentForm('outcome', 'refused')}
-                     className={`flex-1 py-1.5 text-xs font-bold transition-all rounded-lg ${currentFormRow.outcome === 'refused' ? 'bg-zinc-700 text-white shadow-md' : 'text-gray-400 hover:bg-white/5'}`}
+                     className={`flex-1 py-1.5 text-xs font-bold transition-all rounded-lg ${currentFormRow.outcome === 'refused' ? 'bg-slate-200 text-slate-900 dark:bg-zinc-700 dark:text-white shadow-sm' : 'text-slate-500 dark:text-gray-400 hover:bg-slate-100 dark:hover:bg-white/5'}`}
                    >
                      عدم موافقة العميل
                    </button>

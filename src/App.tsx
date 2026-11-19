@@ -139,9 +139,43 @@ export default function App() {
   const [isSyncingAll, setIsSyncingAll] = useState(false);
   const [syncMode, setSyncMode] = useState<'quick' | 'advanced' | null>(null);
   const [syncToast, setSyncToast] = useState<{ message: string; type: 'info' | 'success' | 'error' } | null>(null);
+  const [pendingSyncCount, setPendingSyncCount] = useState<number>(0);
   const longPressTimerRef = useRef<any>(null);
   const isLongPressRef = useRef<boolean>(false);
   const clickTimeoutRef = useRef<any>(null);
+  const lastTapTimeRef = useRef<number>(0);
+  const ignoreClickUntilRef = useRef<number>(0);
+
+  const refreshPendingSyncCount = async () => {
+    try {
+      const res = await localDb.query(
+        "SELECT COUNT(*) as cnt FROM outbox WHERE status IN ('PENDING', 'FAILED')"
+      );
+      const count = Number(res?.values?.[0]?.cnt || 0);
+      setPendingSyncCount(Number.isFinite(count) ? count : 0);
+    } catch {
+      setPendingSyncCount(0);
+    }
+  };
+
+  useEffect(() => {
+    refreshPendingSyncCount();
+    const handleOutboxUpdate = () => {
+      refreshPendingSyncCount();
+    };
+    window.addEventListener('snd_outbox_changed', handleOutboxUpdate);
+    window.addEventListener('snd_data_synced', handleOutboxUpdate);
+    window.addEventListener('online', handleOutboxUpdate);
+    window.addEventListener('offline', handleOutboxUpdate);
+    const interval = setInterval(refreshPendingSyncCount, 5000);
+    return () => {
+      window.removeEventListener('snd_outbox_changed', handleOutboxUpdate);
+      window.removeEventListener('snd_data_synced', handleOutboxUpdate);
+      window.removeEventListener('online', handleOutboxUpdate);
+      window.removeEventListener('offline', handleOutboxUpdate);
+      clearInterval(interval);
+    };
+  }, [user?.id]);
 
   const handleManualSync = async (force: boolean = false) => {
     if (isSyncingAll) return;
@@ -203,18 +237,26 @@ export default function App() {
     } finally {
       setIsSyncingAll(false);
       setSyncMode(null);
+      refreshPendingSyncCount();
     }
   };
 
   const handleSyncPressStart = () => {
+    if (isSyncingAll) return;
     isLongPressRef.current = false;
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
     longPressTimerRef.current = setTimeout(() => {
       isLongPressRef.current = true;
+      ignoreClickUntilRef.current = Date.now() + 500;
+      if (clickTimeoutRef.current) {
+        clearTimeout(clickTimeoutRef.current);
+        clickTimeoutRef.current = null;
+      }
+      lastTapTimeRef.current = 0;
       if (typeof navigator !== 'undefined' && navigator.vibrate) {
         try { navigator.vibrate(60); } catch (_) {}
       }
-      handleManualSync(true); // Long press -> Advanced Sync
+      handleManualSync(true); // Long press -> Comprehensive Sync
     }, 650);
   };
 
@@ -225,29 +267,46 @@ export default function App() {
     }
   };
 
+  const triggerComprehensiveSyncFromDouble = () => {
+    if (clickTimeoutRef.current) {
+      clearTimeout(clickTimeoutRef.current);
+      clickTimeoutRef.current = null;
+    }
+    lastTapTimeRef.current = 0;
+    ignoreClickUntilRef.current = Date.now() + 400;
+    handleManualSync(true); // Double click / double tap -> Comprehensive Sync
+  };
+
   const handleSyncClick = () => {
     if (activeTab === 'dashboard') {
       setDashboardResetTrigger(prev => prev + 1);
       window.dispatchEvent(new CustomEvent('reset-dashboard-counter'));
     }
-    if (isLongPressRef.current) {
+    if (isLongPressRef.current || Date.now() < ignoreClickUntilRef.current) {
       isLongPressRef.current = false;
       return;
     }
+    const now = Date.now();
+    if (now - lastTapTimeRef.current <= 350) {
+      // Second click/tap within 350ms -> Comprehensive Sync (reliable on desktop & Android WebView)
+      triggerComprehensiveSyncFromDouble();
+      return;
+    }
+    lastTapTimeRef.current = now;
     if (clickTimeoutRef.current) {
       clearTimeout(clickTimeoutRef.current);
     }
     clickTimeoutRef.current = setTimeout(() => {
+      clickTimeoutRef.current = null;
+      lastTapTimeRef.current = 0;
       handleManualSync(false); // Single Click -> Fast outbox sync
-    }, 150);
+    }, 340);
   };
 
-  const handleSyncDoubleClick = () => {
-    if (clickTimeoutRef.current) {
-      clearTimeout(clickTimeoutRef.current);
-      clickTimeoutRef.current = null;
-    }
-    handleManualSync(true); // Double Click -> Advanced Sync
+  const handleSyncDoubleClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (Date.now() < ignoreClickUntilRef.current) return;
+    triggerComprehensiveSyncFromDouble();
   };
 
   const stateRefs = useRef({
@@ -1005,8 +1064,16 @@ export default function App() {
 
         if (isLight) {
           document.documentElement.classList.add('light-app');
+          document.documentElement.classList.remove('dark');
+          document.documentElement.style.colorScheme = 'light';
         } else {
           document.documentElement.classList.remove('light-app');
+          document.documentElement.classList.add('dark');
+          document.documentElement.style.colorScheme = 'dark';
+        }
+        const themeMeta = document.getElementById('app-theme-color');
+        if (themeMeta) {
+          themeMeta.setAttribute('content', isLight ? '#f8fafc' : '#0a0a0a');
         }
         setShowAlertsBell(settings.showAlertsBell !== false);
       } catch (e) {
@@ -1263,7 +1330,7 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="h-screen bg-[#0f0f0f] flex items-center justify-center">
+      <div className="h-screen bg-[#f8fafc] dark:bg-[#0a0a0a] flex items-center justify-center">
         <motion.div 
           animate={{ rotate: 360 }}
           transition={{ duration: 1, repeat: Infinity, ease: 'linear' }}
@@ -1380,22 +1447,22 @@ export default function App() {
 
   return (
     <SecurityGuard>
-      <div className={`min-h-screen bg-[#0a0a0a] text-gray-100 font-sans selection:bg-orange-500/30 ${i18n.language === 'ar' ? 'font-arabic' : ''}`} dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}>
+      <div className={`min-h-screen bg-[#f8fafc] dark:bg-[#0a0a0a] text-slate-900 dark:text-gray-100 font-sans selection:bg-orange-500/30 ${i18n.language === 'ar' ? 'font-arabic' : ''}`} dir={i18n.language === 'ar' ? 'rtl' : 'ltr'}>
         <div className="flex h-screen overflow-hidden">
-          {/* ... desktop navigation and main content handled below ... */}
-          <aside className="w-20 lg:w-72 bg-[#0f0f0f] border-r border-white/5 flex-col hidden md:flex sticky top-0 h-screen transition-all z-50">
-          <div className="p-6 flex items-center lg:justify-start justify-center gap-3">
+          {/* Desktop Sidebar */}
+          <aside className="w-20 lg:w-72 bg-white dark:bg-[#0f0f0f] border-e border-slate-200/80 dark:border-white/5 flex-col hidden md:flex sticky top-0 h-screen transition-colors z-50">
+          <div className="p-6 flex items-center lg:justify-start justify-center gap-3 border-b border-slate-100 dark:border-white/5">
             {shopConfig?.logoUrl ? (
-              <img src={shopConfig.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-contain shadow-lg shadow-black/50" />
+              <img src={shopConfig.logoUrl} alt="Logo" className="w-10 h-10 rounded-xl object-contain shadow-sm" />
             ) : (
-              <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center shadow-lg shadow-orange-900/20">
+              <div className="w-10 h-10 bg-orange-600 rounded-xl flex items-center justify-center shadow-md shadow-orange-600/20 theme-preserve-white">
                 <Router className="text-white w-6 h-6" />
               </div>
             )}
-            <span className="font-black text-xl tracking-tighter text-white hidden lg:block truncate">{shopConfig?.shopName || 'SND SYSTEM'}</span>
+            <span className="font-black text-xl tracking-tighter text-slate-900 dark:text-white hidden lg:block truncate">{shopConfig?.shopName || 'SND SYSTEM'}</span>
           </div>
 
-          <nav className="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto">
+          <nav className="flex-1 px-4 py-5 space-y-1.5 overflow-y-auto">
             <NavItem active={activeTab === 'dashboard'} onClick={goToDashboard} icon={<LayoutDashboard size={22} />} label="الرئيسية" />
             <NavItem active={activeTab === 'settings'} onClick={() => { setVaultInitialProps(null); setActiveTab('settings'); }} icon={<SettingsIcon size={22} />} label="اعدادات" />
             <NavItem active={activeTab === 'device-intake'} onClick={() => { setVaultInitialProps(null); setActiveTab('device-intake'); }} icon={<ArrowDownToLine size={22} />} label="دخول أجهزة" />
@@ -1410,27 +1477,27 @@ export default function App() {
             <NavItem active={activeTab === 'inventory'} onClick={() => { setVaultInitialProps(null); setActiveTab('inventory'); }} icon={<Package size={22} />} label="تقارير مخزون" />
           </nav>
 
-          <div className="p-4 border-t border-white/5 space-y-2">
+          <div className="p-4 border-t border-slate-200/80 dark:border-white/5 space-y-2">
             <button 
               onClick={handleSignOut} 
-              className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl bg-red-500/10 hover:bg-red-500 text-red-500 hover:text-white transition-all border border-red-500/20 group font-bold"
+              className="w-full flex items-center justify-center gap-3 px-4 py-3 rounded-xl bg-red-500/10 hover:bg-red-600 text-red-600 dark:text-red-400 hover:text-white transition-all border border-red-500/20 group font-bold cursor-pointer"
               title={t('common.signOut')}
             >
-              <LogOut size={22} className="group-hover:scale-110 transition-transform" />
+              <LogOut size={20} className="group-hover:scale-110 transition-transform" />
             </button>
           </div>
         </aside>
 
         {/* Main View Area */}
-        <main className="flex-1 flex flex-col relative bg-[#0a0a0a] overflow-hidden">
+        <main className="flex-1 flex flex-col relative bg-[#f8fafc] dark:bg-[#0a0a0a] overflow-hidden">
           {/* Top Bar */}
-          <header className="sticky top-0 z-40 bg-[#0a0a0a]/80 backdrop-blur-xl border-b border-white/5 px-4 md:px-8 py-3 flex items-center justify-between min-h-[64px]">
+          <header className="sticky top-0 z-40 bg-[#0f0f0f]/80 backdrop-blur-xl border-b border-white/5 px-4 md:px-8 py-3 flex items-center justify-between min-h-[64px]">
             <div className="flex items-center gap-3">
               <div className="md:hidden flex items-center gap-2 -mr-1.5">
                  {shopConfig?.logoUrl ? (
                    <img src={shopConfig.logoUrl} alt="Logo" className="w-8 h-8 rounded-lg object-contain" />
                  ) : (
-                   <div className="w-8 h-8 bg-orange-600 rounded-lg flex items-center justify-center">
+                   <div className="w-8 h-8 bg-orange-600 rounded-lg flex items-center justify-center theme-preserve-white">
                       <Router className="text-white w-5 h-5" />
                    </div>
                  )}
@@ -1462,20 +1529,20 @@ export default function App() {
                           goToDashboard();
                         }
                       }}
-                      className="p-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all flex items-center justify-center"
+                      className="p-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all flex items-center justify-center border border-white/5 cursor-pointer"
                       title={isSubView ? "الرجوع للخلف" : "خروج للرئيسية"}
                     >
                       {isSubView ? (
                         <ArrowRight size={18} />
                       ) : (
-                        <LogOut size={18} className="rotate-180 text-red-400 hover:text-red-300" />
+                        <LogOut size={18} className="rotate-180 text-red-400" />
                       )}
                     </button>
                   );
                 })()
               )}
 
-              <h2 className="text-sm font-bold text-gray-400 uppercase tracking-widest font-cairo">
+              <h2 className="text-sm font-bold text-gray-300 tracking-wide font-cairo">
                 {activeTab === 'invoices' ? 'صفحة الفواتير' :
                  activeTab === 'other-services' ? 'الخدمات الإضافية' :
                  activeTab === 'device-intake' ? (i18n.language === 'ar' ? 'صفحة الأجهزة الداخلة' : 'Device Intake') :
@@ -1525,9 +1592,18 @@ export default function App() {
                           ? 'bg-orange-500/10 hover:bg-orange-500/20 text-orange-500 border-orange-500/20'
                           : 'bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border-emerald-500/20'
                   }`}
-                  title="ضغطة: مزامنة سريعة (صندوق التحديثات) | ضغطة مزدوجة أو مطولة: مزامنة شاملة"
+                  title={
+                    pendingSyncCount > 0
+                      ? `ملفات/عمليات بانتظار المزامنة: ${pendingSyncCount} | ضغطة: مزامنة سريعة | ضغطة مزدوجة أو مطولة: مزامنة شاملة`
+                      : 'ضغطة: مزامنة سريعة (صندوق التحديثات) | ضغطة مزدوجة أو مطولة: مزامنة شاملة'
+                  }
                 >
                   <RefreshCw size={18} className={isSyncingAll ? "animate-spin" : ""} />
+                  {!isSyncingAll && pendingSyncCount > 0 && (
+                    <span className="absolute -top-1.5 -right-1.5 bg-amber-600 text-white text-[10px] font-black rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center shadow-sm theme-preserve-white font-mono">
+                      {pendingSyncCount > 99 ? '99+' : pendingSyncCount}
+                    </span>
+                  )}
                   {isSyncingAll && (
                     <span className="absolute -top-1 -right-1 text-[8px] font-black px-1 rounded bg-black/90 text-amber-400 border border-amber-500/30">
                       {syncMode === 'advanced' ? 'شاملة' : 'سريعة'}
@@ -1537,20 +1613,20 @@ export default function App() {
 
                 {/* Small sync status indicator right next to the button */}
                 {syncToast && (
-                  <div className="absolute top-full mt-1.5 start-0 z-50 pointer-events-none whitespace-nowrap animate-in fade-in zoom-in-95 duration-150">
-                    <div className={`px-2 py-1 rounded-lg shadow-xl backdrop-blur-md border flex items-center gap-1.5 text-[10px] font-bold font-cairo leading-tight ${
+                  <div className="absolute top-full mt-1.5 start-0 z-[60] pointer-events-none whitespace-nowrap">
+                    <div className={`px-2.5 py-1 rounded-lg shadow-lg border flex items-center gap-1.5 text-[10px] font-bold font-cairo leading-tight ${
                       syncToast.type === 'error'
-                        ? 'bg-red-950/95 text-red-200 border-red-500/40 shadow-red-950/40'
+                        ? 'bg-red-50 dark:bg-red-950/95 text-red-500 dark:text-red-200 border-red-200 dark:border-red-500/40'
                         : syncToast.type === 'info'
-                          ? 'bg-[#161922]/95 text-cyan-300 border-cyan-500/30 shadow-black/80'
-                          : 'bg-[#122316]/95 text-emerald-300 border-emerald-500/30 shadow-emerald-950/40'
+                          ? 'bg-white dark:bg-[#161922] text-gray-200 border-white/15'
+                          : 'bg-emerald-50 dark:bg-[#122316] text-emerald-500 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/30'
                     }`}>
                       <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                         syncToast.type === 'error'
-                          ? 'bg-red-400'
+                          ? 'bg-red-500'
                           : syncToast.type === 'info'
-                            ? 'bg-cyan-400 animate-ping'
-                            : 'bg-emerald-400'
+                            ? 'bg-orange-400'
+                            : 'bg-emerald-500'
                       }`} />
                       <span>{syncToast.message}</span>
                     </div>
@@ -1562,12 +1638,12 @@ export default function App() {
               {showAlertsBell && (
                 <button
                   onClick={() => setShowAllAlertsModal(true)}
-                  className="p-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 rounded-xl transition-all relative border border-amber-500/20 mr-1 cursor-pointer flex items-center justify-center"
+                  className="p-2 bg-white/5 hover:bg-orange-500/10 text-gray-300 hover:text-orange-400 rounded-xl transition-all relative border border-white/10 mr-1 cursor-pointer flex items-center justify-center"
                   title="التنبيهات والمستحقات"
                 >
-                  <Bell size={18} className={activeAlerts.length > 0 ? "animate-pulse" : ""} />
+                  <Bell size={18} />
                   {activeAlerts.length > 0 && (
-                    <span className="absolute -top-1.5 -right-1.5 bg-red-600 text-white text-[10px] font-black rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center shadow-sm">
+                    <span className="absolute -top-1.5 -right-1.5 bg-orange-600 text-white text-[10px] font-black rounded-full min-w-[18px] h-[18px] px-1 flex items-center justify-center shadow-sm theme-preserve-white">
                       {activeAlerts.length}
                     </span>
                   )}
@@ -1576,17 +1652,17 @@ export default function App() {
 
               <button
                 onClick={() => setShowDataAuditModal(true)}
-                className="p-2 bg-orange-500/10 hover:bg-orange-500/20 text-orange-500 rounded-xl transition-all relative border border-orange-500/20 mr-1 cursor-pointer flex items-center justify-center"
+                className="p-2 bg-white/5 hover:bg-orange-500/10 text-gray-300 hover:text-orange-400 rounded-xl transition-all relative border border-white/10 mr-1 cursor-pointer flex items-center justify-center"
                 title="تدقيق ومطابقة السجلات وتصحيح التضاربات"
               >
                 <ShieldCheck size={18} />
               </button>
 
-              <button onClick={handleSignOut} className="flex items-center gap-2 mr-1 md:mr-0 group relative" title={t('common.signOut')}>
-                <div className="text-right hidden sm:block group-hover:text-red-400 transition-colors">
+              <button onClick={handleSignOut} className="flex items-center gap-2 mr-1 md:mr-0 group relative cursor-pointer" title={t('common.signOut')}>
+                <div className="text-right hidden sm:block group-hover:text-red-500 transition-colors">
                   <p className="text-[10px] font-bold text-gray-200 line-clamp-1">{user.name}</p>
                 </div>
-                <div className="w-8 h-8 rounded-full bg-red-500/10 border border-red-500/20 text-red-500 group-hover:bg-red-500 group-hover:text-white flex items-center justify-center transition-all relative">
+                <div className="w-8 h-8 rounded-full bg-white/5 border border-white/10 text-gray-200 group-hover:bg-red-600 group-hover:text-white group-hover:border-red-600 flex items-center justify-center transition-all relative">
                   <span className="absolute group-hover:opacity-0 transition-opacity font-black text-xs font-mono">{user.name.charAt(0)}</span>
                   <LogOut size={14} className="opacity-0 group-hover:opacity-100 absolute transition-opacity" />
                 </div>
@@ -1595,7 +1671,7 @@ export default function App() {
               <div className="md:hidden flex items-center">
                  <button 
                    onClick={() => setActiveTab('settings')}
-                   className="p-1.5 bg-white/5 hover:bg-white/10 rounded-full border border-white/5 transition-all text-gray-400 hover:text-white"
+                   className="p-1.5 bg-white/5 hover:bg-white/10 rounded-full border border-white/10 transition-all text-gray-400 hover:text-white cursor-pointer"
                  >
                    <MoreVertical size={20} />
                  </button>
@@ -1634,7 +1710,7 @@ export default function App() {
           </div>
 
           {/* Bottom Navigation - Mobile Toolbar */}
-          <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/90 dark:bg-[#0f0f0f]/90 backdrop-blur-xl border-t border-gray-200 dark:border-white/5 py-1 px-1 sm:px-2 flex items-center justify-between shadow-[0_-10px_40px_-15px_rgba(0,0,0,0.1)] dark:shadow-2xl mobile-bottom-nav" dir="rtl">
+          <nav className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white/95 dark:bg-[#0f0f0f]/95 border-t border-slate-200 dark:border-white/5 py-1 px-1 sm:px-2 flex items-center justify-between shadow-[0_-6px_24px_-8px_rgba(15,23,42,0.08)] dark:shadow-2xl mobile-bottom-nav" dir="rtl">
             {/* Right Group (2 items): دخول أجهزة + فحص */}
             <div className="flex-1 flex items-center justify-around min-w-0">
               <MobileNavItem 
@@ -1642,14 +1718,14 @@ export default function App() {
                 onClick={() => setActiveTab('device-intake')} 
                 icon={<ArrowDownToLine size={20} />} 
                 label="دخول أجهزة"
-                colorClass="text-orange-500"
+                colorClass="text-orange-600 dark:text-orange-400"
               />
               <MobileNavItem 
                 active={activeTab === 'inspection'} 
                 onClick={() => setActiveTab('inspection')} 
                 icon={<ClipboardCheck size={20} />} 
                 label="فحص"
-                colorClass="text-purple-500"
+                colorClass="text-orange-600 dark:text-orange-400"
               />
             </div>
 
@@ -1657,13 +1733,13 @@ export default function App() {
             <div className="relative -top-2.5 shrink-0 px-1 sm:px-2 z-10 flex flex-col items-center">
               <button 
                 onClick={goToDashboard}
-                className="w-13 h-13 bg-white dark:bg-[#1a1a1a] rounded-full flex flex-col items-center justify-center shadow-xl ring-4 ring-gray-100 dark:ring-[#0f0f0f] mobile-center-btn border border-gray-200 dark:border-white/5 cursor-pointer active:scale-95 transition-transform"
+                className="w-13 h-13 bg-white dark:bg-[#1a1a1a] rounded-full flex flex-col items-center justify-center shadow-lg ring-4 ring-slate-100 dark:ring-[#0f0f0f] mobile-center-btn border border-slate-200 dark:border-white/10 cursor-pointer active:scale-95 transition-transform"
                 title="الصفحة الرئيسية / العداد الرئيسي"
               >
                 <div className="grid grid-cols-2 gap-[2px] w-[18px] h-[18px]">
                   <div className="bg-orange-600 rounded-[3px]"></div>
-                  <div className="bg-blue-600 rounded-[3px]"></div>
-                  <div className="bg-amber-500 rounded-[3px]"></div>
+                  <div className="bg-orange-400 rounded-[3px]"></div>
+                  <div className="bg-slate-400 dark:bg-slate-500 rounded-[3px]"></div>
                   <div className="bg-emerald-600 rounded-[3px]"></div>
                 </div>
               </button>
@@ -1676,21 +1752,21 @@ export default function App() {
                 onClick={() => setActiveTab('approval')} 
                 icon={<Clock size={20} />} 
                 label="الموافقة"
-                colorClass="text-amber-500"
+                colorClass="text-orange-600 dark:text-orange-400"
               />
               <MobileNavItem 
                 active={activeTab === 'maintenance'} 
                 onClick={() => setActiveTab('maintenance')} 
                 icon={<Wrench size={20} />} 
                 label="صيانة"
-                colorClass="text-blue-500"
+                colorClass="text-orange-600 dark:text-orange-400"
               />
               <MobileNavItem 
                 active={activeTab === 'device-exit'} 
                 onClick={() => setActiveTab('device-exit')} 
                 icon={<ArrowUpFromLine size={20} />} 
                 label="خروج أجهزة"
-                colorClass="text-emerald-500"
+                colorClass="text-emerald-600 dark:text-emerald-400"
               />
             </div>
           </nav>
@@ -1701,22 +1777,22 @@ export default function App() {
     {/* Detailed Alerts Modal */}
     <AnimatePresence>
       {showAllAlertsModal && (
-        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm font-cairo text-right" dir="rtl">
+        <div className="fixed inset-0 z-50 overflow-y-auto flex items-center justify-center p-4 bg-slate-950/50 dark:bg-black/80 font-cairo text-right" dir="rtl">
           <motion.div
             initial={{ scale: 0.95, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             exit={{ scale: 0.95, opacity: 0 }}
-            className="relative w-full max-w-4xl bg-[#0f0f0f] border border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+            className="relative w-full max-w-4xl bg-white dark:bg-[#0f0f0f] border border-slate-200 dark:border-white/10 rounded-3xl shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
           >
             {/* Header */}
-            <div className="flex items-center justify-between p-6 border-b border-white/5 bg-[#141414]">
+            <div className="flex items-center justify-between p-6 border-b border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-[#141414]">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-amber-500/10 text-amber-500 rounded-xl">
+                <div className="p-2 bg-orange-500/10 text-orange-600 dark:text-orange-400 rounded-xl">
                   <Bell size={20} />
                 </div>
                 <div>
-                  <h3 className="text-base font-black text-white">إشعارات التنبيه والضمان والمستحقات</h3>
-                  <p className="text-xs text-gray-400 mt-0.5">تتبع الفواتير المتأخرة وضمانات الأجهزة النشطة والمنتهية حديثاً.</p>
+                  <h3 className="text-base font-black text-slate-900 dark:text-white">إشعارات التنبيه والضمان والمستحقات</h3>
+                  <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">تتبع الفواتير المتأخرة وضمانات الأجهزة النشطة والمنتهية حديثاً.</p>
                 </div>
               </div>
               <button
@@ -1724,14 +1800,14 @@ export default function App() {
                   setShowAllAlertsModal(false);
                   setSettleInvoice(null);
                 }}
-                className="p-2 hover:bg-white/5 text-gray-400 hover:text-white rounded-xl transition-all cursor-pointer"
+                className="p-2 hover:bg-slate-200/70 dark:hover:bg-white/5 text-slate-500 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white rounded-xl transition-all cursor-pointer"
               >
                 <X size={20} />
               </button>
             </div>
 
             {/* Tabs Selection */}
-            <div className="flex border-b border-white/5 bg-[#121212] p-1 gap-1 m-4 rounded-xl">
+            <div className="flex border border-slate-200 dark:border-white/5 bg-slate-100 dark:bg-[#121212] p-1 gap-1 m-4 rounded-xl">
               <button
                 onClick={() => {
                   setAlertsTab('outstanding');
@@ -1739,8 +1815,8 @@ export default function App() {
                 }}
                 className={`flex-1 py-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${
                   alertsTab === 'outstanding'
-                    ? 'bg-amber-500 text-black font-black shadow-lg shadow-amber-500/10'
-                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                    ? 'bg-orange-600 text-white font-black shadow-sm theme-preserve-white'
+                    : 'text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-white/5'
                 }`}
               >
                 <CircleDollarSign size={16} />
@@ -1753,8 +1829,8 @@ export default function App() {
                 }}
                 className={`flex-1 py-3 text-xs font-bold rounded-lg transition-all flex items-center justify-center gap-2 cursor-pointer ${
                   alertsTab === 'warranty'
-                    ? 'bg-amber-500 text-black font-black shadow-lg shadow-amber-500/10'
-                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                    ? 'bg-orange-600 text-white font-black shadow-sm theme-preserve-white'
+                    : 'text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white hover:bg-white/60 dark:hover:bg-white/5'
                 }`}
               >
                 <Clock size={16} />
@@ -2174,13 +2250,13 @@ export default function App() {
             </div>
 
             {/* Footer */}
-            <div className="p-6 border-t border-white/5 bg-[#141414] text-left">
+            <div className="p-6 border-t border-slate-200 dark:border-white/5 bg-slate-50 dark:bg-[#141414] text-left">
               <button
                 onClick={() => {
                   setShowAllAlertsModal(false);
                   setSettleInvoice(null);
                 }}
-                className="p-2.5 bg-white/5 hover:bg-red-500/10 text-gray-400 hover:text-red-500 rounded-xl transition-all border border-white/5 cursor-pointer"
+                className="p-2.5 bg-slate-200/70 dark:bg-white/5 hover:bg-red-500/10 text-slate-600 dark:text-gray-400 hover:text-red-500 rounded-xl transition-all border border-slate-200 dark:border-white/5 cursor-pointer"
                 title="إغلاق التنبيهات"
               >
                 <X size={20} />
@@ -2203,26 +2279,26 @@ export default function App() {
     )}
 
     {showSignOutModal && (
-      <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+      <div className="fixed inset-0 z-[150] flex items-center justify-center p-4 bg-slate-950/50 dark:bg-black/75">
         <div
-          className="bg-[#1a1a1a] border border-white/10 rounded-3xl p-6 w-full max-w-sm shadow-2xl text-center animate-in zoom-in-95 duration-150"
+          className="bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 rounded-3xl p-6 w-full max-w-sm shadow-2xl text-center"
           dir="rtl"
         >
           <div className="w-12 h-12 bg-red-500/10 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 border border-red-500/20">
             <LogOut size={22} className="rotate-180" />
           </div>
-          <h3 className="text-lg font-black text-white font-cairo mb-2">تسجيل الخروج</h3>
-          <p className="text-sm text-gray-400 font-cairo mb-6">هل أنت متأكد من رغبتك في تسجيل الخروج من النظام؟</p>
+          <h3 className="text-lg font-black text-slate-900 dark:text-white font-cairo mb-2">تسجيل الخروج</h3>
+          <p className="text-sm text-slate-600 dark:text-gray-400 font-cairo mb-6">هل أنت متأكد من رغبتك في تسجيل الخروج من النظام؟</p>
           <div className="flex gap-3">
             <button
               onClick={confirmSignOut}
-              className="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-2xl font-bold font-cairo transition-all cursor-pointer text-sm"
+              className="flex-1 bg-red-600 hover:bg-red-700 text-white py-3 rounded-2xl font-bold font-cairo transition-all cursor-pointer text-sm theme-preserve-white"
             >
               تسجيل الخروج
             </button>
             <button
               onClick={() => setShowSignOutModal(false)}
-              className="flex-1 bg-[#242424] hover:bg-white/5 text-gray-300 py-3 rounded-2xl font-bold font-cairo border border-white/5 transition-all cursor-pointer text-sm"
+              className="flex-1 bg-slate-100 dark:bg-[#242424] hover:bg-slate-200 dark:hover:bg-white/5 text-slate-700 dark:text-gray-300 py-3 rounded-2xl font-bold font-cairo border border-slate-200 dark:border-white/5 transition-all cursor-pointer text-sm"
             >
               إلغاء
             </button>
@@ -2245,10 +2321,10 @@ function NavItem({ active, onClick, icon, label }: { active: boolean, onClick: (
   return (
     <button 
       onClick={onClick}
-      className={`w-full flex items-center justify-center lg:justify-start gap-3 px-4 py-3.5 rounded-2xl transition-all duration-200 group relative ${
+      className={`w-full flex items-center justify-center lg:justify-start gap-3 px-4 py-3.5 rounded-2xl transition-all duration-200 group relative cursor-pointer ${
         active 
-        ? 'bg-orange-600 text-white shadow-xl shadow-orange-900/30' 
-        : 'text-gray-500 hover:text-white hover:bg-white/5'
+        ? 'bg-orange-600 text-white shadow-md shadow-orange-600/20 theme-preserve-white' 
+        : 'text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/5'
       }`}
     >
       <span className={`${active ? 'text-white' : 'group-hover:scale-110 transition-transform'}`}>{icon}</span>
@@ -2262,12 +2338,12 @@ function MobileNavItem({ active, onClick, icon, label, colorClass }: { active: b
   return (
     <button 
       onClick={onClick}
-      className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all min-w-0 flex-1 cursor-pointer ${active ? colorClass : 'text-gray-400 dark:text-gray-500 hover:' + colorClass}`}
+      className={`flex flex-col items-center gap-0.5 sm:gap-1 transition-all min-w-0 flex-1 cursor-pointer ${active ? colorClass : 'text-slate-500 dark:text-gray-500 hover:text-slate-900 dark:hover:text-gray-200'}`}
     >
-      <div className={`p-1 sm:p-1.5 rounded-lg transition-colors ${active ? 'bg-gray-100 dark:bg-white/10 shadow-inner' : ''}`}>
+      <div className={`p-1 sm:p-1.5 rounded-lg transition-colors ${active ? 'bg-orange-500/10 dark:bg-white/10' : ''}`}>
         {icon}
       </div>
-      <span className="text-[8.5px] sm:text-[9px] font-black uppercase tracking-tighter opacity-80 whitespace-nowrap text-center">{label}</span>
+      <span className="text-[8.5px] sm:text-[9px] font-black tracking-tight opacity-90 whitespace-nowrap text-center">{label}</span>
     </button>
   );
 }

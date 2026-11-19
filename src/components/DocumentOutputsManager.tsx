@@ -399,32 +399,32 @@ export default function DocumentOutputsManager({
 
   return (
     <div 
-      className="fixed inset-0 z-[120] bg-[#121212] text-white flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden font-cairo" 
+      className="fixed inset-0 z-[120] bg-slate-50 dark:bg-[#121212] text-slate-900 dark:text-white flex flex-col h-[100dvh] max-h-[100dvh] overflow-hidden font-cairo" 
       dir="rtl"
     >
       {/* 1. Header Bar */}
-      <div className="flex items-center justify-between px-3 sm:px-6 py-3 sm:py-3.5 bg-[#1a1a1a] border-b border-white/10 shrink-0">
+      <div className="flex items-center justify-between px-3 sm:px-6 py-3 sm:py-3.5 bg-white dark:bg-[#1a1a1a] border-b border-slate-200 dark:border-white/10 shrink-0">
         <div className="flex items-center gap-2.5 sm:gap-3">
           <button
             type="button"
             onClick={onClose}
-            className="p-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl transition-all cursor-pointer border border-white/10"
+            className="p-2 bg-slate-100 hover:bg-slate-200 dark:bg-white/5 dark:hover:bg-white/10 text-slate-700 hover:text-slate-900 dark:text-gray-300 dark:hover:text-white rounded-xl transition-all cursor-pointer border border-slate-300 dark:border-white/10"
             title="رجوع"
           >
             <ArrowRight size={18} />
           </button>
           <div className="flex items-center gap-2.5">
-            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-purple-600/20 text-purple-400 border border-purple-500/30 flex items-center justify-center shrink-0">
+            <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-xl bg-purple-50 dark:bg-purple-600/20 text-purple-600 dark:text-purple-400 border border-purple-200 dark:border-purple-500/30 flex items-center justify-center shrink-0">
               <Printer size={20} />
             </div>
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-base sm:text-lg font-black text-white m-0">إدارة المطبوعات</h1>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-500/20 text-purple-300 border border-purple-500/30">
+                <h1 className="text-base sm:text-lg font-black text-slate-900 dark:text-white m-0">إدارة المطبوعات</h1>
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-purple-50 dark:bg-purple-500/20 text-purple-700 dark:text-purple-300 border border-purple-200 dark:border-purple-500/30">
                   {records.length} حركة
                 </span>
               </div>
-              <p className="text-[11px] text-gray-400 mt-0.5 line-clamp-1">سجل تدقيق عمليات طباعة وتصدير ومشاركة المستندات</p>
+              <p className="text-[11px] text-slate-500 dark:text-gray-400 mt-0.5 line-clamp-1">سجل تدقيق عمليات طباعة وتصدير ومشاركة المستندات</p>
             </div>
           </div>
         </div>
@@ -435,7 +435,7 @@ export default function DocumentOutputsManager({
             type="button"
             onClick={loadData}
             disabled={loading}
-            className="px-2.5 sm:px-3 py-1.5 sm:py-2 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl text-xs font-bold border border-white/10 flex items-center gap-1.5 transition-all cursor-pointer"
+            className="px-2.5 sm:px-3 py-1.5 sm:py-2 bg-slate-100 hover:bg-slate-200 dark:bg-white/5 dark:hover:bg-white/10 text-slate-700 hover:text-slate-900 dark:text-gray-300 dark:hover:text-white rounded-xl text-xs font-bold border border-slate-200 dark:border-white/10 flex items-center gap-1.5 transition-all cursor-pointer"
             title="تحديث البيانات"
           >
             <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />
@@ -445,18 +445,18 @@ export default function DocumentOutputsManager({
       </div>
 
       {/* 2. Filter Controls Box (Compact & Mobile-Optimized) */}
-      <div className="p-3 sm:p-4 bg-[#161616] border-b border-white/10 space-y-2.5 shrink-0">
+      <div className="p-3 sm:p-4 bg-white dark:bg-[#161616] border-b border-slate-200 dark:border-white/10 space-y-2.5 shrink-0">
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-2.5 sm:gap-4">
           
           {/* Mode Selection */}
           <div className="flex items-center gap-2">
-            <span className="text-[11px] sm:text-xs font-bold text-gray-400 shrink-0">طريقة العرض:</span>
+            <span className="text-[11px] sm:text-xs font-bold text-slate-500 dark:text-gray-400 shrink-0">طريقة العرض:</span>
             
             {/* Box 1: By System User (Default) */}
             <label className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all border ${
               filterMode === 'user' 
-                ? 'bg-purple-600/20 text-purple-300 border-purple-500/50 shadow-sm' 
-                : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
+                ? 'bg-purple-50 dark:bg-purple-600/20 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-500/50 shadow-sm' 
+                : 'bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-gray-400 border-slate-200 dark:border-white/10 hover:bg-slate-200/70 dark:hover:bg-white/10'
             }`}>
               <input
                 type="radio"
@@ -469,15 +469,15 @@ export default function DocumentOutputsManager({
                 }}
                 className="hidden"
               />
-              <UserIcon size={13} className={filterMode === 'user' ? 'text-purple-400' : 'text-gray-500'} />
+              <UserIcon size={13} className={filterMode === 'user' ? 'text-purple-600 dark:text-purple-400' : 'text-slate-400 dark:text-gray-500'} />
               <span>مستخدم النظام</span>
             </label>
 
             {/* Box 2: By Date */}
             <label className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold cursor-pointer transition-all border ${
               filterMode === 'date' 
-                ? 'bg-purple-600/20 text-purple-300 border-purple-500/50 shadow-sm' 
-                : 'bg-white/5 text-gray-400 border-white/10 hover:bg-white/10'
+                ? 'bg-purple-50 dark:bg-purple-600/20 text-purple-700 dark:text-purple-300 border-purple-300 dark:border-purple-500/50 shadow-sm' 
+                : 'bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-gray-400 border-slate-200 dark:border-white/10 hover:bg-slate-200/70 dark:hover:bg-white/10'
             }`}>
               <input
                 type="radio"
@@ -810,7 +810,7 @@ export default function DocumentOutputsManager({
           </button>
 
           {/* Current Page Pill */}
-          <div className="px-2.5 sm:px-3 py-1 bg-purple-600/20 border border-purple-500/40 text-purple-300 rounded-lg font-mono font-bold text-xs">
+          <div className="px-2.5 sm:px-3 py-1 bg-purple-50 dark:bg-purple-600/20 border border-purple-200 dark:border-purple-500/40 text-purple-700 dark:text-purple-300 rounded-lg font-mono font-bold text-xs">
             {validCurrentPage} / {totalPages}
           </div>
 

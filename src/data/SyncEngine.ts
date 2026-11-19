@@ -883,6 +883,9 @@ export class SyncEngine {
       return { success: false, message: `فشلت المزامنة: ${error.message || error}` };
     } finally {
       this.syncing = false;
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('snd_outbox_changed'));
+      }
     }
   }
 

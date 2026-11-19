@@ -295,27 +295,27 @@ export default function SecurityGuard({ children }: SecurityGuardProps) {
   const hasPin = settings?.pinEnabled === true || settings?.pinEnabled === 1;
 
   return (
-    <div className="fixed inset-0 z-[9999] bg-[#0a0a0a] flex flex-col items-center justify-center p-6 text-white font-sans rtl">
+    <div className="fixed inset-0 z-[9999] bg-[#f8fafc] dark:bg-[#0a0a0a] flex flex-col items-center justify-center p-6 text-slate-900 dark:text-white font-sans rtl">
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="max-w-xs w-full text-center space-y-6"
       >
         <div className="flex flex-col items-center space-y-4">
-           <div className="w-20 h-20 bg-orange-600/10 rounded-3xl flex items-center justify-center text-orange-500 border border-orange-500/20 shadow-lg shadow-orange-950/20">
+           <div className="w-20 h-20 bg-orange-600/10 rounded-3xl flex items-center justify-center text-orange-600 dark:text-orange-500 border border-orange-500/20 shadow-sm">
               <ShieldAlert size={40} />
            </div>
            <div className="space-y-1">
-              <h2 className="text-xl font-black">التطبيق مغلق للأمان</h2>
-              <p className="text-xs text-gray-400">يرجى التحقق لتتمكن من الوصول للبيانات</p>
+              <h2 className="text-xl font-black text-slate-900 dark:text-white">التطبيق مغلق للأمان</h2>
+              <p className="text-xs text-slate-500 dark:text-gray-400">يرجى التحقق لتتمكن من الوصول للبيانات</p>
            </div>
         </div>
 
         {hasPin && (
           <div className="space-y-5">
-            <div className="grid grid-cols-4 gap-3 bg-white/5 p-4 rounded-2xl border border-white/5">
+            <div className="grid grid-cols-4 gap-3 bg-white dark:bg-white/5 p-4 rounded-2xl border border-slate-200 dark:border-white/5 shadow-sm">
                {Array.from({ length: 4 }).map((_, i) => (
-                 <div key={i} className={`h-12 rounded-xl flex items-center justify-center text-2xl font-black transition-all ${pinInput.length > i ? 'bg-orange-500 text-white' : 'bg-black/40 border border-white/10 text-gray-700'}`}>
+                 <div key={i} className={`h-12 rounded-xl flex items-center justify-center text-2xl font-black transition-all ${pinInput.length > i ? 'bg-orange-600 text-white theme-preserve-white' : 'bg-slate-100 dark:bg-black/40 border border-slate-200 dark:border-white/10 text-slate-400 dark:text-gray-700'}`}>
                     {pinInput.length > i ? '●' : ''}
                  </div>
                ))}
@@ -327,7 +327,7 @@ export default function SecurityGuard({ children }: SecurityGuardProps) {
                   key={`pin-num-${num}-${nIdx}`}
                   type="button"
                   onClick={() => pinInput.length < 4 && setPinInput(p => p + num)}
-                  className="h-14 bg-white/5 rounded-2xl hover:bg-white/10 border border-white/5 text-xl font-bold transition-all active:scale-95 cursor-pointer"
+                  className="h-14 bg-white dark:bg-white/5 rounded-2xl hover:bg-slate-100 dark:hover:bg-white/10 border border-slate-200 dark:border-white/5 text-xl font-bold transition-all active:scale-95 cursor-pointer shadow-sm"
                 >
                   {num}
                 </button>
@@ -336,14 +336,14 @@ export default function SecurityGuard({ children }: SecurityGuardProps) {
               <button 
                 type="button"
                 onClick={() => pinInput.length < 4 && setPinInput(p => p + '0')}
-                className="h-14 bg-white/5 rounded-2xl hover:bg-white/10 border border-white/5 text-xl font-bold transition-all active:scale-95 cursor-pointer"
+                className="h-14 bg-white dark:bg-white/5 rounded-2xl hover:bg-slate-100 dark:hover:bg-white/10 border border-slate-200 dark:border-white/5 text-xl font-bold transition-all active:scale-95 cursor-pointer shadow-sm"
               >
                 0
               </button>
               <button 
                 type="button"
                 onClick={() => setPinInput(p => p.slice(0, -1))}
-                className="h-14 bg-red-600/10 rounded-2xl hover:bg-red-600/20 text-red-500 font-bold transition-all active:scale-95 cursor-pointer"
+                className="h-14 bg-red-500/10 rounded-2xl hover:bg-red-500/20 text-red-600 dark:text-red-500 font-bold transition-all active:scale-95 cursor-pointer border border-red-500/15"
               >
                 ←
               </button>
@@ -353,7 +353,7 @@ export default function SecurityGuard({ children }: SecurityGuardProps) {
               <button 
                 type="button"
                 onClick={handlePinSubmit}
-                className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3.5 rounded-2xl font-black shadow-lg shadow-orange-900/40 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98"
+                className="w-full bg-orange-600 hover:bg-orange-700 text-white py-3.5 rounded-2xl font-black shadow-md shadow-orange-600/20 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-98 theme-preserve-white"
               >
                 <Lock size={18} />
                 تأكيد الرمز
@@ -368,23 +368,23 @@ export default function SecurityGuard({ children }: SecurityGuardProps) {
               type="button"
               disabled={isVerifying}
               onClick={() => authenticateBiometric()}
-              className={`p-5 rounded-3xl bg-orange-600/10 border border-orange-500/30 text-orange-500 hover:bg-orange-600/20 transition-all shadow-lg active:scale-90 flex items-center justify-center cursor-pointer ${isVerifying ? 'animate-pulse opacity-70' : ''}`}
+              className={`p-5 rounded-3xl bg-orange-600/10 border border-orange-500/30 text-orange-600 dark:text-orange-500 hover:bg-orange-600/20 transition-all shadow-sm active:scale-90 flex items-center justify-center cursor-pointer ${isVerifying ? 'opacity-70' : ''}`}
               title="انقر لتشغيل حساس البصمة"
             >
               {isVerifying ? (
-                <RefreshCw size={44} className="animate-spin text-orange-400" />
+                <RefreshCw size={44} className="animate-spin text-orange-500" />
               ) : (
                 <Fingerprint size={44} />
               )}
             </button>
-            <span className="text-xs font-bold text-gray-300">
+            <span className="text-xs font-bold text-slate-600 dark:text-gray-300">
               {isVerifying ? 'جاري التحقق من البصمة...' : 'انقر على البصمة لإعادة فتح الحساس'}
             </span>
           </div>
         )}
 
         {error && (
-          <p className="text-xs text-red-400 font-semibold bg-red-500/10 border border-red-500/20 rounded-xl p-3 leading-relaxed">
+          <p className="text-xs text-red-600 dark:text-red-400 font-semibold bg-red-500/10 border border-red-500/20 rounded-xl p-3 leading-relaxed">
             {error}
           </p>
         )}

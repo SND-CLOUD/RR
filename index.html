@@ -3,11 +3,41 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#0a0a0a" id="app-theme-color" />
     <link rel="icon" type="image/png" href="/favicon.png" />
     <title>نظام سندات الصيانة - SND</title>
     <meta name="description" content="نظام متكامل لإدارة مراكز صيانة الأجهزة والشبكات والراوترات. تتبع الأجهزة، فواتير صيانة، تقارير أداء، وإدارة عملاء." />
     <meta property="og:title" content="نظام سندات الصيانة - SND" />
     <meta property="og:description" content="نظام متكامل لإدارة مراكز صيانة الأجهزة والشبكات والراوترات. تتبع الأجهزة، فواتير صيانة، تقارير أداء، وإدارة عملاء." />
+    <script>
+      (function () {
+        try {
+          var raw = localStorage.getItem('snd_settings');
+          var settings = raw ? JSON.parse(raw) : {};
+          var appearance = settings.appearance !== undefined ? settings.appearance : 'auto';
+          var isLight = false;
+          if (appearance === 'normal') {
+            isLight = true;
+          } else if (appearance === 'dark') {
+            isLight = false;
+          } else {
+            isLight = !(window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+          }
+          var root = document.documentElement;
+          if (isLight) {
+            root.classList.add('light-app');
+            root.classList.remove('dark');
+            root.style.colorScheme = 'light';
+          } else {
+            root.classList.remove('light-app');
+            root.classList.add('dark');
+            root.style.colorScheme = 'dark';
+          }
+          var meta = document.getElementById('app-theme-color');
+          if (meta) meta.setAttribute('content', isLight ? '#f8fafc' : '#0a0a0a');
+        } catch (e) {}
+      })();
+    </script>
     <script>
       // Safe WebAssembly streaming compilation polyfill for iframe and sandbox environments
       if (typeof window !== 'undefined' && typeof WebAssembly !== 'undefined') {

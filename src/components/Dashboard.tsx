@@ -259,15 +259,23 @@ export default function Dashboard({
     action();
   };
 
+  const unifiedSlideTheme = {
+    isSolidHero: true,
+    cardClass: 'bg-gradient-to-br from-[#e66000] to-[#c2410c] text-white border-orange-500/20 theme-preserve-white',
+    titleClass: 'text-white/90',
+    countClass: 'text-white',
+    labelClass: 'text-white/90',
+    iconBg: 'bg-white/15 text-white'
+  };
+
   const counterSlides = [
     {
       id: 'active',
       title: shopName || 'عالم الصيانة والتجارة',
       count: activeDevicesCount,
       label: 'الأجهزة النشطة في المحل',
-      gradient: 'from-orange-500 to-orange-600',
-      icon: <Smartphone size={36} className="text-orange-100" />,
-      faintIcon: <SettingsIcon size={140} />,
+      ...unifiedSlideTheme,
+      icon: <Smartphone size={32} className="text-white" />,
       onClick: () => onNavigate('reports')
     },
     {
@@ -275,9 +283,8 @@ export default function Dashboard({
       title: 'إجراء الفحص الأولي',
       count: inspectionCount,
       label: 'أجهزة قيد أو بانتظار الفحص',
-      gradient: 'from-amber-500 to-amber-600',
-      icon: <ClipboardCheck size={36} className="text-amber-100" />,
-      faintIcon: <ClipboardCheck size={140} />,
+      ...unifiedSlideTheme,
+      icon: <ClipboardCheck size={32} className="text-white" />,
       onClick: () => onNavigate('inspection')
     },
     {
@@ -285,9 +292,8 @@ export default function Dashboard({
       title: 'انتظار الموافقة والقطع',
       count: approvalPartsCount,
       label: 'أجهزة بانتظار الموافقة أو توفير القطع',
-      gradient: 'from-cyan-600 to-teal-700',
-      icon: <Clock size={36} className="text-cyan-100" />,
-      faintIcon: <Clock size={140} />,
+      ...unifiedSlideTheme,
+      icon: <Clock size={32} className="text-white" />,
       onClick: () => onNavigate('approval')
     },
     {
@@ -295,9 +301,8 @@ export default function Dashboard({
       title: 'إجراء قسم الصيانة',
       count: maintenanceCount,
       label: 'أجهزة قيد الصيانة والإصلاح',
-      gradient: 'from-blue-600 to-indigo-600',
-      icon: <Wrench size={36} className="text-indigo-100" />,
-      faintIcon: <Wrench size={140} />,
+      ...unifiedSlideTheme,
+      icon: <Wrench size={32} className="text-white" />,
       onClick: () => onNavigate('maintenance')
     },
     {
@@ -305,9 +310,8 @@ export default function Dashboard({
       title: 'إجراء خروج الأجهزة',
       count: exitReadyCount,
       label: 'أجهزة جاهزة للتسليم والخروج',
-      gradient: 'from-emerald-600 to-teal-700',
-      icon: <CheckCircle2 size={36} className="text-emerald-100" />,
-      faintIcon: <CheckCircle2 size={140} />,
+      ...unifiedSlideTheme,
+      icon: <CheckCircle2 size={32} className="text-white" />,
       onClick: () => onNavigate('device-exit')
     }
   ];
@@ -336,28 +340,25 @@ export default function Dashboard({
             <button 
               type="button"
               onClick={() => handleCardClick(slide.onClick)}
-              className={`w-full bg-gradient-to-br ${slide.gradient} text-white p-6 md:p-8 rounded-3xl shadow-lg relative overflow-hidden flex flex-col items-center text-center hover:scale-[1.01] transition-transform cursor-pointer select-none`}
+              className={`w-full ${slide.cardClass} p-6 md:p-8 rounded-3xl shadow-md border relative overflow-hidden flex flex-col items-center text-center hover:opacity-95 transition-all cursor-pointer select-none`}
             >
-              {/* Background Faint Watermark Icon */}
-              <div className="absolute opacity-10 -left-6 -top-6 pointer-events-none">
-                {slide.faintIcon}
-              </div>
-
               {/* Top Title */}
-              <h2 className="text-base md:text-lg font-bold font-cairo text-orange-50 mb-2 z-10">
+              <h2 className={`text-base md:text-lg font-bold font-cairo mb-2 z-10 ${slide.titleClass}`}>
                 {slide.title}
               </h2>
 
               {/* Main Counter Number & Icon */}
               <div className="flex items-center justify-center gap-3 my-1 z-10">
-                <span className="text-5xl md:text-6xl font-black tracking-widest text-white drop-shadow-md">
+                <span className={`text-5xl md:text-6xl font-black tracking-widest tabular-nums ${slide.countClass}`}>
                   {slide.count}
                 </span>
-                {slide.icon}
+                <div className={`p-2.5 rounded-2xl ${slide.iconBg}`}>
+                  {slide.icon}
+                </div>
               </div>
 
               {/* Bottom Label */}
-              <p className="text-sm md:text-base font-bold mt-2 z-10 text-orange-50">
+              <p className={`text-sm md:text-base font-bold mt-2 z-10 ${slide.labelClass}`}>
                 {slide.label}
               </p>
             </button>
@@ -369,38 +370,39 @@ export default function Dashboard({
       <div className="w-full pt-1">
         <button 
           onClick={() => onNavigate('search')}
-          className="w-full bg-white dark:bg-[#1a1a1a] py-3.5 px-5 rounded-2xl border border-gray-200 dark:border-white/5 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-white/5 transition-all group shadow-sm text-gray-500 dark:text-gray-400"
+          className="w-full bg-white dark:bg-[#161616] py-3.5 px-5 rounded-2xl border border-slate-200/90 dark:border-white/8 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-[#1d1d1d] hover:border-orange-500/40 transition-all group shadow-sm text-slate-600 dark:text-gray-400 cursor-pointer"
         >
           <div className="flex items-center gap-3 flex-1 text-right"> 
             <span className="text-sm font-bold font-cairo">البحث السريع</span>
           </div>
-          <Search size={20} className="text-gray-400" />
+          <Search size={20} className="text-slate-400 dark:text-gray-500 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors" />
         </button>
       </div>
 
       {/* Action Grid - 3x2 layout */}
       <div className="grid grid-cols-3 gap-3 md:gap-4 max-w-4xl mx-auto pt-2">
         {/* Row 1 */}
-        {/* 1. دخول أجهزة */}
+        {/* 1. دخول أجهزة (Primary Brand Accent) */}
         <ActionCard 
           onClick={() => onNavigate('device-intake')}
           icon={<ArrowDownToLine size={24} className="md:w-7 md:h-7" />} 
           label="دخول أجهزة" 
-          color="bg-orange-600 hover:bg-orange-700"
+          iconClass="bg-orange-600 text-white shadow-sm shadow-orange-600/20 theme-preserve-white"
+          cardAccentClass="border-orange-500/30 dark:border-orange-500/25"
         />
         {/* 2. قسم الصيانة */}
         <ActionCard 
           onClick={() => onNavigate('device-movement')}
           icon={<SettingsIcon size={24} className="md:w-7 md:h-7" />} 
           label="قسم الصيانة" 
-          color="bg-blue-600 hover:bg-blue-700"
+          iconClass="bg-orange-500/10 text-orange-600 dark:text-orange-400"
         />
         {/* 3. خروج أجهزة */}
         <ActionCard 
           onClick={() => onNavigate('device-exit')}
           icon={<ArrowUpFromLine size={24} className="md:w-7 md:h-7" />} 
           label="خروج أجهزة" 
-          color="bg-emerald-600 hover:bg-emerald-700"
+          iconClass="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
         />
 
         {/* Row 2 */}
@@ -409,44 +411,44 @@ export default function Dashboard({
           onClick={() => onNavigate('vault')}
           icon={<CircleDollarSign size={24} className="md:w-7 md:h-7" />} 
           label="الحسابات" 
-          color="bg-teal-600 hover:bg-teal-700"
+          iconClass="bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-200"
         />
         {/* 2. العملاء */}
         <ActionCard 
           onClick={() => onNavigate('customers')}
           icon={<Users size={24} className="md:w-7 md:h-7" />} 
           label="العملاء" 
-          color="bg-amber-500 hover:bg-amber-600"
+          iconClass="bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-200"
         />
         {/* 3. أخرى */}
         <ActionCard 
           onClick={() => setShowInventoryReportsModal(true)}
           icon={<Layers size={24} className="md:w-7 md:h-7" />} 
           label="أخرى" 
-          color="bg-purple-600 hover:bg-purple-700"
+          iconClass="bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-200"
         />
       </div>
 
       {/* Modals */}
       
-      {/* Other Options Modal: خدمات أخرى + التقارير + المخزون */}
+      {/* Other Options Modal: خدمات أخرى + التقارير + المخزون + الفواتير */}
       {showInventoryReportsModal && (
         <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 pointer-events-none"
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50 dark:bg-black/75"
         >
           <div 
             ref={inventoryReportsModalRef}
-            className="bg-[#1a1a1a] rounded-2xl p-6 w-full max-w-sm border border-white/10 shadow-2xl relative animate-in fade-in zoom-in-95 duration-200 pointer-events-auto"
+            className="bg-white dark:bg-[#161616] rounded-3xl p-6 w-full max-w-sm border border-slate-200 dark:border-white/10 shadow-2xl relative"
           >
             <button 
               onClick={() => setShowInventoryReportsModal(false)}
-              className="absolute top-4 left-4 p-2 bg-white/5 hover:bg-white/10 rounded-full text-white transition-colors"
+              className="absolute top-4 left-4 p-2 bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 rounded-full text-slate-600 dark:text-gray-300 transition-colors cursor-pointer"
             >
-              <X size={20} />
+              <X size={18} />
             </button>
-            <h2 className="text-xl font-black text-white mb-6 font-cairo text-center">خيارات وخدمات أخرى</h2>
+            <h2 className="text-lg font-black text-slate-900 dark:text-white mb-5 font-cairo text-center">خيارات وخدمات أخرى</h2>
             
-            <div className="space-y-3.5">
+            <div className="space-y-2.5">
               {/* Option 1: خدمات أخرى */}
               <button 
                 onClick={() => {
@@ -454,10 +456,12 @@ export default function Dashboard({
                   localStorage.setItem('otherServicesTab', 'hub');
                   onNavigate('other-services');
                 }}
-                className="w-full flex items-center justify-between bg-indigo-600 hover:bg-indigo-700 text-white p-4 rounded-xl transition-all shadow-lg active:scale-95"
+                className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-800 dark:text-slate-100 p-3.5 rounded-2xl border border-slate-200/80 dark:border-white/8 hover:border-orange-500/30 transition-all active:scale-98 cursor-pointer"
               >
-                <span className="font-bold font-cairo text-base">خدمات أخرى</span>
-                <Wrench size={22} />
+                <span className="font-bold font-cairo text-sm">خدمات أخرى</span>
+                <div className="p-2 rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400">
+                  <Wrench size={18} />
+                </div>
               </button>
 
               {/* Option 2: التقارير */}
@@ -466,10 +470,12 @@ export default function Dashboard({
                   setShowInventoryReportsModal(false);
                   onNavigate('reports');
                 }}
-                className="w-full flex items-center justify-between bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-xl transition-all shadow-lg active:scale-95"
+                className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-800 dark:text-slate-100 p-3.5 rounded-2xl border border-slate-200/80 dark:border-white/8 hover:border-orange-500/30 transition-all active:scale-98 cursor-pointer"
               >
-                <span className="font-bold font-cairo text-base">التقارير</span>
-                <BarChart3 size={22} />
+                <span className="font-bold font-cairo text-sm">التقارير</span>
+                <div className="p-2 rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400">
+                  <BarChart3 size={18} />
+                </div>
               </button>
 
               {/* Option 3: المخزون */}
@@ -478,10 +484,12 @@ export default function Dashboard({
                   setShowInventoryReportsModal(false);
                   onNavigate('inventory');
                 }}
-                className="w-full flex items-center justify-between bg-purple-600 hover:bg-purple-700 text-white p-4 rounded-xl transition-all shadow-lg active:scale-95"
+                className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-800 dark:text-slate-100 p-3.5 rounded-2xl border border-slate-200/80 dark:border-white/8 hover:border-orange-500/30 transition-all active:scale-98 cursor-pointer"
               >
-                <span className="font-bold font-cairo text-base">المخزون</span>
-                <Package size={22} />
+                <span className="font-bold font-cairo text-sm">المخزون</span>
+                <div className="p-2 rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400">
+                  <Package size={18} />
+                </div>
               </button>
 
               {/* Option 4: الفواتير */}
@@ -490,10 +498,12 @@ export default function Dashboard({
                   setShowInventoryReportsModal(false);
                   onNavigate('invoices');
                 }}
-                className="w-full flex items-center justify-between bg-emerald-600 hover:bg-emerald-700 text-white p-4 rounded-xl transition-all shadow-lg active:scale-95"
+                className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-800 dark:text-slate-100 p-3.5 rounded-2xl border border-slate-200/80 dark:border-white/8 hover:border-orange-500/30 transition-all active:scale-98 cursor-pointer"
               >
-                <span className="font-bold font-cairo text-base">الفواتير</span>
-                <FileText size={22} />
+                <span className="font-bold font-cairo text-sm">الفواتير</span>
+                <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                  <FileText size={18} />
+                </div>
               </button>
             </div>
           </div>
@@ -503,17 +513,17 @@ export default function Dashboard({
   );
 }
 
-function ActionCard({ icon, label, color, onClick }: { icon: React.ReactNode, label: string, color: string, onClick: () => void }) {
+function ActionCard({ icon, label, iconClass, cardAccentClass = '', onClick }: { icon: React.ReactNode, label: string, iconClass: string, cardAccentClass?: string, onClick: () => void }) {
   return (
     <button 
       onClick={onClick}
-      className={`p-4 rounded-2xl flex flex-col items-center justify-center gap-3 transition-all duration-300 group text-center border border-white/5 shadow-sm hover:shadow-md active:scale-95 aspect-square text-white ${color}`}
+      className={`p-3.5 md:p-4 rounded-2xl flex flex-col items-center justify-center gap-3 transition-all duration-200 group text-center bg-white dark:bg-[#161616] hover:bg-slate-50 dark:hover:bg-[#1d1d1d] border ${cardAccentClass || 'border-slate-200/90 dark:border-white/8'} hover:border-orange-500/40 shadow-sm active:scale-95 aspect-square text-slate-800 dark:text-slate-100 cursor-pointer`}
     >
-      <div className="group-hover:scale-110 transition-transform">
+      <div className={`w-12 h-12 md:w-13 md:h-13 rounded-2xl flex items-center justify-center transition-transform group-hover:scale-105 ${iconClass}`}>
         {icon}
       </div>
       <div>
-        <h3 className="font-bold text-xs md:text-sm leading-tight drop-shadow-sm">{label}</h3>
+        <h3 className="font-bold text-xs md:text-sm leading-tight font-cairo">{label}</h3>
       </div>
     </button>
   );

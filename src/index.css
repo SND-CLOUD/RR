@@ -1,5 +1,6 @@
 @import url('https://fonts.googleapis.com/css2?family=Cairo:wght@400;500;700;900&family=Inter:wght@400;500;700;900&family=Space+Grotesk:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;500;600;700;800&family=Playfair+Display:ital,wght@0,400;0,700;1,400&display=swap');
 @import "tailwindcss";
+@custom-variant dark (&:where(.dark, .dark *));
 
 @theme {
   --color-orange-500: #ff6b00;
@@ -11,9 +12,29 @@
   --font-cairo: "Cairo", sans-serif;
 }
 
+:root {
+  --app-canvas: #f8fafc;
+  --app-surface: #ffffff;
+  --app-surface-subtle: #f1f5f9;
+  --app-border: #e2e8f0;
+  --app-text: #0f172a;
+  --app-text-muted: #475569;
+  --brand-primary: #e66000;
+}
+
+.dark {
+  --app-canvas: #0a0a0a;
+  --app-surface: #141414;
+  --app-surface-subtle: #1c1c1c;
+  --app-border: rgba(255, 255, 255, 0.08);
+  --app-text: #f1f5f9;
+  --app-text-muted: #94a3b8;
+  --brand-primary: #e66000;
+}
+
 @layer base {
   body {
-    @apply bg-[#0f0f0f] text-gray-100 antialiased;
+    @apply bg-[#f8fafc] dark:bg-[#0a0a0a] text-slate-900 dark:text-gray-100 antialiased transition-colors duration-150;
   }
 
   /* Force Western numerals */
@@ -36,7 +57,7 @@
   }
 
   ::-webkit-scrollbar-thumb {
-    @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+    @apply bg-slate-300 dark:bg-white/10 rounded-full hover:bg-slate-400 dark:hover:bg-white/20 transition-colors;
   }
 
   /* Remove arrows from number inputs */
@@ -59,7 +80,7 @@
   }
 }
 
-/* High-Fidelity Light Mode Overrides */
+/* High-Fidelity Light Mode Compatibility for Legacy Dark Views */
 html.light-app,
 html.light-app body {
   background-color: #f8fafc !important;
@@ -74,42 +95,104 @@ html.light-app ::-webkit-scrollbar-thumb:hover {
   background-color: #94a3b8 !important;
 }
 
-/* Base background classes mapped to elegant clean white */
+/* Canvas & primary card backgrounds mapped to clean light surfaces */
 html.light-app .bg-\[\#0a0a0a\],
 html.light-app .bg-\[\#0f0f0f\],
+html.light-app .bg-\[\#09090b\],
+html.light-app .bg-neutral-950,
+html.light-app .bg-zinc-950,
+html.light-app .bg-gray-950 {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+
 html.light-app .bg-\[\#141414\],
 html.light-app .bg-\[\#181818\],
 html.light-app .bg-\[\#101010\],
 html.light-app .bg-\[\#161616\],
-html.light-app .bg-\[\#1c1c1c\],
-html.light-app .bg-\[\#1e1e1e\],
-html.light-app .bg-\[\#242424\],
 html.light-app .bg-\[\#111111\],
 html.light-app .bg-\[\#151515\],
 html.light-app .bg-\[\#121212\],
 html.light-app .bg-\[\#1a1a1a\],
 html.light-app .bg-\[\#131313\],
 html.light-app .bg-\[\#18181b\],
-html.light-app .bg-\[\#09090b\],
-html.light-app .bg-black\/20,
-html.light-app .bg-black\/30,
-html.light-app .bg-black\/40,
-html.light-app .bg-black\/50,
-html.light-app .bg-black\/60,
-html.light-app .bg-black\/70,
-html.light-app .bg-black\/80,
-html.light-app .bg-white\/5,
-html.light-app .bg-white\/10,
 html.light-app .bg-neutral-900,
-html.light-app .bg-neutral-950,
 html.light-app .bg-zinc-900,
-html.light-app .bg-zinc-950,
-html.light-app .bg-gray-950,
 html.light-app .bg-gray-900,
 html.light-app .bg-slate-900 {
   background-color: #ffffff !important;
   color: #0f172a !important;
   border-color: #e2e8f0 !important;
+}
+
+/* Elevated/nested dark containers map to subtle light slate so layers stay distinct */
+html.light-app .bg-\[\#1c1c1c\],
+html.light-app .bg-\[\#1e1e1e\],
+html.light-app .bg-\[\#222222\],
+html.light-app .bg-\[\#242424\],
+html.light-app .bg-\[\#2a2a2a\],
+html.light-app .bg-white\/5,
+html.light-app .bg-white\/10,
+html.light-app .bg-white\/\[0\.02\],
+html.light-app .bg-black\/20,
+html.light-app .bg-black\/30,
+html.light-app .bg-black\/40 {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Keep modal backdrop scrims dimmed (never solid white!) */
+html.light-app .fixed.inset-0.bg-black\/50,
+html.light-app .fixed.inset-0.bg-black\/60,
+html.light-app .fixed.inset-0.bg-black\/70,
+html.light-app .fixed.inset-0.bg-black\/75,
+html.light-app .fixed.inset-0.bg-black\/80,
+html.light-app .fixed.inset-0.bg-black\/85,
+html.light-app .fixed.inset-0.bg-black\/90,
+html.light-app .fixed.inset-0.bg-black\/95 {
+  background-color: rgba(15, 23, 42, 0.5) !important;
+}
+
+/* Non-backdrop dark translucent & solid surfaces */
+html.light-app :not(.fixed.inset-0).bg-black\/50,
+html.light-app :not(.fixed.inset-0).bg-black\/60,
+html.light-app :not(.fixed.inset-0).bg-black\/70,
+html.light-app :not(.fixed.inset-0).bg-black\/80,
+html.light-app :not(.fixed.inset-0).bg-black\/90,
+html.light-app :not(.fixed.inset-0).bg-black\/95 {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+
+html.light-app :not(.fixed.inset-0):not([id^="print-"] *):not([id^="print-"]).bg-black {
+  background-color: #f8fafc !important;
+  color: #0f172a !important;
+  border-color: #e2e8f0 !important;
+}
+
+/* Legacy dark zinc / slate / neutral / gray interactive buttons & bars (excluding toggles & explicit solid hero cards) */
+html.light-app .bg-zinc-800:not(.theme-preserve-white),
+html.light-app .bg-zinc-700:not(.theme-preserve-white),
+html.light-app .bg-neutral-800:not(.theme-preserve-white),
+html.light-app .bg-neutral-700:not(.theme-preserve-white),
+html.light-app .bg-slate-800:not(.theme-preserve-white),
+html.light-app .bg-slate-700:not(.theme-preserve-white),
+html.light-app .bg-gray-800:not(.theme-preserve-white):not(.rounded-full),
+html.light-app .bg-gray-700:not(.theme-preserve-white):not(.rounded-full) {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  border-color: #cbd5e1 !important;
+}
+
+html.light-app .hover\:bg-zinc-700:hover:not(.theme-preserve-white),
+html.light-app .hover\:bg-neutral-700:hover:not(.theme-preserve-white),
+html.light-app .hover\:bg-slate-700:hover:not(.theme-preserve-white),
+html.light-app .hover\:bg-gray-700:hover:not(.theme-preserve-white) {
+  background-color: #e2e8f0 !important;
+  color: #0f172a !important;
 }
 
 /* Modals, Floating Dialogs, popups and dropdowns */
@@ -118,6 +201,7 @@ html.light-app .fixed .bg-\[\#0f0f0f\],
 html.light-app .fixed .bg-\[\#181818\],
 html.light-app .fixed .bg-\[\#1a1a1a\],
 html.light-app .fixed .bg-\[\#1e1e1e\],
+html.light-app .fixed .bg-\[\#121212\],
 html.light-app .fixed .bg-neutral-900,
 html.light-app .fixed .bg-zinc-900,
 html.light-app .absolute.z-50,
@@ -125,7 +209,7 @@ html.light-app .absolute.z-\[999\] {
   background-color: #ffffff !important;
   color: #0f172a !important;
   border: 1px solid #e2e8f0 !important;
-  box-shadow: 0 25px 50px -12px rgb(0 0 0 / 0.15) !important;
+  box-shadow: 0 20px 40px -12px rgb(15 23 42 / 0.16) !important;
 }
 
 /* Hover and active options inside list views / dropdowns */
@@ -138,34 +222,38 @@ html.light-app .group:hover .group-hover\:bg-white\/5,
 html.light-app .group:hover .group-hover\:bg-white\/10,
 html.light-app .group:hover .group-hover\:bg-neutral-800,
 html.light-app .group:hover .group-hover\:bg-zinc-800 {
-  background-color: #f1f5f9 !important;
+  background-color: #e2e8f0 !important;
   color: #0f172a !important;
 }
 
-/* Sidebar structure customization */
+/* Sidebar and Header structure customization */
 html.light-app aside {
-  background-color: #f8fafc !important;
-  border-right: 1px solid #e2e8f0 !important;
+  background-color: #ffffff !important;
+  border-inline-end: 1px solid #e2e8f0 !important;
 }
 
 html.light-app header {
-  background-color: #ffffff !important;
+  background-color: rgba(255, 255, 255, 0.96) !important;
   border-bottom: 1px solid #e2e8f0 !important;
-  box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.05) !important;
+  box-shadow: 0 1px 3px 0 rgb(15 23 42 / 0.05) !important;
 }
 
-/* Text Swaps for Clean Contrast */
-html.light-app .text-white,
+/* Text Swaps for Clean Contrast (excluding solid colored buttons & hero cards) */
+html.light-app .text-white:not(.theme-preserve-white):not(.bg-orange-600):not(.bg-orange-500):not(.bg-red-600):not(.bg-red-500):not(.bg-emerald-600):not(.bg-emerald-500):not(.bg-emerald-700):not(.bg-blue-600):not(.bg-blue-600\/80):not(.bg-indigo-600):not(.bg-purple-600):not(.bg-teal-600):not(.bg-amber-600):not([class*="bg-gradient-"]),
 html.light-app .text-gray-100,
 html.light-app .text-neutral-100,
 html.light-app .text-zinc-100,
-html.light-app h1,
-html.light-app h2,
-html.light-app h3,
-html.light-app h4,
+html.light-app h1:not(.theme-preserve-white *),
+html.light-app h2:not(.theme-preserve-white *),
+html.light-app h3:not(.theme-preserve-white *),
+html.light-app h4:not(.theme-preserve-white *),
 html.light-app h5,
 html.light-app h6,
 html.light-app th {
+  color: #0f172a !important;
+}
+
+html.light-app header .hover\:text-white:hover:not(.theme-preserve-white) {
   color: #0f172a !important;
 }
 
@@ -178,7 +266,7 @@ html.light-app .text-zinc-200 {
 html.light-app .text-gray-300,
 html.light-app .text-neutral-300,
 html.light-app .text-zinc-300,
-html.light-app p,
+html.light-app p:not(.theme-preserve-white *),
 html.light-app td {
   color: #334155 !important;
 }
@@ -186,8 +274,7 @@ html.light-app td {
 html.light-app .text-gray-400,
 html.light-app .text-neutral-400,
 html.light-app .text-zinc-400,
-html.light-app label,
-html.light-app svg {
+html.light-app label {
   color: #475569 !important;
 }
 
@@ -206,9 +293,50 @@ html.light-app .text-white\/90 {
   color: #475569 !important;
 }
 
-/* Restore orange branding highlight text color and green success triggers */
+/* Protect white text & icons inside solid brand/action buttons and hero cards (never match hover:bg-* or /10 pills!) */
+html.light-app .theme-preserve-white,
+html.light-app .theme-preserve-white *,
+html.light-app .bg-orange-600,
+html.light-app .bg-orange-600 .text-white,
+html.light-app .bg-amber-600,
+html.light-app .bg-amber-600 .text-white,
+html.light-app .bg-red-600,
+html.light-app .bg-red-600 .text-white,
+html.light-app .bg-red-600\/80,
+html.light-app .bg-red-600\/80 .text-white,
+html.light-app .bg-emerald-500,
+html.light-app .bg-emerald-500 .text-white,
+html.light-app .bg-emerald-600,
+html.light-app .bg-emerald-600 .text-white,
+html.light-app .bg-emerald-700,
+html.light-app .bg-emerald-700 .text-white,
+html.light-app .bg-blue-600,
+html.light-app .bg-blue-600 .text-white,
+html.light-app .bg-blue-600\/80,
+html.light-app .bg-blue-600\/80 .text-white,
+html.light-app .bg-indigo-600,
+html.light-app .bg-indigo-600 .text-white,
+html.light-app .bg-purple-600,
+html.light-app .bg-purple-600 .text-white,
+html.light-app .bg-teal-600,
+html.light-app .bg-teal-600 .text-white,
+html.light-app .hover\:bg-red-600:hover,
+html.light-app .hover\:bg-orange-600:hover,
+html.light-app .group:hover .group-hover\:bg-red-600,
+html.light-app .group:hover .group-hover\:text-white {
+  color: #ffffff !important;
+}
+
+html.light-app .group:hover .group-hover\:bg-red-600 {
+  background-color: #dc2626 !important;
+  border-color: #dc2626 !important;
+}
+
+/* Restore semantic branding & state text colors */
 html.light-app .text-orange-500,
 html.light-app .text-orange-600,
+html.light-app .text-orange-400,
+html.light-app .text-amber-400,
 html.light-app .text-amber-500,
 html.light-app .text-amber-600 {
   color: #ea580c !important;
@@ -218,6 +346,18 @@ html.light-app .text-emerald-400,
 html.light-app .text-green-500,
 html.light-app .text-green-400 {
   color: #16a34a !important;
+}
+html.light-app .text-blue-500,
+html.light-app .text-blue-400 {
+  color: #2563eb !important;
+}
+html.light-app .text-purple-400,
+html.light-app .text-purple-500 {
+  color: #9333ea !important;
+}
+html.light-app .text-red-500,
+html.light-app .text-red-400 {
+  color: #dc2626 !important;
 }
 
 /* Custom layout borders */
@@ -282,6 +422,7 @@ html.light-app tbody tr:nth-child(even) {
 /* Status pills mapping from dark trans to solid clean light contrast badges */
 html.light-app .bg-emerald-500\/10,
 html.light-app .bg-emerald-600\/10,
+html.light-app .bg-emerald-600\/20,
 html.light-app .bg-green-500\/10 {
   background-color: #dcfce7 !important;
   color: #16a34a !important;
@@ -308,9 +449,16 @@ html.light-app .bg-blue-600\/10 {
 }
 
 html.light-app .bg-purple-500\/10,
-html.light-app .bg-purple-600\/10 {
+html.light-app .bg-purple-600\/10,
+html.light-app .bg-purple-600\/20 {
   background-color: #f3e8ff !important;
   color: #9333ea !important;
+}
+
+html.light-app .bg-orange-500\/10,
+html.light-app .bg-orange-600\/10 {
+  background-color: #ffedd5 !important;
+  color: #ea580c !important;
 }
 
 /* Sidebar and Navigation Overrides */

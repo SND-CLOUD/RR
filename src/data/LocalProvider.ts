@@ -117,6 +117,9 @@ export class LocalProvider implements IDataProvider {
         [outboxId, tableName, recordId, action, payloadStr, timestamp, transactionGroupId || null]
       );
       console.log(`Outbox queued: ${action} on ${tableName}/${recordId} (Tx: ${transactionGroupId || 'none'})`);
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('snd_outbox_changed'));
+      }
 
       // Trigger debounced sync in background if online (avoid parallel sync thrashing)
       LocalProvider.triggerDebouncedSync(transactionGroupId ? 600 : 350);
@@ -303,6 +306,9 @@ export class LocalProvider implements IDataProvider {
         `DELETE FROM outbox WHERE tableName = ? AND recordId = ? AND action != 'DELETE'`,
         [collectionName, id]
       ).catch(() => {});
+      if (typeof window !== 'undefined') {
+        window.dispatchEvent(new CustomEvent('snd_outbox_changed'));
+      }
 
       // 3. Record tombstone in local deleted_records table
       const tombstoneId = `del_${collectionName}_${id}`;

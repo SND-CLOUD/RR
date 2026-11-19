@@ -2111,25 +2111,25 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-4 md:p-8 bg-black/80 backdrop-blur-md"
+            className="fixed inset-0 z-[100] flex items-center justify-center p-0 sm:p-4 md:p-8 bg-slate-950/50 dark:bg-black/80"
           >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
-              className="bg-[#121212] w-full max-w-4xl h-screen sm:h-auto sm:max-h-[90vh] rounded-none sm:rounded-[2rem] border-0 sm:border sm:border-white/10 shadow-2xl flex flex-col overflow-hidden"
+              className="bg-white dark:bg-[#121212] w-full max-w-4xl h-screen sm:h-auto sm:max-h-[90vh] rounded-none sm:rounded-[2rem] border-0 sm:border sm:border-slate-200 dark:sm:border-white/10 shadow-2xl flex flex-col overflow-hidden"
             >
               {/* Unified Header */}
-              <div className="flex items-center px-4 py-3 border-b border-white/10 bg-[#121212]/80 backdrop-blur-xl z-20 sticky top-0" dir="rtl">
+              <div className="flex items-center px-4 py-3 border-b border-slate-200 dark:border-white/10 bg-white/95 dark:bg-[#121212]/95 z-20 sticky top-0" dir="rtl">
                 <div className="flex items-center gap-2">
                   <button 
                     onClick={() => setActiveTab('main')}
-                    className="p-1.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all"
+                    className="p-1.5 bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white rounded-xl transition-all cursor-pointer"
                   >
                     <ArrowRight size={18} />
                   </button>
                   <div>
-                    <h1 className="text-lg font-black text-white m-0 p-0">
+                    <h1 className="text-lg font-black text-slate-900 dark:text-white m-0 p-0">
                       {activeTab === 'general' && 'ضبط إعدادات متقدمة والمظهر'}
                       {activeTab === 'accounting-inputs' && 'مدخلات البيانات الرئيسية'}
                       {activeTab === 'security' && t('settings.security')}
@@ -2145,7 +2145,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
               {/* Modal Content - Fixed, No Scroll */}
               <div className="flex-1 overflow-y-auto p-3 md:p-4 pb-28 sm:pb-8">
                 {!canShowCategory(activeTab) ? (
-                  <div className="text-center py-12 text-gray-400 font-cairo" dir="rtl">
+                  <div className="text-center py-12 text-slate-500 dark:text-gray-400 font-cairo" dir="rtl">
                     <p className="text-lg font-bold">عذراً، ليس لديك صلاحية للوصول إلى هذا القسم.</p>
                   </div>
                 ) : (
@@ -2153,18 +2153,18 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                     {activeTab === 'general' && (
                       <div className="space-y-6 pb-8 text-right font-cairo" dir="rtl">
                         {/* Header Box */}
-                        <div className="p-5 bg-white/5 rounded-3xl border border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                        <div className="p-5 bg-slate-50 dark:bg-white/5 rounded-3xl border border-slate-200/80 dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
                           <div>
-                            <h3 className="font-bold text-white text-lg flex items-center gap-2">
-                              <SettingsIcon className="text-orange-500" size={22} />
+                            <h3 className="font-bold text-slate-900 dark:text-white text-lg flex items-center gap-2">
+                              <SettingsIcon className="text-orange-600 dark:text-orange-500" size={22} />
                               ضبط إعدادات متقدمة والمظهر
                             </h3>
-                            <p className="text-xs text-gray-400 mt-1">تخصيص لغة النظام، المظهر العام، مدة الجلسة، جرس الإشعارات وإعدادات الطباعة</p>
+                            <p className="text-xs text-slate-500 dark:text-gray-400 mt-1">تخصيص لغة النظام، المظهر العام، مدة الجلسة، جرس الإشعارات وإعدادات الطباعة</p>
                           </div>
                           <button
                             type="button"
                             onClick={handleSaveSettings}
-                            className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-lg transition-all cursor-pointer self-start sm:self-center"
+                            className="bg-orange-600 hover:bg-orange-700 text-white px-6 py-2.5 rounded-xl text-xs sm:text-sm font-bold flex items-center justify-center gap-2 shadow-md transition-all cursor-pointer self-start sm:self-center theme-preserve-white"
                           >
                             <Save size={16} />
                             حفظ الإعدادات
@@ -2172,28 +2172,28 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                         </div>
 
                         {/* Unified Settings Card */}
-                        <div className="p-5 md:p-8 bg-white/5 rounded-[1.5rem] sm:rounded-3xl border border-white/5 space-y-6">
+                        <div className="p-5 md:p-8 bg-slate-50 dark:bg-white/5 rounded-[1.5rem] sm:rounded-3xl border border-slate-200/80 dark:border-white/5 space-y-6">
 
                           {/* 1. ضبط اللغة والتحديث */}
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-4 border-b border-white/5">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-4 border-b border-slate-200 dark:border-white/5">
                             <div className="flex items-center gap-3">
-                              <div className="p-2.5 bg-blue-500/10 text-blue-500 rounded-xl">
+                              <div className="p-2.5 bg-orange-500/10 text-orange-600 dark:text-orange-400 rounded-xl">
                                 <Languages size={20} />
                               </div>
                               <div>
-                                <span className="font-bold text-white text-base block">{t('settings.language')} والتحديث</span>
-                                <p className="text-xs text-gray-400 mt-0.5">تعديل لغة واجهة النظام وتحديث الإعدادات العامة</p>
+                                <span className="font-bold text-slate-900 dark:text-white text-base block">{t('settings.language')} والتحديث</span>
+                                <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">تعديل لغة واجهة النظام وتحديث الإعدادات العامة</p>
                               </div>
                             </div>
                             <div className="flex flex-wrap items-center gap-2 self-start sm:self-center">
-                              <div className="flex gap-2 bg-black/40 p-1 rounded-xl border border-white/5">
+                              <div className="flex gap-2 bg-slate-200/70 dark:bg-black/40 p-1 rounded-xl border border-slate-200 dark:border-white/5">
                                 <button 
                                   type="button"
                                   onClick={() => i18n.changeLanguage('ar')}
                                   className={`px-5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                                     i18n.language.startsWith('ar')
-                                      ? 'bg-orange-600 text-white shadow-md'
-                                      : 'text-gray-400 hover:text-white'
+                                      ? 'bg-orange-600 text-white shadow-sm theme-preserve-white'
+                                      : 'text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white'
                                   }`}
                                 >
                                   العربية
@@ -2203,8 +2203,8 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                                   onClick={() => i18n.changeLanguage('en')}
                                   className={`px-5 py-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
                                     i18n.language.startsWith('en')
-                                      ? 'bg-orange-600 text-white shadow-md'
-                                      : 'text-gray-400 hover:text-white'
+                                      ? 'bg-orange-600 text-white shadow-sm theme-preserve-white'
+                                      : 'text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white'
                                   }`}
                                 >
                                   English
@@ -2214,7 +2214,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                                 type="button"
                                 onClick={handleSave}
                                 disabled={saving}
-                                className="bg-white/10 hover:bg-white/20 text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 disabled:opacity-50 transition-all border border-white/10 cursor-pointer"
+                                className="bg-white dark:bg-white/10 hover:bg-slate-100 dark:hover:bg-white/20 text-slate-800 dark:text-white px-4 py-2 rounded-xl text-xs font-bold flex items-center gap-2 disabled:opacity-50 transition-all border border-slate-200 dark:border-white/10 cursor-pointer"
                                 title="تحديث لغة النظام"
                               >
                                 {saving ? <RefreshCw className="animate-spin" size={14} /> : <RefreshCw size={14} />}
@@ -2224,14 +2224,14 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                           </div>
 
                           {/* 2. المظهر العام */}
-                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-4 border-b border-white/5">
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 py-4 border-b border-slate-200 dark:border-white/5">
                             <div className="flex items-center gap-3">
-                              <div className="p-2.5 bg-purple-500/10 text-purple-500 rounded-xl">
+                              <div className="p-2.5 bg-orange-500/10 text-orange-600 dark:text-orange-400 rounded-xl">
                                 <SunMoon size={20} />
                               </div>
                               <div>
-                                <span className="font-bold text-white text-base block">المظهر العام</span>
-                                <p className="text-xs text-gray-400 mt-0.5">اختر المظهر المفضل لواجهة المستخدم للنظام</p>
+                                <span className="font-bold text-slate-900 dark:text-white text-base block">المظهر العام</span>
+                                <p className="text-xs text-slate-500 dark:text-gray-400 mt-0.5">اختر المظهر المفضل لواجهة المستخدم للنظام</p>
                               </div>
                             </div>
                             <div className="relative min-w-[240px] self-start sm:self-center">
@@ -2245,19 +2245,19 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                                   localStorage.setItem('snd_settings', JSON.stringify(curSettings));
                                   window.dispatchEvent(new Event('snd_settings_changed'));
                                 }}
-                                className="w-full bg-black/40 border border-white/10 hover:border-white/20 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-white outline-none focus:border-orange-500/50 appearance-none text-right font-bold pl-10 cursor-pointer transition-all shadow-inner"
+                                className="w-full bg-white dark:bg-black/40 border border-slate-300 dark:border-white/10 hover:border-slate-400 dark:hover:border-white/20 rounded-xl px-4 py-2.5 text-xs sm:text-sm text-slate-900 dark:text-white outline-none focus:border-orange-500/50 appearance-none text-right font-bold pl-10 cursor-pointer transition-all shadow-sm"
                               >
-                                <option value="auto" className="bg-[#1c1c1c] text-white py-2">
+                                <option value="auto" className="bg-white dark:bg-[#1c1c1c] text-slate-900 dark:text-white py-2">
                                   تلقائي (حسب وضع الهاتف)
                                 </option>
-                                <option value="normal" className="bg-[#1c1c1c] text-white py-2">
+                                <option value="normal" className="bg-white dark:bg-[#1c1c1c] text-slate-900 dark:text-white py-2">
                                   عادي (مضيء)
                                 </option>
-                                <option value="dark" className="bg-[#1c1c1c] text-white py-2">
+                                <option value="dark" className="bg-white dark:bg-[#1c1c1c] text-slate-900 dark:text-white py-2">
                                   مظلم (ليلي)
                                 </option>
                               </select>
-                              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-gray-400">
+                              <div className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none text-slate-500 dark:text-gray-400">
                                 <ChevronDown size={16} />
                               </div>
                             </div>

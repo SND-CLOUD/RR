@@ -581,13 +581,15 @@ export default function PartsCatalogTable() {
           onClick={() => setActiveTab('electronics')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'electronics'
-              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/30'
-              : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+              ? 'bg-emerald-600 text-white shadow-lg shadow-emerald-900/20 theme-preserve-white'
+              : 'bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-white/10'
           }`}
         >
           <Cpu size={15} />
           <span>القطع الإلكترونية</span>
-          <span className="text-[10px] bg-black/30 px-2 py-0.5 rounded-full font-mono font-bold">
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
+            activeTab === 'electronics' ? 'bg-white/20 text-white' : 'bg-slate-200/80 dark:bg-black/30 text-slate-700 dark:text-gray-300'
+          }`}>
             {electronicParts.length}
           </span>
         </button>
@@ -596,13 +598,15 @@ export default function PartsCatalogTable() {
           onClick={() => setActiveTab('groups')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'groups'
-              ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/30'
-              : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+              ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/20 theme-preserve-white'
+              : 'bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-white/10'
           }`}
         >
           <Layers size={15} />
           <span>مجموعات وتصنيفات القطع</span>
-          <span className="text-[10px] bg-black/30 px-2 py-0.5 rounded-full font-mono font-bold">
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
+            activeTab === 'groups' ? 'bg-white/20 text-white' : 'bg-slate-200/80 dark:bg-black/30 text-slate-700 dark:text-gray-300'
+          }`}>
             {groups.length}
           </span>
         </button>
@@ -611,13 +615,15 @@ export default function PartsCatalogTable() {
           onClick={() => setActiveTab('accessories')}
           className={`flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all cursor-pointer whitespace-nowrap ${
             activeTab === 'accessories'
-              ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/30'
-              : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+              ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/20 theme-preserve-white'
+              : 'bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-white/10'
           }`}
         >
           <Package size={15} />
           <span>الملحقات والقطع التجارية</span>
-          <span className="text-[10px] bg-black/30 px-2 py-0.5 rounded-full font-mono font-bold">
+          <span className={`text-[10px] px-2 py-0.5 rounded-full font-mono font-bold ${
+            activeTab === 'accessories' ? 'bg-white/20 text-white' : 'bg-slate-200/80 dark:bg-black/30 text-slate-700 dark:text-gray-300'
+          }`}>
             {accessoryParts.length}
           </span>
         </button>
@@ -655,8 +661,8 @@ export default function PartsCatalogTable() {
                 onClick={() => setSelectedGroupFilter('all')}
                 className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap ${
                   selectedGroupFilter === 'all'
-                    ? 'bg-white text-black shadow-md'
-                    : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10'
+                    ? 'bg-slate-900 dark:bg-white text-white dark:text-black shadow-md'
+                    : 'bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-white/10'
                 }`}
               >
                 جميع المجموعات ({electronicParts.length})
@@ -670,12 +676,14 @@ export default function PartsCatalogTable() {
                     onClick={() => setSelectedGroupFilter(g.name)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                       isSelected
-                        ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/30'
-                        : 'bg-white/5 text-gray-400 hover:text-white hover:bg-white/10 border border-white/5'
+                        ? 'bg-emerald-600 text-white shadow-md shadow-emerald-900/20 theme-preserve-white'
+                        : 'bg-slate-100 dark:bg-white/5 text-slate-600 dark:text-gray-400 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-white/10 border border-slate-200/80 dark:border-white/5'
                     }`}
                   >
                     <span>{g.name}</span>
-                    <span className="text-[10px] bg-black/30 px-1.5 py-0.5 rounded-md font-mono">
+                    <span className={`text-[10px] px-1.5 py-0.5 rounded-md font-mono ${
+                      isSelected ? 'bg-white/20 text-white' : 'bg-slate-200/80 dark:bg-black/30 text-slate-700 dark:text-gray-300'
+                    }`}>
                       {count}
                     </span>
                   </button>

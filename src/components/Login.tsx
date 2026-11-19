@@ -399,13 +399,13 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
   };
 
   return (
-    <div className="min-h-screen bg-[#0f0f0f] flex items-center justify-center p-6 relative overflow-hidden">
-      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-orange-600/10 rounded-full blur-[120px] pointer-events-none"></div>
+    <div className="min-h-screen bg-[#f8fafc] dark:bg-[#0f0f0f] text-slate-900 dark:text-gray-100 flex items-center justify-center p-6 relative overflow-hidden">
+      <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-orange-600/10 rounded-full blur-[110px] pointer-events-none"></div>
       
       <div className="absolute top-6 right-6 z-20">
         <button 
           onClick={() => i18n.changeLanguage(i18n.language === 'ar' ? 'en' : 'ar')}
-          className="px-4 py-2 bg-[#1a1a1a] border border-white/5 rounded-xl font-bold hover:bg-white/5 transition-colors"
+          className="px-4 py-2 bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 text-slate-700 dark:text-gray-200 rounded-xl font-bold hover:bg-slate-100 dark:hover:bg-white/5 transition-colors shadow-sm cursor-pointer"
         >
           {i18n.language === 'ar' ? 'English' : 'العربية'}
         </button>
@@ -414,48 +414,48 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
       <motion.div 
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="max-w-md w-full bg-[#1a1a1a] border border-white/5 rounded-3xl p-8 shadow-2xl relative z-10"
+        className="max-w-md w-full bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/5 rounded-3xl p-8 shadow-xl relative z-10"
       >
         <div className="flex flex-col items-center text-center space-y-6">
-          <div className="w-16 h-16 bg-orange-600 rounded-2xl flex items-center justify-center shadow-xl shadow-orange-900/40">
+          <div className="w-16 h-16 bg-orange-600 rounded-2xl flex items-center justify-center shadow-lg shadow-orange-600/25 theme-preserve-white">
              <Router className="text-white w-8 h-8" />
           </div>
           
           <div className="space-y-1">
-            <h1 className="text-3xl font-bold tracking-tight">SND System</h1>
-            <p className="text-gray-400 text-sm">{t('login.prompt')}</p>
+            <h1 className="text-3xl font-bold tracking-tight text-slate-900 dark:text-white">SND System</h1>
+            <p className="text-slate-500 dark:text-gray-400 text-sm">{t('login.prompt')}</p>
           </div>
 
           <form onSubmit={handleSubmit} className="w-full space-y-4">
             <div className="text-left rtl:text-right space-y-1.5">
-              <label className="text-xs font-bold text-gray-500 uppercase ml-1 rtl:ml-0 rtl:mr-1">{t('login.username')}</label>
+              <label className="text-xs font-bold text-slate-500 dark:text-gray-400 uppercase ml-1 rtl:ml-0 rtl:mr-1">{t('login.username')}</label>
               <div className="relative">
-                <UserIcon className="absolute left-4 rtl:left-auto rtl:right-4 top-1/2 -translate-y-1/2 text-gray-600" size={18} />
+                <UserIcon className="absolute left-4 rtl:left-auto rtl:right-4 top-1/2 -translate-y-1/2 text-slate-400 dark:text-gray-500" size={18} />
                 <input 
                   type="text" 
                   value={username}
                   onChange={(e) => setUsername(e.target.value)}
-                  className="w-full bg-black/40 border border-white/10 rounded-2xl pl-12 pr-4 rtl:pl-4 rtl:pr-12 py-3.5 focus:border-orange-500 outline-none transition-all"
+                  className="w-full bg-slate-50 dark:bg-black/40 border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white rounded-2xl pl-12 pr-4 rtl:pl-4 rtl:pr-12 py-3.5 focus:border-orange-500 outline-none transition-all"
                   placeholder="admin"
                 />
               </div>
             </div>
 
             <div className="text-left rtl:text-right space-y-1.5">
-              <label className="text-xs font-bold text-gray-500 uppercase ml-1 rtl:ml-0 rtl:mr-1">{t('login.password')}</label>
+              <label className="text-xs font-bold text-slate-500 dark:text-gray-400 uppercase ml-1 rtl:ml-0 rtl:mr-1">{t('login.password')}</label>
               <div className="relative">
-                <Lock className="absolute left-4 rtl:left-auto rtl:right-4 top-1/2 -translate-y-1/2 text-gray-600" size={18} />
+                <Lock className="absolute left-4 rtl:left-auto rtl:right-4 top-1/2 -translate-y-1/2 text-slate-400 dark:text-gray-500" size={18} />
                 <input 
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full bg-black/40 border border-white/10 rounded-2xl pl-12 pr-12 rtl:pl-12 rtl:pr-12 py-3.5 focus:border-orange-500 outline-none transition-all"
+                  className="w-full bg-slate-50 dark:bg-black/40 border border-slate-200 dark:border-white/10 text-slate-900 dark:text-white rounded-2xl pl-12 pr-12 rtl:pl-12 rtl:pr-12 py-3.5 focus:border-orange-500 outline-none transition-all"
                   placeholder="••••••••"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-4 rtl:right-auto rtl:left-4 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300"
+                  className="absolute right-4 rtl:right-auto rtl:left-4 top-1/2 -translate-y-1/2 text-slate-400 dark:text-gray-500 hover:text-slate-700 dark:hover:text-gray-300 cursor-pointer"
                 >
                   {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                 </button>
@@ -466,7 +466,7 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
               <motion.div 
                 initial={{ opacity: 0, y: -10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="p-3.5 bg-red-600/10 border border-red-500/20 rounded-xl text-red-500 text-xs font-bold font-cairo text-right leading-relaxed"
+                className="p-3.5 bg-red-500/10 border border-red-500/20 rounded-xl text-red-600 dark:text-red-400 text-xs font-bold font-cairo text-right leading-relaxed"
                 dir="rtl"
               >
                 {error}
@@ -474,12 +474,12 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
             )}
 
             {isBiometricEnabled && biometricMeta && isBiometricSupported && (
-              <div className="p-2.5 bg-orange-600/5 border border-orange-500/10 rounded-xl flex items-center justify-between text-xs text-gray-400 font-cairo" dir="rtl">
-                <span className="flex items-center gap-1.5 text-orange-400 font-bold">
+              <div className="p-2.5 bg-orange-600/5 border border-orange-500/15 rounded-xl flex items-center justify-between text-xs text-slate-600 dark:text-gray-400 font-cairo" dir="rtl">
+                <span className="flex items-center gap-1.5 text-orange-600 dark:text-orange-400 font-bold">
                   <Fingerprint size={16} />
                   بصمة مسجلة:
                 </span>
-                <span className="text-white font-bold">{biometricMeta.name || biometricMeta.username}</span>
+                <span className="text-slate-900 dark:text-white font-bold">{biometricMeta.name || biometricMeta.username}</span>
               </div>
             )}
 
@@ -487,7 +487,7 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
               <button 
                 type="submit" 
                 disabled={loading}
-                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-2xl transition-all shadow-lg shadow-orange-900/20 flex items-center justify-center gap-2 group disabled:opacity-50"
+                className="flex-1 bg-orange-600 hover:bg-orange-700 text-white font-bold py-4 rounded-2xl transition-all shadow-md shadow-orange-600/20 flex items-center justify-center gap-2 group disabled:opacity-50 cursor-pointer theme-preserve-white"
               >
                 {loading ? <Loader2 size={20} className="animate-spin" /> : t('login.title')}
               </button>
@@ -497,7 +497,7 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
                   type="button"
                   disabled={loading}
                   onClick={handleBiometricLogin}
-                  className="px-5 bg-black/40 hover:bg-orange-600/10 border border-white/10 hover:border-orange-500/30 text-orange-500 rounded-2xl transition-all flex items-center justify-center shadow-lg active:scale-95 group disabled:opacity-50"
+                  className="px-5 bg-slate-100 dark:bg-black/40 hover:bg-orange-600/10 border border-slate-200 dark:border-white/10 hover:border-orange-500/30 text-orange-600 dark:text-orange-500 rounded-2xl transition-all flex items-center justify-center shadow-sm active:scale-95 group disabled:opacity-50 cursor-pointer"
                   title={biometricMeta ? `تسجيل الدخول بالبصمة (${biometricMeta.name || biometricMeta.username})` : t('login.biometricLogin')}
                 >
                   <Fingerprint size={24} className="group-hover:scale-110 transition-transform" />
@@ -506,10 +506,10 @@ export default function Login({ onLogin }: { onLogin: (user: User) => void }) {
             </div>
           </form>
 
-          <div className="pt-4 flex items-center gap-4 text-gray-600">
-             <div className="w-8 h-[1px] bg-white/5"></div>
+          <div className="pt-4 flex items-center gap-4 text-slate-400 dark:text-gray-600">
+             <div className="w-8 h-[1px] bg-slate-200 dark:bg-white/5"></div>
              <p className="text-[10px] font-bold uppercase tracking-widest">{t('login.authorized')}</p>
-             <div className="w-8 h-[1px] bg-white/5"></div>
+             <div className="w-8 h-[1px] bg-slate-200 dark:bg-white/5"></div>
           </div>
         </div>
       </motion.div>
