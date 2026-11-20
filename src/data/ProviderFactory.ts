@@ -39,29 +39,12 @@ export class ProviderFactory {
         }
       });
 
-      // Trigger full cloud sync and restore on startup if online
+      // Trigger startup sync (lightweight outbox + realtime listener on initialized devices; one-time bootstrap only if empty)
       if (this.isOnline) {
         setTimeout(async () => {
           try {
-            // Automatic clean recovery: clear stale local tombstones
-            try {
-              const { localDb } = await import('../lib/local-db');
-              await localDb.run("DELETE FROM deleted_records").catch(() => {});
-              await localDb.run("DELETE FROM outbox WHERE action = 'DELETE'").catch(() => {});
-            } catch (_) {}
-
-            // Ensure inventory_items exists in Firestore
-            try {
-              const { FirebaseProviderInstance } = await import('./FirebaseProvider');
-              await FirebaseProviderInstance.ensureInventoryCollection();
-            } catch (_) {}
-
             const { SyncEngine } = await import('./SyncEngine');
-            console.log('Starting startup auto-sync and full cloud download...');
-            await SyncEngine.syncAll(true);
-            if (this.getMode() === 'AUTO') {
-              SyncEngine.startCloudListener();
-            }
+            await SyncEngine.runStartupSync();
           } catch (e) {
             console.error('Failed to run startup auto-sync:', e);
           }

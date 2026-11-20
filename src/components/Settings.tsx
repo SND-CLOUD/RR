@@ -2068,10 +2068,10 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
 
       {/* Categories Grid */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-        {categories.map((cat) => (
+        {categories.map((cat, cIdx) => (
           !canShowCategory(cat.id) ? null : (
             <motion.button
-              key={cat.id}
+              key={`set-cat-${cat.id}-${cIdx}`}
               whileHover={{ scale: 1.01, y: -1 }}
               whileTap={{ scale: 0.99 }}
               onClick={() => setActiveTab(cat.id as any)}
@@ -2108,6 +2108,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
       <AnimatePresence>
         {activeTab !== 'main' && (
           <motion.div
+            key="settings-active-tab-modal"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -2537,7 +2538,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                     {/* Modals for categories-engineers options */}
                     <AnimatePresence>
                       {activeCategoriesEngineersModal !== null && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/80 backdrop-blur-sm">
+                        <div key="settings-cat-eng-modal" className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/80 backdrop-blur-sm">
                           <motion.div
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
@@ -2628,7 +2629,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                     {/* Modals for accounting-inputs options */}
                     <AnimatePresence>
                       {activeAccountingInputsModal !== null && (
-                        <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/80 backdrop-blur-sm">
+                        <div key="settings-acct-inputs-modal" className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/80 backdrop-blur-sm">
                           <motion.div
                             initial={{ opacity: 0, scale: 0.95 }}
                             animate={{ opacity: 1, scale: 1 }}
@@ -3837,7 +3838,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
     {/* Modals for advanced-management options */}
     <AnimatePresence>
       {activeAdvancedManagementModal !== null && activeAdvancedManagementModal !== 'print-management' && (
-        <div className="fixed inset-0 z-[120] flex items-center justify-center p-0 sm:p-6 bg-black/80 backdrop-blur-sm">
+        <div key="settings-adv-mgmt-modal" className="fixed inset-0 z-[120] flex items-center justify-center p-0 sm:p-6 bg-black/80 backdrop-blur-sm">
           <motion.div
             initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
@@ -4379,10 +4380,12 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         </div>
       )}
       {activeAdvancedManagementModal === 'print-management' && (
-        <DocumentOutputsManager
-          currentUser={user}
-          onClose={() => setActiveAdvancedManagementModal(null)}
-        />
+        <React.Fragment key="settings-adv-mgmt-print-modal">
+          <DocumentOutputsManager
+            currentUser={user}
+            onClose={() => setActiveAdvancedManagementModal(null)}
+          />
+        </React.Fragment>
       )}
     </AnimatePresence>
   </div>
@@ -4399,6 +4402,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
       <AnimatePresence>
         {showDbModeConfirm && pendingDbMode && (
           <div 
+            key="settings-db-mode-confirm-modal"
             className="fixed inset-0 z-[300] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200"
             onClick={() => {
               setShowDbModeConfirm(false);
@@ -4472,6 +4476,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
       <AnimatePresence>
         {showResetConfirm && (
           <motion.div
+            key="settings-reset-confirm-modal"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -4533,6 +4538,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         {/* Custom Reset Status Modal */}
         {resetStatus.type && (
           <motion.div
+            key="settings-reset-status-modal"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -4582,6 +4588,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         {/* Hybrid Advanced Control Toolbox Modal */}
         {showHybridAdvancedModal && (
           <motion.div
+            key="settings-hybrid-advanced-modal"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -4801,8 +4808,8 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                         </span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {STATIC_HYBRID_TABLES.map(tableName => (
-                          <label key={tableName} className="flex items-center justify-between bg-white/5 hover:bg-white/10 p-2.5 rounded-xl border border-white/5 transition-all cursor-pointer group">
+                        {STATIC_HYBRID_TABLES.map((tableName, tIdx) => (
+                          <label key={`static-tbl-${tableName}-${tIdx}`} className="flex items-center justify-between bg-white/5 hover:bg-white/10 p-2.5 rounded-xl border border-white/5 transition-all cursor-pointer group">
                             <div className="flex flex-col text-right">
                               <span className="text-[11px] font-mono font-bold text-gray-200 group-hover:text-white transition-colors">{tableName}</span>
                               <span className="text-[10px] text-gray-400">{TABLE_ARABIC_NAMES[tableName] || tableName}</span>
@@ -4836,8 +4843,8 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                         </span>
                       </div>
                       <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                        {DYNAMIC_HYBRID_TABLES.map(tableName => (
-                          <label key={tableName} className="flex items-center justify-between bg-white/5 hover:bg-white/10 p-2.5 rounded-xl border border-white/5 transition-all cursor-pointer group">
+                        {DYNAMIC_HYBRID_TABLES.map((tableName, tIdx) => (
+                          <label key={`dynamic-tbl-${tableName}-${tIdx}`} className="flex items-center justify-between bg-white/5 hover:bg-white/10 p-2.5 rounded-xl border border-white/5 transition-all cursor-pointer group">
                             <div className="flex flex-col text-right">
                               <span className="text-[11px] font-mono font-bold text-gray-200 group-hover:text-white transition-colors">{tableName}</span>
                               <span className="text-[10px] text-gray-400">{TABLE_ARABIC_NAMES[tableName] || tableName}</span>
@@ -4977,6 +4984,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         {/* Confirmation Dialog for Local & Cloud Simultaneous Reset */}
         {showHybridBothConfirm && (
           <motion.div
+            key="settings-hybrid-both-confirm-modal"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -5033,6 +5041,7 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
         {/* Local Database Schema Modal */}
         {showSchemaModal && (
           <motion.div
+            key="settings-local-schema-modal"
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
@@ -5064,10 +5073,10 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
               </div>
 
               <div className="p-5 md:p-6 overflow-y-auto custom-scrollbar flex-1 space-y-4">
-                {Object.entries(dbSchemas).map(([tableName, columns]) => {
+                {Object.entries(dbSchemas).map(([tableName, columns], tIdx) => {
                   const cols = columns as string[];
                   return (
-                  <div key={tableName} className="bg-white/5 border border-white/5 rounded-2xl p-4">
+                  <div key={`schema-tbl-${tableName}-${tIdx}`} className="bg-white/5 border border-white/5 rounded-2xl p-4">
                     <h3 className="text-indigo-400 font-bold mb-3 flex items-center gap-2">
                       <Database size={16} />
                       {tableName}
@@ -5076,8 +5085,8 @@ export default function Settings({ user, shopConfig, onShopConfigUpdate, onSignO
                       </span>
                     </h3>
                     <div className="flex flex-wrap gap-2">
-                      {cols.map(col => (
-                        <span key={col} className="bg-black/50 border border-white/5 px-2 py-1 rounded-lg text-xs font-mono text-gray-300">
+                      {cols.map((col, colIdx) => (
+                        <span key={`schema-col-${tableName}-${col}-${colIdx}`} className="bg-black/50 border border-white/5 px-2 py-1 rounded-lg text-xs font-mono text-gray-300">
                           {col}
                         </span>
                       ))}

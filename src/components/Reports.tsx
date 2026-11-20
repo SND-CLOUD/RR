@@ -1910,7 +1910,7 @@ export default function Reports({ user, onBack }: { user: User; onBack?: () => v
                         const colors = ['bg-blue-500', 'bg-orange-500', 'bg-emerald-500', 'bg-pink-500', 'bg-purple-500'];
                         const percentage = stats.totalIncoming > 0 ? Math.round((cat.count / stats.totalIncoming) * 100) : 0;
                         return (
-                          <div key={cat.name} className="space-y-2">
+                          <div key={`cat-dist-${cat.name || 'cat'}-${idx}`} className="space-y-2">
                             <div className="flex items-center justify-between text-xs font-bold text-gray-300">
                               <span className="flex items-center gap-2">
                                 <span className={`w-2.5 h-2.5 rounded-full ${colors[idx % colors.length]}`}></span>

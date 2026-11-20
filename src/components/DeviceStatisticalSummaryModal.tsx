@@ -856,8 +856,8 @@ export default function DeviceStatisticalSummaryModal({
                   className="w-full bg-white dark:bg-black/60 border border-gray-300 dark:border-white/10 text-gray-900 dark:text-white text-xs px-3 py-2.5 rounded-xl outline-none focus:border-indigo-500 font-bold shadow-sm"
                 >
                   <option value="all">كافة المهندسين والفنيين</option>
-                  {uniqueTechniciansList.map(t => (
-                    <option key={t} value={t}>{t}</option>
+                  {uniqueTechniciansList.map((t, tIdx) => (
+                    <option key={`tech-${t || 'none'}-${tIdx}`} value={t}>{t}</option>
                   ))}
                 </select>
               </div>
@@ -1268,7 +1268,7 @@ export default function DeviceStatisticalSummaryModal({
                         const rowNumber = (recordsPage - 1) * recordsPerPage + idx + 1;
 
                         return (
-                          <tr key={item.id || idx} className="hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors">
+                          <tr key={`stat-rec-${item.id ?? 'noid'}-${idx}`} className="hover:bg-gray-50 dark:hover:bg-white/[0.02] transition-colors">
                             <td className="p-2.5 text-center font-mono text-gray-400">{rowNumber}</td>
                             <td className="p-2.5 font-mono font-bold text-indigo-600 dark:text-indigo-300">
                               #{item.invoiceNumber || '---'}

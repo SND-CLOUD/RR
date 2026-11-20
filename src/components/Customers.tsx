@@ -384,13 +384,65 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
     return Math.max(0, billableSum - discount + tax);
   };
 
+  // Strict customer matching helpers:
+  // Always trust customerId/supplierId when present; only fall back to exact name/phone for legacy records lacking IDs.
+  const matchesCustomerInvoice = (inv: any, customerId: string, custObj?: any) => {
+    if (!inv || !customerId) return false;
+    const invCustId = inv.customerId ? String(inv.customerId).trim() : '';
+    const invSuppId = inv.supplierId ? String(inv.supplierId).trim() : '';
+
+    if (invCustId || invSuppId) {
+      return invCustId === customerId || invSuppId === customerId;
+    }
+
+    const target = custObj || customers.find(c => c.id === customerId);
+    if (!target) return false;
+
+    const cleanPhone = (p: any) => p ? String(p).replace(/[\s\-\+\(\)]/g, '') : '';
+    const cleanName = (n: any) => n ? String(n).trim().toLowerCase() : '';
+
+    if (inv.customerPhone && (target.phone1 || target.phone2)) {
+      const invP = cleanPhone(inv.customerPhone);
+      if (invP && (invP === cleanPhone(target.phone1) || invP === cleanPhone(target.phone2))) {
+        return true;
+      }
+    }
+
+    const targetName = cleanName(target.name);
+    if (targetName) {
+      const invCustName = cleanName(inv.customerName);
+      const invSuppName = cleanName(inv.supplierName);
+      if ((invCustName && invCustName === targetName) || (invSuppName && invSuppName === targetName)) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  const matchesCustomerTransaction = (tx: any, customerId: string, custObj?: any) => {
+    if (!tx || !customerId) return false;
+    const txCustId = tx.customerId ? String(tx.customerId).trim() : '';
+    const txSuppId = tx.supplierId ? String(tx.supplierId).trim() : '';
+
+    if (txCustId || txSuppId) {
+      return txCustId === customerId || txSuppId === customerId;
+    }
+
+    const target = custObj || customers.find(c => c.id === customerId);
+    const targetName = target?.name ? String(target.name).trim().toLowerCase() : '';
+    if (!targetName) return false;
+
+    const txCustName = tx.customerName ? String(tx.customerName).trim().toLowerCase() : '';
+    const txSuppName = tx.supplierName ? String(tx.supplierName).trim().toLowerCase() : '';
+    return (!!txCustName && txCustName === targetName) || (!!txSuppName && txSuppName === targetName);
+  };
+
   const getCustomerCurrencyLabel = (customerId: string) => {
     const cust = customers.find(c => c.id === customerId);
     if (cust?.liabilityCurrency) {
       return cust.liabilityCurrency;
     }
-    const customerName = cust?.name || '';
-    const customerInvs = invoices.filter(inv => inv.customerId === customerId || (customerName && inv.customerName === customerName));
+    const customerInvs = invoices.filter(inv => matchesCustomerInvoice(inv, customerId, cust));
     const currencies = Array.from(new Set(customerInvs.map(inv => inv.currency || 'USD')));
     if (currencies.length === 0) return 'USD';
     return currencies[0] || 'USD';
@@ -398,30 +450,45 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
 
   // Calculations for selected customer
   const getCustomerRemainingDevices = (customerId: string) => {
+    const cust = customers.find(c => c.id === customerId);
+    const customerInvIds = new Set<string>();
+    const customerInvNums = new Set<string>();
+    invoices.forEach(inv => {
+      if (matchesCustomerInvoice(inv, customerId, cust)) {
+        if (inv.id) customerInvIds.add(String(inv.id));
+        if (inv.invoiceNumber !== undefined && inv.invoiceNumber !== null) customerInvNums.add(String(inv.invoiceNumber));
+      }
+    });
+
     // outstanding devices: items state not delivered and not '60'
-    return items.filter(it => 
-      (it.customerId === customerId || invoices.some(inv => inv.customerId === customerId && inv.invoiceNumber === it.invoiceNumber)) && 
-      it.status !== 'delivered' && it.status !== '60'
-    ).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
+    return items.filter(it => {
+      const itemCustId = it.customerId ? String(it.customerId).trim() : '';
+      if (itemCustId && itemCustId !== customerId) return false;
+      const matchesById = itemCustId === customerId;
+      const matchesByInv = !itemCustId && (
+        (it.invoiceId && customerInvIds.has(String(it.invoiceId))) ||
+        (it.invoiceNumber !== undefined && it.invoiceNumber !== null && customerInvNums.has(String(it.invoiceNumber)))
+      );
+      return (matchesById || matchesByInv) && it.status !== 'delivered' && it.status !== '60';
+    }).reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
   };
 
   const getCustomerTotalCost = (customerId: string) => {
-    const customerName = customers.find(c => c.id === customerId)?.name || '';
-    const customerInvs = invoices.filter(inv => inv.customerId === customerId || (customerName && inv.customerName === customerName));
+    const cust = customers.find(c => c.id === customerId);
+    const customerInvs = invoices.filter(inv => matchesCustomerInvoice(inv, customerId, cust));
     return customerInvs.reduce((sum, inv) => {
-      const invItems = items.filter(it => it.invoiceNumber === inv.invoiceNumber);
+      const invItems = items.filter(it => (inv.id && it.invoiceId ? it.invoiceId === inv.id : it.invoiceNumber === inv.invoiceNumber));
       return sum + getInvoiceActualCost(invItems, inv);
     }, 0);
   };
 
   const getCustomerTotalPaid = (customerId: string) => {
     const cust = customers.find(c => c.id === customerId);
-    const customerName = cust?.name || '';
 
     // Receipts
     const separateReceipts = transactions
       .filter(tx => 
-        (tx.customerId === customerId || tx.supplierId === customerId || (customerName && (tx.customerName === customerName || tx.supplierName === customerName))) && 
+        matchesCustomerTransaction(tx, customerId, cust) && 
         (tx.type === 'receipt' || tx.type === 'invoice_payment') && 
         !tx.isReversed && !tx.isReversal && tx.status !== 'reversed' && tx.status !== 'reversal'
       )
@@ -430,7 +497,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
     // Payments
     const separatePayments = transactions
       .filter(tx => 
-        (tx.customerId === customerId || tx.supplierId === customerId || (customerName && (tx.customerName === customerName || tx.supplierName === customerName))) && 
+        matchesCustomerTransaction(tx, customerId, cust) && 
         tx.type === 'payment' && 
         !tx.isReversed && !tx.isReversal && tx.status !== 'reversed' && tx.status !== 'reversal'
       )
@@ -441,14 +508,13 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
 
   const getCustomerOutstandingAmount = (customerId: string) => {
     const cust = customers.find(c => c.id === customerId);
-    const customerName = cust?.name || '';
-    const customerInvs = invoices.filter(inv => inv.customerId === customerId || inv.supplierId === customerId || (customerName && (inv.customerName === customerName || inv.supplierName === customerName)));
+    const customerInvs = invoices.filter(inv => matchesCustomerInvoice(inv, customerId, cust));
     
     let totalDebit = 0;
     let totalCredit = 0;
 
     customerInvs.forEach(inv => {
-      const invItems = items.filter(it => it.invoiceNumber === inv.invoiceNumber);
+      const invItems = items.filter(it => (inv.id && it.invoiceId ? it.invoiceId === inv.id : it.invoiceNumber === inv.invoiceNumber));
       const actualCost = getInvoiceActualCost(invItems, inv);
       const isPurchase = isPurchaseInvoice(inv);
 
@@ -460,7 +526,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
     });
 
     const customerTransactions = transactions.filter(tx => 
-      (tx.customerId === customerId || tx.supplierId === customerId || (customerName && (tx.customerName === customerName || tx.supplierName === customerName))) &&
+      matchesCustomerTransaction(tx, customerId, cust) &&
       !tx.isReversed &&
       !tx.isReversal &&
       tx.status !== 'reversed' &&
@@ -497,8 +563,8 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
     }[] = [];
 
     // 1. Get customer invoices
-    const customerName = customers.find(c => c.id === customerId)?.name || '';
-    const customerInvs = invoices.filter(inv => inv.customerId === customerId || inv.supplierId === customerId || (customerName && (inv.customerName === customerName || inv.supplierName === customerName)));
+    const targetCust = customers.find(c => c.id === customerId);
+    const customerInvs = invoices.filter(inv => matchesCustomerInvoice(inv, customerId, targetCust));
     customerInvs.forEach(inv => {
       const invItems = items.filter(it => (inv.id && it.invoiceId ? it.invoiceId === inv.id : it.invoiceNumber === inv.invoiceNumber));
       const actualCost = getInvoiceActualCost(invItems, inv);
@@ -564,11 +630,10 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
     });
 
     // 2. Get separate receipts and payments (filtering out reversed/reversals for customers)
-    const targetCust = customers.find(c => c.id === customerId);
     const targetCustLiabilityCurrency = targetCust?.liabilityCurrency || getCustomerCurrencyLabel(customerId);
 
     const customerTransactions = transactions.filter(tx => 
-      (tx.customerId === customerId || tx.supplierId === customerId || (customerName && (tx.customerName === customerName || tx.supplierName === customerName))) &&
+      matchesCustomerTransaction(tx, customerId, targetCust) &&
       !tx.isReversed &&
       !tx.isReversal &&
       tx.status !== 'reversed' &&
@@ -768,8 +833,8 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
   };
 
   // Selected customer invoices
-  const customerInvoices = selectedCustomer 
-    ? invoices.filter(inv => inv.customerId === selectedCustomer.id || (selectedCustomer.name && inv.customerName === selectedCustomer.name))
+  const customerInvoices = selectedCustomer && selectedCustomer.id
+    ? invoices.filter(inv => matchesCustomerInvoice(inv, selectedCustomer.id!, selectedCustomer))
               .sort((a, b) => Number(b.invoiceNumber || 0) - Number(a.invoiceNumber || 0))
     : [];
 
@@ -2334,48 +2399,20 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
 
       {/* 8. CUSTOMER INVOICES LOG MODAL */}
       {showLogModal && selectedCustomer && (() => {
-        // Robust matching helper to solve any loose or missing ID links
-        const matchesCustomer = (inv: any) => {
-          if (!inv || !selectedCustomer) return false;
-          
-          // 1. Direct ID check
-          if (inv.customerId && selectedCustomer.id && inv.customerId === selectedCustomer.id) return true;
-          
-          const cleanPhone = (p: any) => p ? String(p).replace(/[\s\-\+\(\)]/g, '') : '';
-          const cleanName = (n: any) => n ? String(n).trim().toLowerCase() : '';
-          
-          // 2. Phone check fallback
-          if (inv.customerPhone && (selectedCustomer.phone1 || selectedCustomer.phone2)) {
-            const invP = cleanPhone(inv.customerPhone);
-            if (invP) {
-              if (selectedCustomer.phone1 && cleanPhone(selectedCustomer.phone1) === invP) return true;
-              if (selectedCustomer.phone2 && cleanPhone(selectedCustomer.phone2) === invP) return true;
-            }
-          }
-          
-          // 3. Name check fallback
-          if (inv.customerName && selectedCustomer.name) {
-            const invN = cleanName(inv.customerName);
-            const custN = cleanName(selectedCustomer.name);
-            if (invN && custN && (invN === custN || invN.includes(custN) || custN.includes(invN))) {
-              return true;
-            }
-          }
-          
-          return false;
-        };
+        const matchesCustomer = (inv: any) =>
+          selectedCustomer.id ? matchesCustomerInvoice(inv, selectedCustomer.id, selectedCustomer) : false;
 
         const allInvs = invoices.filter(matchesCustomer);
         const totalInvsCount = allInvs.length;
         const totalBilledVal = allInvs.reduce((sum, inv) => {
-          const invItems = items.filter(it => it.invoiceNumber === inv.invoiceNumber);
+          const invItems = items.filter(it => (inv.id && it.invoiceId ? it.invoiceId === inv.id : it.invoiceNumber === inv.invoiceNumber));
           return sum + getInvoiceActualCost(invItems, inv);
         }, 0);
         const totalPaidVal = allInvs.reduce((sum, inv) => sum + Number(inv.amountPaid || 0), 0);
         const totalRemainingVal = Math.max(0, totalBilledVal - totalPaidVal);
         const totalDevices = allInvs.reduce((sum, inv) => {
           if (isPurchaseInvoice(inv) || isSaleInvoice(inv)) return sum;
-          const invItems = items.filter(it => it.invoiceNumber === inv.invoiceNumber && isShopMaintenanceItem(it, inv));
+          const invItems = items.filter(it => (inv.id && it.invoiceId ? it.invoiceId === inv.id : it.invoiceNumber === inv.invoiceNumber) && isShopMaintenanceItem(it, inv));
           return sum + invItems.reduce((acc, it) => acc + (Number(it.quantity) || 0), 0);
         }, 0);
         const cLabel = getCustomerCurrencyLabel(selectedCustomer.id!);
@@ -2538,7 +2575,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                                     </span>
                                   ) : (
                                     invItems.map((item, idx) => (
-                                      <div key={item.id || idx} className="inline-flex items-center gap-1 bg-white/[0.03] px-2 py-0.5 rounded border border-white/5 text-[10px] hover:bg-white/[0.06] transition-all whitespace-nowrap">
+                                      <div key={`log-item-${item.id ?? 'noid'}-${idx}`} className="inline-flex items-center gap-1 bg-white/[0.03] px-2 py-0.5 rounded border border-white/5 text-[10px] hover:bg-white/[0.06] transition-all whitespace-nowrap">
                                         <span className="font-bold text-white max-w-[130px] truncate">{item.deviceName || item.deviceType || 'خدمة'}</span>
                                         {item.serialNumber && <span className="text-gray-500 font-mono text-[9px]">({item.serialNumber})</span>}
                                         <span className={`px-1 py-[0.5px] rounded text-[8px] font-black scale-90 ${getStatusStyle(item.status || '10')}`}>
@@ -2694,7 +2731,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
                           const curr = getCustomerCurrencyLabel(selectedCustomer.id!);
 
                           return (
-                            <div key={it.id || idx} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl space-y-3.5 hover:border-white/10 transition-all relative overflow-hidden">
+                            <div key={`drawer-it-${it.id ?? 'noid'}-${idx}`} className="p-4 bg-white/[0.02] border border-white/5 rounded-2xl space-y-3.5 hover:border-white/10 transition-all relative overflow-hidden">
                               {/* Device status and title row */}
                               <div className="flex items-center justify-between border-b border-white/5 pb-2.5">
                                 <div className="flex items-center gap-2">

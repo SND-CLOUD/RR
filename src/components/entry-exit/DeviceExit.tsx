@@ -2709,7 +2709,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
               </tr>
             </thead>
             <tbody className="divide-y divide-white/5 text-gray-300">
-              {paginatedInvoices.map(invoice => {
+              {paginatedInvoices.map((invoice, idx) => {
                 const invItems = items.filter(i => i.invoiceNumber === invoice.invoiceNumber && isShopMaintenanceItem(i, invoice));
                 const totalDevices = invItems.reduce((acc, i) => acc + (Number(i.quantity) || 0), 0);
                 
@@ -2732,7 +2732,7 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                 });
 
                 return (
-                  <tr key={invoice.id} className="hover:bg-white/5 transition-colors cursor-pointer group text-[11px] sm:text-xs md:text-sm" onClick={() => openInvoice(invoice)}>
+                  <tr key={`exit-inv-${invoice.id ?? invoice.invoiceNumber ?? 'noid'}-${idx}`} className="hover:bg-white/5 transition-colors cursor-pointer group text-[11px] sm:text-xs md:text-sm" onClick={() => openInvoice(invoice)}>
                     {visibleColumns.invoiceNumber && <td className="px-2 sm:px-4 py-3 font-mono font-bold text-orange-500">{invoice.invoiceNumber}</td>}
                     {visibleColumns.customerName && <td className="px-2 sm:px-4 py-3 font-bold text-white max-w-[160px] sm:max-w-[280px] truncate" title={invoice.customerName}>{invoice.customerName}</td>}
                     {visibleColumns.totalDevices && <td className="px-1 sm:px-3 py-3 font-mono text-center font-bold text-gray-500">{totalDevices}</td>}
@@ -2900,8 +2900,8 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                 >
                   {funds
                     .filter(f => f.type === modalPaymentType)
-                    .map(f => (
-                      <option key={f.id} value={f.id} className="bg-[#1c1c1c] font-bold text-right">
+                    .map((f, fIdx) => (
+                      <option key={`exit-fund-${f.id ?? 'noid'}-${fIdx}`} value={f.id} className="bg-[#1c1c1c] font-bold text-right">
                         {f.name} ({f.currency})
                       </option>
                     ))}

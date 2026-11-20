@@ -712,7 +712,7 @@ export default function PrintPreviewOverlay({
                       chunk.map((entry: any, index: number) => {
                         const globalIndex = pageIndex * itemsPerPage + index + 1;
                         return (
-                          <div key={entry.id || index} className="text-black bg-white flex items-stretch text-[10px] min-h-[34px]">
+                          <div key={`ledger-entry-${entry.id ?? 'noid'}-${index}`} className="text-black bg-white flex items-stretch text-[10px] min-h-[34px]">
                             <div className="px-1.5 font-mono text-center text-gray-800 border-l border-black bg-gray-50/50 w-8 flex items-center justify-center shrink-0 whitespace-nowrap">
                               {globalIndex}
                             </div>

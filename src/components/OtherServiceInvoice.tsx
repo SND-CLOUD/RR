@@ -1804,8 +1804,8 @@ export default function OtherServiceInvoice({
                           className="flex-1 bg-[#121212] border border-purple-500/30 rounded-xl p-2.5 text-xs font-bold text-white focus:outline-none focus:border-purple-500"
                         >
                           <option value="">-- قم باختيار مجموعة محددة --</option>
-                          {electronicGroups.map(g => (
-                            <option key={g.id} value={g.id}>{g.name}</option>
+                          {electronicGroups.map((g, gIdx) => (
+                            <option key={`eg1-${g.id || g.name || 'grp'}-${gIdx}`} value={g.id}>{g.name}</option>
                           ))}
                         </select>
                         <button
@@ -2349,8 +2349,8 @@ export default function OtherServiceInvoice({
                         className="w-full bg-[#121212] border border-purple-500/30 rounded-xl p-2 text-xs font-bold text-white focus:outline-none focus:border-purple-500"
                       >
                         <option value="">-- قم باختيار مجموعة محددة --</option>
-                        {electronicGroups.map(g => (
-                          <option key={g.id} value={g.id}>{g.name}</option>
+                        {electronicGroups.map((g, gIdx) => (
+                          <option key={`eg2-${g.id || g.name || 'grp'}-${gIdx}`} value={g.id}>{g.name}</option>
                         ))}
                       </select>
                     </div>

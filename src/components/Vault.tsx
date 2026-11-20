@@ -3717,8 +3717,8 @@ export default function Vault({
                             </td>
                           </tr>
                         ) : (
-                          filteredVouchers.map(tx => (
-                            <tr key={tx.id} className="hover:bg-white/5 bg-[#141414] transition-all group">
+                          filteredVouchers.map((tx, txIdx) => (
+                            <tr key={`${tx.id || 'tx'}-${txIdx}`} className="hover:bg-white/5 bg-[#141414] transition-all group">
                               <td className="px-4 py-3 font-mono font-bold text-amber-500">{tx.voucherNumber}</td>
                               <td className="px-4 py-3 font-bold text-gray-200">{tx.customerName}</td>
                               <td className="px-4 py-3 text-center">
@@ -3929,14 +3929,14 @@ export default function Vault({
                             </td>
                           </tr>
                         ) : (
-                          filteredDiscounts.map((inv) => {
+                          filteredDiscounts.map((inv, invIdx) => {
                             const discVal = Number(inv.discount !== undefined ? inv.discount : (inv as any).discountAmount || 0);
                             const curr = inv.currency || 'USD';
                             const cust = customers.find(c => c.id === inv.customerId);
                             const isDelivered = inv.status === '60';
 
                             return (
-                              <tr key={inv.id || inv.invoiceNumber} className="hover:bg-white/5 transition-colors">
+                              <tr key={`${inv.id || inv.invoiceNumber || 'disc'}-${invIdx}`} className="hover:bg-white/5 transition-colors">
                                 <td className="px-4 py-3 font-mono font-bold text-amber-500">
                                   #{inv.invoiceNumber}
                                 </td>
@@ -4096,12 +4096,12 @@ export default function Vault({
                           required
                         >
                            <option value="" className="bg-[#1c1c1c]">-- اختر الصندوق --</option>
-                           {funds.map(f => {
+                           {funds.map((f, fIdx) => {
                              const mCur = currencies.find(c => c.name === f.currency);
                              const curSym = mCur ? mCur.symbol : f.currency;
                              const typeStr = f.type === 'cash' ? 'نقدي' : 'بنكي';
                              return (
-                               <option key={f.id} value={f.id} className="bg-[#1c1c1c]">
+                               <option key={`${f.id || 'fund'}-${fIdx}`} value={f.id} className="bg-[#1c1c1c]">
                                  {`${f.name} / ${curSym} / ${typeStr}`}
                                </option>
                              );
@@ -4122,8 +4122,8 @@ export default function Vault({
                         >
                            {txTypes
                              .filter(cat => cat.type === activeSegment)
-                             .map(cat => (
-                               <option key={cat.id} value={cat.name} className="bg-[#1c1c1c]">{cat.name}</option>
+                             .map((cat, catIdx) => (
+                               <option key={`${cat.id || cat.name || 'cat'}-${catIdx}`} value={cat.name} className="bg-[#1c1c1c]">{cat.name}</option>
                              ))
                            }
                         </select>
@@ -4166,9 +4166,9 @@ export default function Vault({
                                     (c.name || '').toLowerCase().includes((customerSearch || '').toLowerCase()) ||
                                     (c.phone1 && c.phone1.includes(customerSearch))
                                   )
-                                  .map(c => (
+                                  .map((c, cIdx) => (
                                     <button 
-                                      key={c.id}
+                                      key={`${c.id || c.name || 'cust'}-${cIdx}`}
                                       type="button"
                                       onClick={() => {
                                          setCustomerSearch(c.name);
@@ -4200,8 +4200,8 @@ export default function Vault({
                           className="flex-1 max-w-xs bg-black/40 border border-white/5 rounded-xl px-3 py-1 text-xs text-white outline-none text-right appearance-none font-semibold opacity-70 cursor-not-allowed pointer-events-none"
                           required
                         >
-                           {currencies.map(c => (
-                             <option key={c.id} value={c.name} className="bg-[#1c1c1c]">
+                           {currencies.map((c, cIdx) => (
+                             <option key={`${c.id || c.name || 'curr'}-${cIdx}`} value={c.name} className="bg-[#1c1c1c]">
                                {`${c.name} - ${c.symbol}`}
                              </option>
                            ))}
@@ -4416,8 +4416,8 @@ export default function Vault({
                           required
                         >
                           <option value="" disabled className="text-gray-600">اختر الصندوق المصدر...</option>
-                          {funds.filter(f => f.status === 'active').map(f => (
-                            <option key={f.id} value={f.id} className="bg-[#1c1c1c]">{f.name} ({f.currency}) - الرصيد: {parseFundBalance(f.balance).toLocaleString('en-US')}</option>
+                          {funds.filter(f => f.status === 'active').map((f, fIdx) => (
+                            <option key={`src-${f.id || 'fund'}-${fIdx}`} value={f.id} className="bg-[#1c1c1c]">{f.name} ({f.currency}) - الرصيد: {parseFundBalance(f.balance).toLocaleString('en-US')}</option>
                           ))}
                         </select>
                       </div>
@@ -4435,8 +4435,8 @@ export default function Vault({
                           required
                         >
                           <option value="" disabled className="text-gray-600">اختر الصندوق الوجهة...</option>
-                          {funds.filter(f => f.status === 'active').map(f => (
-                            <option key={f.id} value={f.id} className="bg-[#1c1c1c]">{f.name} ({f.currency}) - الرصيد: {parseFundBalance(f.balance).toLocaleString('en-US')}</option>
+                          {funds.filter(f => f.status === 'active').map((f, fIdx) => (
+                            <option key={`dst-${f.id || 'fund'}-${fIdx}`} value={f.id} className="bg-[#1c1c1c]">{f.name} ({f.currency}) - الرصيد: {parseFundBalance(f.balance).toLocaleString('en-US')}</option>
                           ))}
                         </select>
                       </div>
@@ -4662,7 +4662,7 @@ export default function Vault({
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {funds.map((fund) => {
+                {funds.map((fund, fIdx) => {
                   const fundTxs = transactions.filter(t => (t.fundId === fund.id || (!t.fundId && t.fundName === fund.name)) && isAccountingTransactionValid(t));
                   const inSum = fundTxs.filter(t => t.type === 'receipt' || t.type === 'deposit' || t.type === 'invoice_payment').reduce((acc, curr) => {
                     const rawAmt = curr.receiptAmount !== undefined && curr.receiptAmount !== null && curr.receiptAmount !== '' ? Number(curr.receiptAmount) : Number(curr.amount || 0);
@@ -4674,7 +4674,7 @@ export default function Vault({
                   }, 0);
 
                   return (
-                    <div key={fund.id} className="bg-[#181818] border border-white/5 rounded-2xl p-5 flex flex-col justify-between gap-4 hover:border-blue-500/30 transition-all group">
+                    <div key={`${fund.id || 'fund'}-${fIdx}`} className="bg-[#181818] border border-white/5 rounded-2xl p-5 flex flex-col justify-between gap-4 hover:border-blue-500/30 transition-all group">
                       <div>
                         <div className="flex items-center justify-between">
                           <h4 className="text-sm font-black text-white font-cairo">{fund.name}</h4>
@@ -4752,8 +4752,8 @@ export default function Vault({
                       className="bg-[#1a1a1a] border border-white/10 text-white text-xs px-2.5 py-1.5 rounded-lg font-cairo outline-none focus:border-blue-500 cursor-pointer"
                     >
                       <option value="all">كل الصناديق</option>
-                      {funds.map(f => (
-                        <option key={f.id} value={f.id}>{f.name} ({f.currency})</option>
+                      {funds.map((f, fIdx) => (
+                        <option key={`flt-${f.id || 'fund'}-${fIdx}`} value={f.id}>{f.name} ({f.currency})</option>
                       ))}
                     </select>
 
@@ -4876,7 +4876,7 @@ export default function Vault({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5 font-cairo">
-                        {currentVaultTransactions.map(tx => {
+                        {currentVaultTransactions.map((tx, txIdx) => {
                           const isReceipt = tx.type === 'receipt' || tx.type === 'deposit' || tx.type === 'invoice_payment' || (tx.type as string) === 'inflow';
                           const amount = Math.abs(Number(tx.amount || 0));
                           const debit = isReceipt ? amount : 0;
@@ -4887,7 +4887,7 @@ export default function Vault({
                                         (tx.status || '').toLowerCase().trim() === 'reversal';
 
                           return (
-                            <tr key={tx.id} className={`hover:bg-white/5 transition-colors ${isRev ? 'opacity-60 bg-red-950/10' : 'bg-[#141414]'}`}>
+                            <tr key={`vtx-${tx.id || 'noid'}-${txIdx}`} className={`hover:bg-white/5 transition-colors ${isRev ? 'opacity-60 bg-red-950/10' : 'bg-[#141414]'}`}>
                               <td className="px-2.5 py-2.5 font-mono font-bold text-amber-500 text-center whitespace-nowrap">
                                 {tx.voucherNumber ? `#${tx.voucherNumber}` : '-'}
                               </td>
@@ -5005,11 +5005,11 @@ export default function Vault({
                             (c.phone1 && c.phone1.includes(ledgerSearchTerm))
                           )
                           .slice(0, 8)
-                          .map(cust => {
+                          .map((cust, cIdx) => {
                             const unpaid = getCustomerUnpaidBalance(cust.id);
                             return (
                               <div
-                                key={cust.id}
+                                key={`sug-cust-${cust.id || 'noid'}-${cIdx}`}
                                 onClick={() => {
                                   setLedgerCustomerId(cust.id);
                                   setIsLedgerModalOpen(true);
@@ -5129,7 +5129,7 @@ export default function Vault({
                           const hasDebt = stat.unpaidBalance > 0.01;
                           return (
                             <tr 
-                              key={`${stat.customer.id}-${stat.currency}` || idx} 
+                              key={`${stat.customer?.id || stat.customer?.name || 'cust'}-${stat.currency || 'USD'}-${idx}`} 
                               onClick={() => {
                                 setLedgerCustomerId(stat.customer.id);
                                 setLedgerCurrency(stat.currency);
@@ -5341,8 +5341,8 @@ export default function Vault({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5 font-mono text-[11px] text-gray-300">
-                          {receiptTransactions.map(tx => (
-                            <tr key={tx.id} className="hover:bg-white/5 transition-colors">
+                          {receiptTransactions.map((tx, txIdx) => (
+                            <tr key={`rcpt-tx-${tx.id || 'noid'}-${txIdx}`} className="hover:bg-white/5 transition-colors">
                               <td className="py-2 px-3 text-white font-bold">{tx.voucherNumber}</td>
                               <td className="py-2 px-3 font-sans text-[10px] text-gray-500">{formatTxDate(tx)}</td>
                               <td className="py-2 px-3 text-emerald-400 font-cairo">{tx.transactionCategory}</td>
@@ -5395,8 +5395,8 @@ export default function Vault({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5 font-mono text-[11px] text-gray-300">
-                          {paymentTransactions.map(tx => (
-                            <tr key={tx.id} className="hover:bg-white/5 transition-colors">
+                          {paymentTransactions.map((tx, txIdx) => (
+                            <tr key={`pay-tx-${tx.id || 'noid'}-${txIdx}`} className="hover:bg-white/5 transition-colors">
                               <td className="py-2 px-3 text-white font-bold">{tx.voucherNumber}</td>
                               <td className="py-2 px-3 font-sans text-[10px] text-gray-500">{formatTxDate(tx)}</td>
                               <td className="py-2 px-3 text-amber-500 font-cairo">{tx.transactionCategory}</td>
@@ -5817,7 +5817,7 @@ export default function Vault({
                                   </thead>
                                   <tbody className="divide-y divide-white/5 text-[11px] font-mono text-gray-300">
                                     {currentProfitInvoices.map((inv, idx) => (
-                                      <tr key={inv.invoice.id || idx} className="hover:bg-white/5 transition-colors">
+                                      <tr key={`pinv-${inv.invoice?.id || inv.invoiceNumber || 'noid'}-${idx}`} className="hover:bg-white/5 transition-colors">
                                         <td className="py-2.5 px-3 font-bold text-white">{inv.invoiceNumber}</td>
                                         <td className="py-2.5 px-3 font-sans text-gray-400 text-[10px]">
                                           {inv.date ? inv.date.toLocaleDateString('ar-YE') : '-'}
@@ -5946,8 +5946,8 @@ export default function Vault({
                                     </tr>
                                   </thead>
                                   <tbody className="divide-y divide-white/5 text-[11px] font-mono text-gray-300">
-                                    {evaluatedProfitExpenses.filter(e => normalizeCurrencyCode(e.currency || 'USD') === curr).map(tx => (
-                                      <tr key={tx.id} className="hover:bg-white/5 transition-colors">
+                                    {evaluatedProfitExpenses.filter(e => normalizeCurrencyCode(e.currency || 'USD') === curr).map((tx, txIdx) => (
+                                      <tr key={`pexp-${tx.id || 'noid'}-${txIdx}`} className="hover:bg-white/5 transition-colors">
                                         <td className="py-2 px-3 font-bold text-white">{tx.voucherNumber}</td>
                                         <td className="py-2 px-3 font-sans text-gray-400 text-[10px]">{formatTxDate(tx)}</td>
                                         <td className="py-2 px-3 text-amber-500 font-cairo">{tx.transactionCategory}</td>
@@ -6009,8 +6009,8 @@ export default function Vault({
                     <div className="space-y-3">
                       {/* Funds Cards Grid */}
                       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-                        {funds.filter(f => !fundBalancesSearch.trim() || f.name.toLowerCase().includes(fundBalancesSearch.toLowerCase().trim())).map(f => (
-                          <div key={f.id} className="bg-[#161616] border border-white/5 rounded-2xl p-4 flex flex-col justify-between gap-3 hover:border-blue-500/30 transition-all">
+                        {funds.filter(f => !fundBalancesSearch.trim() || f.name.toLowerCase().includes(fundBalancesSearch.toLowerCase().trim())).map((f, fIdx) => (
+                          <div key={`fcard-${f.id || 'fund'}-${fIdx}`} className="bg-[#161616] border border-white/5 rounded-2xl p-4 flex flex-col justify-between gap-3 hover:border-blue-500/30 transition-all">
                             <div className="flex items-center justify-between">
                               <h4 className="font-cairo font-bold text-white text-sm">{f.name}</h4>
                               <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${f.type === 'cash' ? 'bg-amber-500/10 text-amber-400' : 'bg-blue-500/10 text-blue-400'}`}>
@@ -6049,8 +6049,8 @@ export default function Vault({
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5 text-gray-300 font-mono text-[11px]">
-                              {funds.filter(f => !fundBalancesSearch.trim() || f.name.toLowerCase().includes(fundBalancesSearch.toLowerCase().trim())).map(f => (
-                                <tr key={f.id} className="hover:bg-white/5 transition-colors">
+                              {funds.filter(f => !fundBalancesSearch.trim() || f.name.toLowerCase().includes(fundBalancesSearch.toLowerCase().trim())).map((f, fIdx) => (
+                                <tr key={`frow-${f.id || 'fund'}-${fIdx}`} className="hover:bg-white/5 transition-colors">
                                   <td className="py-2.5 px-3 font-bold font-cairo text-white">{f.name}</td>
                                   <td className="py-2.5 px-3 font-cairo text-gray-400">{f.type === 'cash' ? 'نقدي' : 'حساب بنك'}</td>
                                   <td className="py-2.5 px-3 font-cairo text-gray-400">{f.currency}</td>
@@ -6132,7 +6132,7 @@ export default function Vault({
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-white/5 text-[11px] font-mono text-gray-300">
-                              {funds.map(f => {
+                              {funds.map((f, fIdx) => {
                                 const fundTxs = transactions.filter(t => (t.fundId === f.id || (!t.fundId && t.fundName === f.name)) && isAccountingTransactionValid(t));
                                 const inSum = fundTxs.filter(t => t.type === 'receipt' || t.type === 'deposit' || t.type === 'invoice_payment').reduce((acc, curr) => {
                                   const rawAmt = curr.receiptAmount !== undefined && curr.receiptAmount !== null && curr.receiptAmount !== '' ? Number(curr.receiptAmount) : Number(curr.amount || 0);
@@ -6145,7 +6145,7 @@ export default function Vault({
                                 const diff = inSum - outSum;
 
                                 return (
-                                  <tr key={f.id} className="hover:bg-white/5 transition-colors">
+                                  <tr key={`fcf-${f.id || 'fund'}-${fIdx}`} className="hover:bg-white/5 transition-colors">
                                     <td className="py-2.5 px-3 font-bold font-cairo text-white">{f.name}</td>
                                     <td className="py-2.5 px-3 font-cairo text-gray-400">{f.type === 'cash' ? 'نقدي' : 'بنك'}</td>
                                     <td className="py-2.5 px-3 font-cairo text-gray-400">{f.currency}</td>
@@ -6186,7 +6186,7 @@ export default function Vault({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5 text-gray-300">
-                        {customers.map(cust => {
+                        {customers.map((cust, cIdx) => {
                           const custInvs = invoices.filter(inv => inv.customerId === cust.id);
                           const totalCost = custInvs.reduce((a, b) => {
                             const invItems = getInvoiceItemsForInvoice(b.invoiceNumber);
@@ -6201,7 +6201,7 @@ export default function Vault({
                           if (unpaid <= 0) return null; // Only show debtor customers
 
                           return (
-                            <tr key={cust.id} className="hover:bg-white/5">
+                            <tr key={`debt-${cust.id || 'noid'}-${cIdx}`} className="hover:bg-white/5">
                               <td className="py-2.5 px-3 font-bold font-cairo text-white">{cust.name}</td>
                               <td className="py-2.5 px-3 font-cairo text-gray-500">{cust.companyName || 'بدون شركة'}</td>
                               <td className="py-2.5 px-3 font-mono text-gray-400">{cust.phone1 || 'لم يدخل هاتف'}</td>
@@ -6358,12 +6358,12 @@ export default function Vault({
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-white/5 text-gray-300 font-mono">
-                          {currentLedgerInvoices.map(inv => {
+                          {currentLedgerInvoices.map((inv, invIdx) => {
                             const invItems = getInvoiceItemsForInvoice(inv.invoiceNumber);
                             const actualCost = getInvoiceActualCost(invItems, inv);
                             const unpaid = Math.max(0, actualCost - inv.amountPaid);
                             return (
-                              <tr key={inv.id} className="hover:bg-white/5 font-mono text-[11px]">
+                              <tr key={`ledg-inv-${inv.id || inv.invoiceNumber || 'noid'}-${invIdx}`} className="hover:bg-white/5 font-mono text-[11px]">
                                 <td className="py-2.5 px-3 text-white font-bold">#{inv.invoiceNumber}</td>
                                 <td className="py-2.5 px-3 text-gray-400">
                                   {parseDate(inv.createdAt)
@@ -6418,8 +6418,8 @@ export default function Vault({
                 ) : (
                   <div className="space-y-3">
                     <div className="bg-[#121212] border-y border-white/5 divide-y divide-white/5">
-                      {currentLedgerTransactions.map(tx => (
-                        <div key={tx.id} className="px-3 py-3.5 text-xs flex items-center justify-between hover:bg-white/5 transition-colors">
+                      {currentLedgerTransactions.map((tx, txIdx) => (
+                        <div key={`ledg-tx-${tx.id || 'noid'}-${txIdx}`} className="px-3 py-3.5 text-xs flex items-center justify-between hover:bg-white/5 transition-colors">
                           <div className="space-y-1">
                             <div className="flex items-center gap-2">
                               <span className="font-bold text-white font-mono text-xs">سند رقم: {tx.voucherNumber}</span>
@@ -7000,8 +7000,8 @@ export default function Vault({
                         </tr>
                       </thead>
                       <tbody className="divide-y divide-white/5 font-cairo">
-                        {filteredEntries.map(entry => (
-                          <tr key={entry.id} className="hover:bg-white/5 transition-colors">
+                        {filteredEntries.map((entry, eIdx) => (
+                          <tr key={`fent-${entry.id || 'noid'}-${eIdx}`} className="hover:bg-white/5 transition-colors">
                             <td className="px-2.5 py-2.5 font-mono font-bold text-amber-500 text-center whitespace-nowrap">
                               {entry.voucherNumber ? `#${entry.voucherNumber}` : '-'}
                             </td>

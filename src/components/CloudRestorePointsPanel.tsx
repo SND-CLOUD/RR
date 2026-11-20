@@ -442,12 +442,12 @@ export default function CloudRestorePointsPanel({ user }: CloudRestorePointsPane
           </div>
         ) : (
           <div className="space-y-2.5">
-            {points.map((point) => {
+            {points.map((point, pIdx) => {
               const typeBadge = TYPE_LABELS[point.type] || TYPE_LABELS.manual;
               const isReady = point.status === 'READY';
               return (
                 <div
-                  key={point.id}
+                  key={`rp-${point.id ?? 'noid'}-${pIdx}`}
                   className={`p-4 rounded-2xl border transition-all space-y-3 ${
                     point.isPinned
                       ? 'bg-indigo-950/20 border-indigo-500/35'
@@ -624,12 +624,12 @@ export default function CloudRestorePointsPanel({ user }: CloudRestorePointsPane
                     </div>
                   </div>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto pt-1">
-                    {(restoreTarget.includedTables || []).map((tbl) => {
+                    {(restoreTarget.includedTables || []).map((tbl, tIdx) => {
                       const checked = selectedTables.includes(tbl);
                       const count = restoreTarget.tablesSummary?.[tbl] ?? 0;
                       return (
                         <label
-                          key={tbl}
+                          key={`rtbl-${tbl}-${tIdx}`}
                           className={`flex items-center justify-between p-2.5 rounded-xl border text-xs cursor-pointer transition-all ${
                             checked
                               ? 'bg-indigo-500/15 border-indigo-500/40 text-white'

@@ -1196,7 +1196,7 @@ export default function Invoices({
                     const isOther = isPurchaseInvoice(inv) || isSaleInvoice(inv) || checkIsPurchase(inv) || checkIsSale(inv);
 
                     return (
-                      <React.Fragment key={inv.id ? `inv-frag-${inv.id}` : `inv-frag-idx-${idx}`}>
+                      <React.Fragment key={inv.id ? `inv-frag-${inv.id}-${idx}` : `inv-frag-idx-${idx}`}>
                         <tr className="hover:bg-white/[0.02] transition-colors whitespace-nowrap">
                           <td className="p-4 font-mono text-white font-bold whitespace-nowrap">
                             #{inv.invoiceNumber}
@@ -1319,7 +1319,7 @@ export default function Invoices({
                                   return (
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                       {invItems.map((item, itemIdx) => (
-                                        <div key={item.id ? `sub-it-${item.id}` : `sub-it-${itemIdx}`} className="p-3 bg-[#131313] border border-white/5 rounded-2xl text-xs space-y-2 shadow-inner">
+                                        <div key={item.id ? `sub-it-${item.id}-${itemIdx}` : `sub-it-${itemIdx}`} className="p-3 bg-[#131313] border border-white/5 rounded-2xl text-xs space-y-2 shadow-inner">
                                           <div className="flex items-center justify-between">
                                             <span className="font-bold text-white">{item.deviceType} {item.deviceName ? `- ${item.deviceName}` : ''}</span>
                                             <span className="font-mono text-emerald-400 font-bold">{formatEnglishNumber(item.cost || item.unitCost || 0)} {inv.currency || 'USD'}</span>
@@ -1431,7 +1431,7 @@ export default function Invoices({
                       return (itClean === cleanInv || it.invoiceId === selectedInvoice.id) && !deletedItemIds.includes(it.id!);
                     })
                     .map((it, itIdx) => (
-                      <option key={it.id ? `dev-${it.id}` : `dev-idx-${itIdx}`} value={it.id}>
+                      <option key={it.id ? `dev-${it.id}-${itIdx}` : `dev-idx-${itIdx}`} value={it.id}>
                         🛠️ {it.deviceType} {it.deviceName ? `- ${it.deviceName}` : ''} ({formatEnglishNumber(it.quantity || 1)} حبة)
                       </option>
                     ))}

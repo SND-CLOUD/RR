@@ -561,7 +561,7 @@ export default function DeviceIntakeHub({ user, onBack }: DeviceIntakeHubProps) 
                   const phone = getCustomerPhone(invoice.customerId, invoice.customerPhone);
 
                   return (
-                    <tr key={invoice.id || idx} className="hover:bg-white/[0.02] transition-colors group">
+                    <tr key={`intake-inv-${invoice.id ?? 'noid'}-${idx}`} className="hover:bg-white/[0.02] transition-colors group">
                       {/* رقم الفاتورة */}
                       <td className="px-2.5 sm:px-3 py-2 font-mono font-bold text-white text-center whitespace-nowrap">
                         #{invoice.invoiceNumber}

@@ -754,8 +754,8 @@ export default function ComprehensiveMaintenanceTab() {
               <div className="p-3 bg-amber-500/5 border border-amber-500/20 rounded-xl space-y-2">
                 <div className="text-xs font-black text-amber-600 dark:text-amber-400">عينة من الأجهزة غير المتطابقة برقم الفاتورة:</div>
                 <div className="max-h-36 overflow-y-auto space-y-1 text-[11px]">
-                  {auditReport.mismatchedItems.slice(0, 5).map(m => (
-                    <div key={m.id} className="flex justify-between items-center py-1 px-2 bg-black/20 rounded">
+                  {auditReport.mismatchedItems.slice(0, 5).map((m, mIdx) => (
+                    <div key={`mism-${m.id ?? 'noid'}-${mIdx}`} className="flex justify-between items-center py-1 px-2 bg-black/20 rounded">
                       <span className="font-bold text-white">{m.deviceName} ({m.customerName})</span>
                       <span className="font-mono text-amber-400">مسجل: {m.itemInvoiceNum} ⬅ الحقيقي: {m.parentInvoiceNum}</span>
                     </div>

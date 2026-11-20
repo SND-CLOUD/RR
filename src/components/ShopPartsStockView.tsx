@@ -540,8 +540,8 @@ export default function ShopPartsStockView() {
                             className="bg-black/40 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:border-emerald-500 outline-none transition-all cursor-pointer"
                           >
                             <option value="all">كل المجموعات</option>
-                            {uniqueGroups.map(g => (
-                              <option key={g} value={g}>{g}</option>
+                            {uniqueGroups.map((g, gIdx) => (
+                              <option key={`ugrp-${g || 'grp'}-${gIdx}`} value={g}>{g}</option>
                             ))}
                           </select>
                         </div>
@@ -570,7 +570,7 @@ export default function ShopPartsStockView() {
 
                       return (
                         <tr 
-                          key={item.id || idx} 
+                          key={`stk-${item.id ?? 'noid'}-${idx}`} 
                           className={`transition-colors ${isSoldOut ? 'bg-blue-500/[0.02] hover:bg-blue-500/[0.05]' : 'hover:bg-white/[0.02]'}`}
                         >
                           <td className="p-3.5 font-mono text-gray-500">{idx + 1}</td>
@@ -885,7 +885,7 @@ export default function ShopPartsStockView() {
 
                                 return (
                                   <div 
-                                    key={part.id || pIdx} 
+                                    key={`bpart-${part.id ?? 'noid'}-${pIdx}`} 
                                     className={`flex items-center justify-between p-2 rounded-lg border ${
                                       isSold 
                                         ? 'bg-blue-500/5 border-blue-500/10 text-gray-400' 
@@ -936,7 +936,7 @@ export default function ShopPartsStockView() {
                               fin.matchedSales.map((sale, sIdx) => {
                                 const salePrice = Number(sale.cost || (Number(sale.quantity || 1) * Number(sale.unitCost || 0)));
                                 return (
-                                  <div key={sale.id || sIdx} className="flex items-center justify-between p-2 bg-cyan-500/5 rounded-lg border border-cyan-500/10">
+                                  <div key={`bsale-${sale.id ?? 'noid'}-${sIdx}`} className="flex items-center justify-between p-2 bg-cyan-500/5 rounded-lg border border-cyan-500/10">
                                     <div>
                                       <div className="font-bold text-white flex items-center gap-1.5">
                                         <span>{sale.deviceName || sale.deviceType || 'قطعة مباعة'}</span>
@@ -1106,13 +1106,13 @@ export default function ShopPartsStockView() {
                   </p>
                   <div className="max-h-48 overflow-y-auto space-y-2 p-2 bg-black/40 rounded-xl border border-white/5 text-xs">
                     {orphanedItems.map((item, i) => (
-                      <div key={item.id || i} className="flex justify-between items-center p-2 bg-white/[0.02] rounded-lg border border-white/5">
+                      <div key={`orph-it-${item.id ?? 'noid'}-${i}`} className="flex justify-between items-center p-2 bg-white/[0.02] rounded-lg border border-white/5">
                         <span className="font-bold text-white">{item.name}</span>
                         <span className="text-amber-400 font-mono">الكمية: {item.quantity}</span>
                       </div>
                     ))}
                     {orphanedBatches.map((b, i) => (
-                      <div key={b.id || i} className="flex justify-between items-center p-2 bg-purple-500/5 rounded-lg border border-purple-500/10">
+                      <div key={`orph-b-${b.id ?? 'noid'}-${i}`} className="flex justify-between items-center p-2 bg-purple-500/5 rounded-lg border border-purple-500/10">
                         <span className="font-bold text-purple-300">دفعة: {b.batchName}</span>
                         <span className="text-gray-400 font-mono">#{b.batchNumber}</span>
                       </div>

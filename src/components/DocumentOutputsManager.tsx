@@ -520,8 +520,8 @@ export default function DocumentOutputsManager({
                 className="flex-1 sm:w-64 px-2.5 py-1.5 bg-[#121212] border border-white/10 rounded-xl text-xs font-bold text-white focus:outline-none focus:border-purple-500 transition-all cursor-pointer font-cairo"
               >
                 <option value="all">الكل (جميع مستخدمي النظام)</option>
-                {usersList.map((u) => (
-                  <option key={u.id} value={u.id}>
+                {usersList.map((u, uIdx) => (
+                  <option key={`usr-out-${u.id ?? 'noid'}-${uIdx}`} value={u.id}>
                     {u.name} {u.userNumber ? `(رقم: ${u.userNumber})` : ''}
                   </option>
                 ))}
@@ -686,7 +686,7 @@ export default function DocumentOutputsManager({
 
                     return (
                       <tr 
-                        key={item.id || idx} 
+                        key={`doc-out-${item.id ?? 'noid'}-${idx}`} 
                         className="hover:bg-white/[0.03] transition-colors group"
                       >
                         {/* 1. Index */}

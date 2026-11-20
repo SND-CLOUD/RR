@@ -346,8 +346,8 @@ export const ElectronicPartsSelectionModal: React.FC<ElectronicPartsSelectionMod
                 {isGroupMenuOpen && (
                   <div className="absolute z-30 left-0 right-0 mt-1 bg-[#181818] border border-white/10 rounded-xl shadow-2xl max-h-48 overflow-y-auto">
                     {filteredGroups.length > 0 ? (
-                      filteredGroups.map(g => (
-                        <button key={g.id} type="button" onClick={() => handleSelectGroup(g)} className={`w-full text-right px-3 py-2 text-xs font-bold hover:bg-purple-600/20 hover:text-purple-300 border-b border-white/5 transition-all flex items-center justify-between ${selectedGroupId === g.id ? 'bg-purple-600/30 text-purple-200' : 'text-gray-200'}`}>
+                      filteredGroups.map((g, gIdx) => (
+                        <button key={`${g.id || g.name || 'grp'}-${gIdx}`} type="button" onClick={() => handleSelectGroup(g)} className={`w-full text-right px-3 py-2 text-xs font-bold hover:bg-purple-600/20 hover:text-purple-300 border-b border-white/5 transition-all flex items-center justify-between ${selectedGroupId === g.id ? 'bg-purple-600/30 text-purple-200' : 'text-gray-200'}`}>
                           <span>{g.name}</span>
                           {selectedGroupId === g.id && <Check size={14} className="text-purple-400" />}
                         </button>
@@ -378,8 +378,8 @@ export const ElectronicPartsSelectionModal: React.FC<ElectronicPartsSelectionMod
                 {isPartMenuOpen && (
                   <div className="absolute z-30 left-0 right-0 mt-1 bg-[#181818] border border-white/10 rounded-xl shadow-2xl max-h-48 overflow-y-auto">
                     {filteredParts.length > 0 ? (
-                      filteredParts.map(p => (
-                        <button key={p.id || p.name} type="button" onClick={() => handleSelectPart(p)} className={`w-full text-right px-3 py-2 text-xs font-mono font-bold hover:bg-purple-600/20 hover:text-purple-300 border-b border-white/5 transition-all flex items-center justify-between ${partNameInput === p.name ? 'bg-purple-600/30 text-purple-200' : 'text-gray-200'}`}>
+                      filteredParts.map((p, pIdx) => (
+                        <button key={`${p.id || p.name || 'part'}-${pIdx}`} type="button" onClick={() => handleSelectPart(p)} className={`w-full text-right px-3 py-2 text-xs font-mono font-bold hover:bg-purple-600/20 hover:text-purple-300 border-b border-white/5 transition-all flex items-center justify-between ${partNameInput === p.name ? 'bg-purple-600/30 text-purple-200' : 'text-gray-200'}`}>
                           <div className="flex items-center gap-2"><span>{p.name}</span>{p.groupName && (<span className="text-[10px] text-gray-500 font-cairo">({p.groupName})</span>)}</div>
                           {p.defaultCost ? (<span className="text-[10px] text-amber-400 font-mono">{p.defaultCost}$</span>) : null}
                         </button>

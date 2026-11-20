@@ -615,8 +615,7 @@ export default function App() {
           let arr = invsByCustId.get(inv.customerId);
           if (!arr) { arr = []; invsByCustId.set(inv.customerId, arr); }
           arr.push(inv);
-        }
-        if (inv.customerName) {
+        } else if (inv.customerName) {
           let arr = invsByCustName.get(inv.customerName);
           if (!arr) { arr = []; invsByCustName.set(inv.customerName, arr); }
           arr.push(inv);
@@ -632,8 +631,7 @@ export default function App() {
           let arr = txsByCustId.get(tx.customerId);
           if (!arr) { arr = []; txsByCustId.set(tx.customerId, arr); }
           arr.push(tx);
-        }
-        if (tx.customerName) {
+        } else if (tx.customerName) {
           let arr = txsByCustName.get(tx.customerName);
           if (!arr) { arr = []; txsByCustName.set(tx.customerName, arr); }
           arr.push(tx);
@@ -903,10 +901,14 @@ export default function App() {
     };
 
     const entries: any[] = [];
-    const customerInvs = invoicesList.filter(inv => (targetCust.id && inv.customerId === targetCust.id) || (targetCust.name && inv.customerName === targetCust.name));
+    const customerInvs = invoicesList.filter(inv =>
+      targetCust.id
+        ? (inv.customerId === targetCust.id || (!inv.customerId && targetCust.name && inv.customerName === targetCust.name))
+        : Boolean(targetCust.name && inv.customerName === targetCust.name)
+    );
     
     customerInvs.forEach(inv => {
-      const invItems = itemsList.filter(it => it.invoiceNumber === inv.invoiceNumber);
+      const invItems = itemsList.filter(it => (inv.id && it.invoiceId ? it.invoiceId === inv.id : it.invoiceNumber === inv.invoiceNumber));
       const actualCost = getInvoiceActualCost(invItems, inv);
       const invDate = parseDate(inv.createdAt) || new Date();
       
@@ -962,7 +964,9 @@ export default function App() {
 
     const targetCustLiabilityCurrency = targetCust.liabilityCurrency || alertItem.currency || 'USD';
     const customerTransactions = transactionsList.filter(tx => 
-      ((targetCust.id && tx.customerId === targetCust.id) || (targetCust.name && tx.customerName === targetCust.name)) &&
+      (targetCust.id
+        ? (tx.customerId === targetCust.id || (!tx.customerId && targetCust.name && tx.customerName === targetCust.name))
+        : Boolean(targetCust.name && tx.customerName === targetCust.name)) &&
       !tx.isReversed &&
       !tx.isReversal &&
       tx.status !== 'reversed' &&
@@ -1270,14 +1274,13 @@ export default function App() {
         } catch (adminErr) {
           console.warn("Could not check/create admin, might be offline:", adminErr);
         }
-        // Automatic full cloud download on app startup/reload to populate SQLite
+        // Startup sync: lightweight outbox + realtime listener on initialized devices (25-table pull only on brand-new device)
         try {
           import('./data/SyncEngine').then(({ SyncEngine }) => {
-            console.log('[App Init] Triggering automatic full cloud download...');
-            SyncEngine.downloadAllFromCloud().then(res => {
-              console.log('[App Init] Cloud download finished:', res);
+            SyncEngine.runStartupSync().then(res => {
+              console.log('[App Init] Startup sync finished:', res);
             }).catch(err => {
-              console.warn('[App Init] Cloud download error:', err);
+              console.warn('[App Init] Startup sync error:', err);
             });
           }).catch(() => {});
         } catch (_) {}
@@ -1295,10 +1298,10 @@ export default function App() {
     sessionStorage.setItem('snd_user', JSON.stringify(loggedInUser));
     sessionStorage.setItem('snd_security_unlocked', 'true');
     
-    // Automatically pull latest cloud data upon login
+    // Flush outbox & ensure realtime cloud listener on login (avoid redundant 25-table full download)
     try {
       import('./data/SyncEngine').then(({ SyncEngine }) => {
-        SyncEngine.downloadAllFromCloud().catch(() => {});
+        SyncEngine.runStartupSync().catch(() => {});
       }).catch(() => {});
     } catch (_) {}
     
@@ -2147,8 +2150,8 @@ export default function App() {
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-white/5 text-xs">
-                            {getProcessedOutstandingAlerts().map(a => (
-                              <tr key={a.id} className="hover:bg-white/[0.02] transition-colors">
+                            {getProcessedOutstandingAlerts().map((a, idx) => (
+                              <tr key={`${a.id || 'outstanding'}-${idx}`} className="hover:bg-white/[0.02] transition-colors">
                                 <td className="p-4 font-mono font-bold text-white">
                                   {a.customerNumber ? `#${a.customerNumber}` : a.latestInvoiceNumber ? `#${a.latestInvoiceNumber}` : '-'}
                                 </td>
@@ -2306,8 +2309,8 @@ export default function App() {
                             </thead>
                             <tbody className="divide-y divide-white/5 text-xs">
                               {getProcessedWarrantyAlerts()
-                                .map(a => (
-                                  <tr key={a.id} className="hover:bg-white/[0.01] transition-colors">
+                                .map((a, idx) => (
+                                  <tr key={`${a.id || 'warranty'}-${idx}`} className="hover:bg-white/[0.01] transition-colors">
                                     <td className="p-4 text-white font-bold">
                                       <span className="text-amber-500 text-[10px] bg-amber-500/10 px-2 py-0.5 rounded-md ml-2">{a.deviceType}</span>
                                       {a.deviceName}

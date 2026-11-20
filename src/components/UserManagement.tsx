@@ -668,7 +668,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
       {/* Add User Modal */}
       <AnimatePresence>
         {showAddModal && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm">
+          <div key="user-add-modal" className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
@@ -890,7 +890,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
                                  !hasUsersPermission || 
                                  (editingUser.id === currentUser.id && !canManageUsers);
           return (
-            <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm">
+            <div key="user-edit-modal" className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm">
               <motion.div 
                 initial={{ opacity: 0, scale: 0.95 }}
                 animate={{ opacity: 1, scale: 1 }}
@@ -1218,7 +1218,7 @@ export default function UserManagement({ currentUser }: { currentUser: User }) {
 
         {/* View User Modal */}
         {viewingUser && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm">
+          <div key="user-view-modal" className="fixed inset-0 z-50 flex items-center justify-center p-0 sm:p-6 bg-black/60 backdrop-blur-sm">
             <motion.div 
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}

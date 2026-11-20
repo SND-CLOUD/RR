@@ -93,6 +93,8 @@ export class SyncEngine {
   private static syncingComprehensive = false;
   private static syncHasChanges = false;
   private static syncProgress: { completedTables: number; totalTables: number } | null = null;
+  private static inFlightFullSyncPromise: Promise<{ success: boolean; message: string; syncedCount?: number }> | null = null;
+  private static inFlightStartupPromise: Promise<{ isInitial: boolean; success: boolean; syncedCount: number }> | null = null;
   private static paused = false;
   private static globalLockActive = false;
   private static lockUnsub: (() => void) | null = null;
@@ -454,24 +456,110 @@ export class SyncEngine {
     return this.syncProgress;
   }
 
+  static async runStartupSync(): Promise<{ isInitial: boolean; success: boolean; syncedCount: number }> {
+    if (this.inFlightStartupPromise) {
+      return this.inFlightStartupPromise;
+    }
+
+    const promise = (async () => {
+      const mode = ProviderFactory.getMode();
+      if (mode === 'LOCAL') {
+        return { isInitial: false, success: true, syncedCount: 0 };
+      }
+      if (typeof navigator !== 'undefined' && !navigator.onLine) {
+        return { isInitial: false, success: false, syncedCount: 0 };
+      }
+
+      let initialDone = false;
+      try {
+        initialDone = localStorage.getItem('snd_initial_sync_done') === 'true';
+      } catch {
+        initialDone = false;
+      }
+
+      // If flag is missing (e.g. after app update on an existing device), check if local SQLite already has data
+      if (!initialDone) {
+        try {
+          const [custRes, invRes] = await Promise.all([
+            localDb.query('SELECT COUNT(*) as cnt FROM customers').catch(() => ({ values: [{ cnt: 0 }] })),
+            localDb.query('SELECT COUNT(*) as cnt FROM invoices').catch(() => ({ values: [{ cnt: 0 }] }))
+          ]);
+          const custCnt = Number(custRes?.values?.[0]?.cnt || 0);
+          const invCnt = Number(invRes?.values?.[0]?.cnt || 0);
+          if (custCnt > 0 || invCnt > 0) {
+            initialDone = true;
+            try { localStorage.setItem('snd_initial_sync_done', 'true'); } catch {}
+          }
+        } catch {}
+      }
+
+      if (!initialDone) {
+        try {
+          await FirebaseProviderInstance.ensureInventoryCollection();
+        } catch {}
+        console.log('SyncEngine [Startup]: Empty device detected. Running one-time initial cloud bootstrap...');
+        const res = await this.syncAll(true);
+        if (res.success && (typeof navigator === 'undefined' || navigator.onLine)) {
+          try { localStorage.setItem('snd_initial_sync_done', 'true'); } catch {}
+        }
+        if (mode === 'AUTO') {
+          this.startCloudListener();
+        }
+        return { isInitial: true, success: res.success, syncedCount: res.syncedCount || 0 };
+      }
+
+      // Initialized device: lightweight Outbox flush + real-time Cloud listener only (no 25-table scan)
+      console.log('SyncEngine [Startup]: Initialized device. Running lightweight outbox sync + realtime listener...');
+      const res = await this.syncAll(false);
+      if (mode === 'AUTO') {
+        this.startCloudListener();
+      }
+      return { isInitial: false, success: res.success, syncedCount: res.syncedCount || 0 };
+    })().finally(() => {
+      if (this.inFlightStartupPromise === promise) {
+        this.inFlightStartupPromise = null;
+      }
+    });
+
+    this.inFlightStartupPromise = promise;
+    return promise;
+  }
+
   static async syncAll(force = false): Promise<{ success: boolean; message: string; syncedCount?: number }> {
     if (force) {
+      if (this.inFlightFullSyncPromise) {
+        console.log('SyncEngine: Comprehensive sync already running; awaiting active execution.');
+        return this.inFlightFullSyncPromise;
+      }
       this.paused = false;
       this.globalLockActive = false;
-    } else if (this.isPaused()) {
-      return { success: true, message: "Paused", syncedCount: 0 };
-    }
-    if (this.syncing) {
-      if (!force) {
-        return { success: false, message: 'عملية المزامنة قيد التشغيل حالياً.' };
-      }
+
       let waits = 0;
-      while (this.syncing && waits < 10) {
+      while (this.syncing && !this.syncingComprehensive && waits < 30) {
         await new Promise(r => setTimeout(r, 150));
         waits++;
       }
+
+      const promise = this.runSyncAllInternal(true).finally(() => {
+        if (this.inFlightFullSyncPromise === promise) {
+          this.inFlightFullSyncPromise = null;
+        }
+      });
+      this.inFlightFullSyncPromise = promise;
+      return promise;
     }
 
+    if (this.isPaused()) {
+      return { success: true, message: "Paused", syncedCount: 0 };
+    }
+    if (this.syncing) {
+      return { success: false, message: 'عملية المزامنة قيد التشغيل حالياً.' };
+    }
+
+    return this.runSyncAllInternal(false);
+  }
+
+  private static async runSyncAllInternal(force = false): Promise<{ success: boolean; message: string; syncedCount?: number }> {
     this.syncing = true;
     this.syncingComprehensive = force;
     this.syncHasChanges = false;
@@ -771,6 +859,8 @@ export class SyncEngine {
           'saved_pdfs'
         ];
 
+        const changedTables = new Set<string>();
+
         for (let tableIdx = 0; tableIdx < tables.length; tableIdx++) {
           const table = tables[tableIdx];
           this.syncProgress = { completedTables: tableIdx, totalTables: tables.length };
@@ -790,6 +880,18 @@ export class SyncEngine {
             [table]
           );
           const pendingIds = new Set((pendingRes.values || []).map(r => r.recordId));
+
+          // Preload local tombstones for this table in one query instead of per-row queries
+          const localTombstoneRes = await localDb.query(
+            "SELECT recordId, deletedAt FROM deleted_records WHERE tableName = ?",
+            [table]
+          ).catch(() => ({ values: [] }));
+          const localTombstoneMap = new Map<string, number>();
+          (localTombstoneRes.values || []).forEach((tRow: any) => {
+            if (tRow?.recordId) {
+              localTombstoneMap.set(tRow.recordId, new Date(tRow.deletedAt || 0).getTime());
+            }
+          });
 
           // Fetch cloud records
           let cloudItems: any[] = [];
@@ -818,13 +920,14 @@ export class SyncEngine {
             if (it && it.id) localMap.set(it.id, it);
           });
 
+          let tableHadChanges = false;
+
           // Sync Cloud -> Local
           for (const cloudItem of cloudItems) {
             if (!cloudItem || !cloudItem.id) continue;
             if (pendingIds.has(cloudItem.id)) continue; // Skip pulling if there is a pending local write
 
             const localItem = localMap.get(cloudItem.id);
-            const localUpdatedMs = getItemTimestamp(localItem);
             const cloudUpdatedMs = getItemTimestamp(cloudItem);
 
             // Safely parse and sanitize fin_funds balance from cloud
@@ -832,71 +935,42 @@ export class SyncEngine {
               cloudItem.balance = parseFundBalance(cloudItem.balance);
             }
 
-            let needsDownload = false;
-            if (force) {
-              needsDownload = true;
-              await localDb.run(
-                "DELETE FROM deleted_records WHERE tableName = ? AND recordId = ?",
-                [table, cloudItem.id]
-              ).catch(() => {});
-            } else if (!localItem) {
-              // Tombstone Defense: Check if this record was deleted locally
-              const tombstoneRes = await localDb.query(
-                "SELECT deletedAt FROM deleted_records WHERE tableName = ? AND recordId = ?",
-                [table, cloudItem.id]
-              ).catch(() => ({ values: [] }));
-
-              if (tombstoneRes.values && tombstoneRes.values.length > 0) {
-                const tombstoneTime = new Date(tombstoneRes.values[0].deletedAt || 0).getTime();
+            if (localTombstoneMap.has(cloudItem.id)) {
+              if (force) {
+                await localDb.run(
+                  "DELETE FROM deleted_records WHERE tableName = ? AND recordId = ?",
+                  [table, cloudItem.id]
+                ).catch(() => {});
+              } else if (!localItem) {
+                const tombstoneTime = localTombstoneMap.get(cloudItem.id) || 0;
                 if (cloudUpdatedMs <= tombstoneTime) {
                   console.log(`SyncEngine [Pull Tombstone Defense]: Stale local tombstone for ${table}/${cloudItem.id}. Skipping.`);
                   continue;
                 }
               }
-              needsDownload = true;
-            } else if (table === 'fin_funds') {
-              const localBal = parseFundBalance(localItem.balance);
-              const cloudBal = parseFundBalance(cloudItem.balance);
-              if (localBal !== cloudBal || cloudUpdatedMs > localUpdatedMs || !areDocsSemanticallyEqual(cloudItem, localItem)) {
-                needsDownload = true;
-              }
-            } else if (cloudUpdatedMs > 0 && localUpdatedMs > 0) {
-              if (cloudUpdatedMs > localUpdatedMs) {
-                needsDownload = true;
-              } else if (cloudUpdatedMs === localUpdatedMs) {
-                if (!areDocsSemanticallyEqual(cloudItem, localItem)) {
-                  needsDownload = true;
-                }
-              }
-            } else if (cloudUpdatedMs > 0 && localUpdatedMs === 0) {
-              needsDownload = true;
-            } else if (cloudUpdatedMs === 0 && localUpdatedMs === 0) {
-              if (!areDocsSemanticallyEqual(cloudItem, localItem)) {
-                needsDownload = true;
-              }
             }
 
-            if (needsDownload) {
-              const isRealDiff =
-                !localItem ||
-                (table === 'fin_funds'
-                  ? parseFundBalance(localItem.balance) !== parseFundBalance(cloudItem.balance) || !areDocsSemanticallyEqual(cloudItem, localItem)
-                  : !areDocsSemanticallyEqual(cloudItem, localItem));
+            const isRealDiff =
+              !localItem ||
+              (table === 'fin_funds'
+                ? parseFundBalance(localItem.balance) !== parseFundBalance(cloudItem.balance) || !areDocsSemanticallyEqual(cloudItem, localItem)
+                : !areDocsSemanticallyEqual(cloudItem, localItem));
 
-              if (isRealDiff) {
-                realChangedCount++;
-                if (!this.syncHasChanges) {
-                  this.syncHasChanges = true;
-                  this.emitSyncState({
-                    syncing: true,
-                    force: true,
-                    hasChanges: true,
-                    changedRecords: realChangedCount,
-                    phase: 'tables',
-                    completedTables: tableIdx,
-                    totalTables: tables.length
-                  });
-                }
+            // Only write to local SQLite when the record is missing or actually changed
+            if (isRealDiff) {
+              realChangedCount++;
+              tableHadChanges = true;
+              if (!this.syncHasChanges) {
+                this.syncHasChanges = true;
+                this.emitSyncState({
+                  syncing: true,
+                  force: true,
+                  hasChanges: true,
+                  changedRecords: realChangedCount,
+                  phase: 'tables',
+                  completedTables: tableIdx,
+                  totalTables: tables.length
+                });
               }
 
               // Bypass outbox queuing during down-sync by using the 'BYPASS_OUTBOX' txGroupId
@@ -952,6 +1026,7 @@ export class SyncEngine {
               // Local record was removed from cloud: Delete locally with BYPASS_OUTBOX
               console.log(`SyncEngine [Differential]: Purging deleted record ${table}/${localItem.id} locally`);
               realChangedCount++;
+              tableHadChanges = true;
               if (!this.syncHasChanges) {
                 this.syncHasChanges = true;
                 this.emitSyncState({
@@ -968,9 +1043,13 @@ export class SyncEngine {
               syncedCount++;
             }
           }
+
+          if (tableHadChanges) {
+            changedTables.add(table);
+          }
         }
-        // Notify localDb only for observed tables so React components update live without useless reads
-        for (const t of tables) {
+        // Notify localDb only for observed tables that actually changed
+        for (const t of changedTables) {
           if (!localDb.hasObservers(t)) continue;
           try {
             const res = await localDb.query(`SELECT * FROM ${t}`).catch(() => ({ values: [] }));
@@ -979,7 +1058,9 @@ export class SyncEngine {
         }
       }
 
-      window.dispatchEvent(new CustomEvent('snd_data_synced'));
+      if (syncedCount > 0) {
+        window.dispatchEvent(new CustomEvent('snd_data_synced'));
+      }
       completedNormally = !wasOffline;
 
       return {

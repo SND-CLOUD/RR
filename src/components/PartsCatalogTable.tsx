@@ -667,12 +667,12 @@ export default function PartsCatalogTable() {
               >
                 جميع المجموعات ({electronicParts.length})
               </button>
-              {groups.map((g) => {
+              {groups.map((g, gIdx) => {
                 const count = electronicParts.filter(p => p.groupId === g.id || p.groupName === g.name || p.category === g.name).length;
                 const isSelected = selectedGroupFilter === g.name || selectedGroupFilter === g.id;
                 return (
                   <button
-                    key={g.id}
+                    key={`grp-flt-${g.id || g.name || 'grp'}-${gIdx}`}
                     onClick={() => setSelectedGroupFilter(g.name)}
                     className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer whitespace-nowrap flex items-center gap-1.5 ${
                       isSelected
@@ -710,7 +710,7 @@ export default function PartsCatalogTable() {
                 <tbody className="divide-y divide-white/5 text-gray-200">
                   {filteredElectronics.length > 0 ? (
                     filteredElectronics.map((item, idx) => (
-                      <tr key={item.id || idx} className="hover:bg-white/[0.02] transition-colors group">
+                      <tr key={`el-${item.id ?? 'noid'}-${idx}`} className="hover:bg-white/[0.02] transition-colors group">
                         {/* Order & Reorder Arrows */}
                         <td className="p-3 text-center">
                           <div className="flex items-center justify-center gap-1">
@@ -876,7 +876,7 @@ export default function PartsCatalogTable() {
                     groups.map((g, idx) => {
                       const count = electronicParts.filter(p => p.groupId === g.id || p.groupName === g.name || p.category === g.name).length;
                       return (
-                        <tr key={g.id || idx} className="hover:bg-white/[0.02] transition-colors">
+                        <tr key={`grp-row-${g.id ?? 'noid'}-${idx}`} className="hover:bg-white/[0.02] transition-colors">
                           {/* Reorder Arrows */}
                           <td className="p-3.5 text-center">
                             <div className="flex items-center justify-center gap-1.5">
@@ -992,7 +992,7 @@ export default function PartsCatalogTable() {
                 <tbody className="divide-y divide-white/5 text-gray-200">
                   {filteredAccessories.length > 0 ? (
                     filteredAccessories.map((item, idx) => (
-                      <tr key={item.id || idx} className="hover:bg-white/[0.02] transition-colors">
+                      <tr key={`acc-${item.id ?? 'noid'}-${idx}`} className="hover:bg-white/[0.02] transition-colors">
                         <td className="p-3.5 font-mono text-gray-500">{idx + 1}</td>
                         <td className="p-3.5 font-bold text-white flex items-center gap-2">
                           <Package size={14} className="text-amber-400" />
@@ -1113,8 +1113,8 @@ export default function PartsCatalogTable() {
                         className="flex-1 bg-[#1a1a1a] border border-white/10 rounded-xl p-2.5 text-xs text-white focus:outline-none focus:border-emerald-500 font-bold"
                       >
                         <option value="">-- قم باختيار مجموعة محددة --</option>
-                        {groups.map(g => (
-                          <option key={g.id} value={g.name}>{g.name}</option>
+                        {groups.map((g, gIdx) => (
+                          <option key={`grp-opt-${g.id || g.name || 'grp'}-${gIdx}`} value={g.name}>{g.name}</option>
                         ))}
                       </select>
                       <button
