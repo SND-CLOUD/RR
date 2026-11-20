@@ -66,7 +66,8 @@ import {
   CloudDownload,
   Download,
   Share2,
-  AlertTriangle
+  AlertTriangle,
+  Bell
 } from 'lucide-react';
 import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
@@ -281,12 +282,14 @@ export default function Vault({
   initialShowAddModal,
   initialInvoiceNumber,
   initialInvoiceId,
-  onClearInitialProps
+  onClearInitialProps,
+  onShowAlerts,
+  activeAlertsCount
 }: { 
   user: User; 
   shopConfig: ShopConfig | null; 
   onBack: () => void;
-  initialSegment?: 'dashboard' | 'receipt' | 'payment' | 'discounts' | 'transfer' | 'funds' | 'customer-ledger' | 'reports';
+  initialSegment?: 'dashboard' | 'receipt' | 'payment' | 'discounts' | 'transfer' | 'funds' | 'reports';
   initialCustomerName?: string;
   initialCustomerId?: string;
   initialLiabilityCurrency?: string;
@@ -294,6 +297,8 @@ export default function Vault({
   initialInvoiceNumber?: string;
   initialInvoiceId?: string;
   onClearInitialProps?: () => void;
+  onShowAlerts?: () => void;
+  activeAlertsCount?: number;
 }) {
   const { t, i18n } = useTranslation();
   const { hasPermission, canAdd, canEdit, canDelete, canPrint, canAdvanced } = usePermissions(user, 'vault');
@@ -319,7 +324,7 @@ export default function Vault({
     );
   }
   // Navigation
-  const [activeSegment, setActiveSegment] = useState<'dashboard' | 'receipt' | 'payment' | 'discounts' | 'transfer' | 'funds' | 'customer-ledger' | 'reports'>(initialSegment || 'dashboard');
+  const [activeSegment, setActiveSegment] = useState<'dashboard' | 'receipt' | 'payment' | 'discounts' | 'transfer' | 'funds' | 'reports'>(initialSegment || 'dashboard');
 
   // Guard advanced segments: if user lacks advanced permission, redirect to dashboard and reset advanced mode
   useEffect(() => {
@@ -327,7 +332,7 @@ export default function Vault({
       if (isAdvancedMode) {
         setIsAdvancedMode(false);
       }
-      if (['transfer', 'funds', 'customer-ledger', 'reports'].includes(activeSegment)) {
+      if (['transfer', 'funds', 'reports'].includes(activeSegment)) {
         setActiveSegment('dashboard');
       }
     }
@@ -357,15 +362,6 @@ export default function Vault({
   const [discountToDelete, setDiscountToDelete] = useState<any | null>(null);
   const [isDeletingDiscount, setIsDeletingDiscount] = useState<boolean>(false);
   const [deleteLinkedReceipts, setDeleteLinkedReceipts] = useState<boolean>(true);
-
-  // CUSTOMER LEDGER TAB STATES
-  const [ledgerCustomerId, setLedgerCustomerId] = useState<string>('');
-  const [ledgerCurrency, setLedgerCurrency] = useState<string>('USD');
-  const [ledgerSearchTerm, setLedgerSearchTerm] = useState<string>('');
-
-  const [isLedgerModalOpen, setIsLedgerModalOpen] = useState<boolean>(false);
-  const [ledgerModalTab, setLedgerModalTab] = useState<'invoices' | 'transactions'>('invoices');
-  const [ledgerListPage, setLedgerListPage] = useState<number>(1);
 
   // FUND REPORT MODAL & STATEMENT STATES
   const [selectedFundForReport, setSelectedFundForReport] = useState<FinFund | null>(null);
@@ -457,9 +453,8 @@ export default function Vault({
     resetForm();
     onClearInitialProps?.();
   });
-  useBackHandler(isLedgerModalOpen, () => setIsLedgerModalOpen(false));
   useBackHandler(selectedFundForReport !== null, () => setSelectedFundForReport(null));
-  useBackHandler(activeSegment !== 'dashboard' && !showAddModal && !showPrintPreview && !reversalTxToConfirm && !isLedgerModalOpen && !selectedFundForReport && !discountToDelete, () => {
+  useBackHandler(activeSegment !== 'dashboard' && !showAddModal && !showPrintPreview && !reversalTxToConfirm && !selectedFundForReport && !discountToDelete, () => {
     setActiveSegment('dashboard');
     resetForm();
     onClearInitialProps?.();
@@ -497,12 +492,9 @@ export default function Vault({
     return Math.max(0, billableSum - discount + tax);
   };
 
-  const ledgerCustomerInvoices = invoices.filter(inv => inv.customerId === ledgerCustomerId && (inv.currency || 'USD') === ledgerCurrency);
-  const ledgerCustomerTransactions = transactions.filter(tx => tx.customerId === ledgerCustomerId && (tx.currency || 'USD') === ledgerCurrency);
-
   useEffect(() => {
     setCurrentPage(1);
-  }, [activeSegment, globalSearch, ledgerSearchTerm]);
+  }, [activeSegment, globalSearch]);
   
   const filteredVaultTransactions = useMemo(() => {
     return sortedTransactions.filter(tx => {
@@ -1014,14 +1006,6 @@ export default function Vault({
     URL.revokeObjectURL(url);
   };
 
-  const totalLedgerInvoicesPages = Math.max(1, Math.ceil(ledgerCustomerInvoices.length / itemsPerPage));
-  const safeLedgerInvoicesPage = Math.min(currentPage, totalLedgerInvoicesPages);
-  const currentLedgerInvoices = ledgerCustomerInvoices.slice((safeLedgerInvoicesPage - 1) * itemsPerPage, safeLedgerInvoicesPage * itemsPerPage);
-
-  const totalLedgerTransactionsPages = Math.max(1, Math.ceil(ledgerCustomerTransactions.length / itemsPerPage));
-  const safeLedgerTransactionsPage = Math.min(currentPage, totalLedgerTransactionsPages);
-  const currentLedgerTransactions = ledgerCustomerTransactions.slice((safeLedgerTransactionsPage - 1) * itemsPerPage, safeLedgerTransactionsPage * itemsPerPage);
-
   // Page level stats
   const [loading, setLoading] = useState(false);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
@@ -1109,7 +1093,6 @@ export default function Vault({
     return currCode;
   };
 
-  const [isGeneratingPDF, setIsGeneratingPDF] = useState<boolean>(false);
   const [currentOutput, setCurrentOutput] = useState<any>(null);
 
   // Fetch all core data from local implementation
@@ -2584,458 +2567,6 @@ export default function Vault({
     (c.phone1 && c.phone1.includes(customerSearch))
   );
 
-  // LEDGER CUSTOMER MATH
-  const selectedLedgerCustomer = customers.find(c => c.id === ledgerCustomerId);
-
-  // Accounting aggregates for the specific customer ledger using verified actual/repaired costs
-  const totalInvoicesCost = ledgerCustomerInvoices.reduce((acc, curr) => {
-    const invItems = getInvoiceItemsForInvoice(curr.invoiceNumber);
-    return acc + getInvoiceActualCost(invItems, curr);
-  }, 0);
-
-  const totalInvoicesPaid = ledgerCustomerInvoices.reduce((acc, curr) => acc + Number(curr.amountPaid || 0), 0);
-  const totalSeparateCollections = ledgerCustomerTransactions
-    .filter(tx => tx.type === 'receipt' && (!tx.invoiceNumber || String(tx.invoiceNumber).trim() === ''))
-    .reduce((acc, curr) => acc + Math.abs(Number(curr.amount || 0)), 0);
-
-  // Net Debt calculation (Invoices cost minus paid on invoice minus general receipts collections)
-  const customerUnpaidBalance = Math.max(0, totalInvoicesCost - totalInvoicesPaid - totalSeparateCollections);
-
-  const getCustomerUnpaidBalance = (customerId: string) => {
-    const custInvs = invoices.filter(inv => inv.customerId === customerId);
-    const cost = custInvs.reduce((acc, curr) => {
-      const invItems = items.filter(it => it.invoiceNumber === curr.invoiceNumber);
-      return acc + getInvoiceActualCost(invItems, curr);
-    }, 0);
-    const paid = custInvs.reduce((acc, curr) => acc + Number(curr.amountPaid || 0), 0);
-    
-    const custTxs = transactions.filter(tx => tx.customerId === customerId);
-    const collections = custTxs
-      .filter(tx => tx.type === 'receipt' && (!tx.invoiceNumber || String(tx.invoiceNumber).trim() === ''))
-      .reduce((acc, curr) => acc + Math.abs(Number(curr.amount || 0)), 0);
-      
-    return Math.max(0, cost - paid - collections);
-  };
-
-  const customerStats = React.useMemo(() => {
-    const stats: any[] = [];
-    customers.forEach(cust => {
-      const custInvs = invoices.filter(inv => inv.customerId === cust.id);
-      const custTxs = transactions.filter(tx => tx.customerId === cust.id);
-      
-      const currencies = Array.from(new Set([
-        ...custInvs.map(inv => inv.currency || 'USD'),
-        ...custTxs.map(tx => tx.currency || 'USD')
-      ]));
-
-      // If no activity at all, maybe push a default USD stat with 0?
-      if (currencies.length === 0) {
-        stats.push({
-          customer: cust,
-          currency: 'USD',
-          totalInvoicesCount: 0,
-          totalInvoicesCost: 0,
-          totalInvoicesPaid: 0,
-          unpaidBalance: 0,
-          lastActivityDate: null
-        });
-        return;
-      }
-
-      currencies.forEach(currency => {
-        const invsForCurr = custInvs.filter(inv => (inv.currency || 'USD') === currency);
-        const txsForCurr = custTxs.filter(tx => (tx.currency || 'USD') === currency);
-        
-        if (invsForCurr.length === 0 && txsForCurr.length === 0) return;
-
-        const custCost = invsForCurr.reduce((acc, curr) => {
-          const invItems = items.filter(it => it.invoiceNumber === curr.invoiceNumber);
-          return acc + getInvoiceActualCost(invItems, curr);
-        }, 0);
-        const custPaid = invsForCurr.reduce((acc, curr) => acc + Number(curr.amountPaid || 0), 0);
-        
-        const custCollections = txsForCurr
-          .filter(tx => tx.type === 'receipt' && (!tx.invoiceNumber || String(tx.invoiceNumber).trim() === ''))
-          .reduce((acc, curr) => acc + Math.abs(Number(curr.amount || 0)), 0);
-          
-        const unpaid = Math.max(0, custCost - custPaid - custCollections);
-        
-        let lastActivity: Date | null = null;
-        invsForCurr.forEach(inv => {
-          const d = parseDate(inv.createdAt) || new Date();
-          if (!lastActivity || d > lastActivity) {
-            lastActivity = d;
-          }
-        });
-        txsForCurr.forEach(tx => {
-          const d = parseTxDate(tx) || new Date();
-          if (!lastActivity || d > lastActivity) {
-            lastActivity = d;
-          }
-        });
-
-        stats.push({
-          customer: cust,
-          currency: currency,
-          totalInvoicesCount: invsForCurr.length,
-          totalInvoicesCost: custCost,
-          totalInvoicesPaid: custPaid + custCollections,
-          unpaidBalance: unpaid,
-          lastActivityDate: lastActivity
-        });
-      });
-    });
-    return stats;
-  }, [customers, invoices, items, transactions]);
-
-  const sortedCustomerStats = React.useMemo(() => {
-    return [...customerStats].sort((a, b) => {
-      if (a.lastActivityDate && b.lastActivityDate) {
-        return b.lastActivityDate.getTime() - a.lastActivityDate.getTime();
-      }
-      if (a.lastActivityDate) return -1;
-      if (b.lastActivityDate) return 1;
-      return a.customer.name.localeCompare(b.customer.name);
-    });
-  }, [customerStats]);
-
-  const filteredLedgerStats = React.useMemo(() => {
-    let stats = sortedCustomerStats.filter(stat => stat.unpaidBalance > 0.01);
-    if (!ledgerSearchTerm.trim()) return stats;
-    const term = (ledgerSearchTerm || '').toLowerCase();
-    return stats.filter(stat => 
-      (stat.customer?.name || '').toLowerCase().includes(term) ||
-      (stat.customer?.companyName && (stat.customer.companyName || '').toLowerCase().includes(term)) ||
-      (stat.customer?.phone1 && stat.customer.phone1.includes(term))
-    );
-  }, [sortedCustomerStats, ledgerSearchTerm]);
-
-  const totalLedgerListPages = Math.max(1, Math.ceil(filteredLedgerStats.length / itemsPerPage));
-  const safeLedgerListPage = Math.min(ledgerListPage, totalLedgerListPages);
-  const currentLedgerListStats = React.useMemo(() => {
-    return filteredLedgerStats.slice((safeLedgerListPage - 1) * itemsPerPage, safeLedgerListPage * itemsPerPage);
-  }, [filteredLedgerStats, safeLedgerListPage]);
-
-  // Generate statement entries chronologically for Selected Customer inside Vault
-  const getStatementEntries = (customerId: string, currency: string) => {
-    const entries: {
-      id: string;
-      date: Date;
-      type: string;
-      label: string;
-      reference: string;
-      notes: string;
-      debit: number;
-      credit: number;
-    }[] = [];
-
-    // 1. Get customer invoices
-    const customerInvs = invoices.filter(inv => inv.customerId === customerId && (inv.currency || 'USD') === currency);
-    customerInvs.forEach(inv => {
-      const invItems = items.filter(it => it.invoiceNumber === inv.invoiceNumber);
-      const actualCost = getInvoiceActualCost(invItems, inv);
-
-      const explicitType = inv.invoiceType || inv.templateType || inv.type || '';
-      let invTypeTitle = 'فاتورة صيانة';
-      let invLabel = 'فاتورة صيانة أجهزة فنية';
-      const isPurchase = explicitType === 'purchase' || String(explicitType).startsWith('purchase') || inv.type === 'purchase' || String(inv.invoiceNumber).startsWith('PUR-') || String(inv.invoiceNumber).startsWith('DIS-');
-
-      if (isPurchase) {
-        invTypeTitle = 'فاتورة شراء';
-        invLabel = inv.batchName ? `فاتورة شراء - دفعة تفكيك (${inv.batchName})` : 'فاتورة شراء قطع وملحقات';
-      } else if (explicitType === 'sale_software') {
-        invTypeTitle = 'فاتورة خدمات برمجية';
-        invLabel = 'فاتورة مبيعات - خدمات برمجية';
-      } else if (explicitType === 'sale_parts') {
-        invTypeTitle = 'فاتورة بيع قطع غيار';
-        invLabel = 'فاتورة مبيعات - بيع قطع غيار';
-      } else if (explicitType === 'sale_maintenance') {
-        invTypeTitle = 'فاتورة صيانة خارجية';
-        invLabel = 'فاتورة مبيعات - صيانة خارجية';
-      } else if (typeof explicitType === 'string' && explicitType.startsWith('sale_')) {
-        invTypeTitle = `فاتورة مبيعات (${explicitType.replace('sale_', '')})`;
-        invLabel = `فاتورة مبيعات - ${explicitType.replace('sale_', '')}`;
-      } else if (inv.invoiceNumber && String(inv.invoiceNumber).startsWith('O-')) {
-        invTypeTitle = 'فاتورة مبيعات قطع/خدمات';
-        invLabel = 'فاتورة مبيعات أجهزة وقطع غيار';
-      } else {
-        invTypeTitle = 'فاتورة صيانة';
-        invLabel = 'فاتورة صيانة أجهزة فنية';
-      }
-
-      const itemNotes = invItems.map(i => {
-        const nameStr = i.deviceName || i.deviceType || '';
-        const brandStr = i.brand ? `- ${i.brand}` : '';
-        return `${nameStr} ${brandStr}`.trim();
-      }).filter(Boolean).join(' | ');
-
-      let resolvedNotes = '';
-      if (inv.notes && inv.notes.trim() && inv.notes.trim() !== 'لا يوجد' && inv.notes.trim() !== invLabel) {
-        const cleanInvNote = inv.notes.replace(/^فاتورة شراء (قطع وملحقات من المورد|– دفعة تفكيك [^\)]+\)):?\s*/, '').trim();
-        resolvedNotes = cleanInvNote || (itemNotes || 'لا يوجد');
-      } else if (itemNotes) {
-        resolvedNotes = itemNotes;
-      } else {
-        resolvedNotes = 'لا يوجد';
-      }
-
-      entries.push({
-        id: `inv-${inv.id}`,
-        date: parseDate(inv.createdAt) || new Date(),
-        type: invTypeTitle,
-        label: invLabel,
-        reference: String(inv.invoiceNumber).replace(/#/g, ''),
-        notes: resolvedNotes,
-        debit: isPurchase ? 0 : actualCost,
-        credit: isPurchase ? actualCost : 0
-      });
-    });
-
-    // 2. Get separate receipts and payments
-    const customerTransactions = transactions.filter(tx => 
-      tx.customerId === customerId && 
-      (tx.liabilityCurrency || tx.currency || 'USD') === currency &&
-      !tx.isReversed &&
-      !tx.isReversal &&
-      tx.status !== 'reversed' &&
-      tx.status !== 'reversal'
-    );
-    customerTransactions.forEach(tx => {
-      const txDate = parseTxDate(tx) || new Date();
-      const liabilityAmount = tx.liabilityAmount || Math.abs(Number(tx.amount || 0));
-      const liveInvNum = resolveLiveInvoiceNumber(tx, invoices);
-      const dynamicStatement = resolveVoucherDynamicStatement(tx, invoices);
-      const refStr = tx.voucherNumber ? String(tx.voucherNumber) : (liveInvNum || '0000');
-
-      if (tx.type === 'receipt' || tx.type === 'invoice_payment') {
-        entries.push({
-          id: `tx-${tx.id}`,
-          date: txDate,
-          type: 'سند قبض',
-          label: dynamicStatement,
-          reference: refStr,
-          notes: dynamicStatement,
-          debit: 0,
-          credit: liabilityAmount
-        });
-      } else if (tx.type === 'payment') {
-        entries.push({
-          id: `tx-${tx.id}`,
-          date: txDate,
-          type: 'سند صرف',
-          label: dynamicStatement,
-          reference: refStr,
-          notes: dynamicStatement,
-          debit: liabilityAmount,
-          credit: 0
-        });
-      }
-    });
-
-    // 3. Sort chronologically
-    entries.sort((a, b) => a.date.getTime() - b.date.getTime());
-
-    // 4. Filter entries that have active financial impact (debit > 0 or credit > 0)
-    const activeEntries = entries.filter(e => e.debit > 0.001 || e.credit > 0.001);
-
-    // 5. Compute running balance
-    let balance = 0;
-    return activeEntries.map(entry => {
-      balance += entry.debit - entry.credit;
-      return {
-        ...entry,
-        runningBalance: balance
-      };
-    });
-  };
-
-  const handleWhatsAppShare = async (customerId: string) => {
-    const cust = customers.find(c => c.id === customerId);
-    if (!cust) return;
-
-    setIsGeneratingPDF(true);
-
-    const originalGetComputedStyle = window.getComputedStyle;
-    let tempEl: HTMLDivElement | null = null;
-    let restore: (() => void) | null = null;
-
-    try {
-      const element = document.getElementById('print-area');
-      if (!element) {
-        setIsGeneratingPDF(false);
-        return;
-      }
-
-      tempEl = document.createElement('div');
-      tempEl.style.display = 'none';
-      document.body.appendChild(tempEl);
-
-      const convertToRgb = (color: string) => {
-        if (!color || (!color.includes('oklch') && !color.includes('oklab'))) return color;
-        try {
-          if (!tempEl) return 'rgb(0, 0, 0)';
-          tempEl.style.color = '';
-          tempEl.style.color = color;
-          const rgb = originalGetComputedStyle.call(window, tempEl).color;
-          if (rgb && !rgb.includes('oklch') && !rgb.includes('oklab')) {
-            return rgb;
-          }
-          return 'rgb(0, 0, 0)';
-        } catch (e) {
-          return 'rgb(0, 0, 0)';
-        }
-      };
-
-      const cleanOklchString = (val: string): string => {
-        if (typeof val !== 'string') return val;
-        if (!val.includes('oklch') && !val.includes('oklab')) return val;
-        return val.replace(/(oklch|oklab)\([^)]+\)/g, (match) => convertToRgb(match));
-      };
-
-      const customGetComputedStyle = function (elt: Element, pseudoElt?: string) {
-        const style = originalGetComputedStyle.call(window, elt, pseudoElt);
-        return new Proxy(style, {
-          get(target, prop) {
-            if (prop === 'getPropertyValue') {
-              return function(propertyName: string) {
-                const val = target.getPropertyValue(propertyName);
-                if (typeof val === 'string' && (val.includes('oklch') || val.includes('oklab'))) {
-                  return cleanOklchString(val);
-                }
-                return val;
-              };
-            }
-            const val = (target as any)[prop];
-            if (typeof val === 'string' && (val.includes('oklch') || val.includes('oklab'))) {
-              return cleanOklchString(val);
-            }
-            if (typeof val === 'function') {
-              return val.bind(target);
-            }
-            return val;
-          }
-        });
-      } as any;
-
-      // Apply globally
-      window.getComputedStyle = customGetComputedStyle;
-
-      restore = await sanitizeDocumentStyles();
-      sanitizeElementInlineStyles(element);
-
-      const today = new Date();
-      const year = today.getFullYear();
-      const month = String(today.getMonth() + 1).padStart(2, '0');
-      const day = String(today.getDate()).padStart(2, '0');
-      const printDate = `${year}-${month}-${day}`;
-      const filename = `كشف حساب_${cust.name}_${printDate}.pdf`;
-
-      const pdfResult = await generateOptimizedPdfFromElement(element, {
-        filename,
-        pixelRatio: 1.25,
-        quality: 0.74,
-        backgroundColor: '#ffffff'
-      });
-
-      const pdf = pdfResult.pdf;
-
-      // 2. Prepare PDF Base64 details & save to database folder and sqlite saved_pdfs
-      let pdfBase64 = pdfResult.base64;
-      if (!pdfBase64) {
-        try {
-          pdfBase64 = pdf.output('datauristring').split(',')[1];
-        } catch (err) {
-          console.error('Failed to get PDF Base64 string:', err);
-        }
-      }
-
-      // Save to Capacitor filesystem folder
-      try {
-        await Filesystem.writeFile({
-          path: `SND_App/تقارير/${filename}`,
-          data: pdfBase64,
-          directory: Directory.Documents,
-          recursive: true
-        });
-        console.log('PDF file saved successfully to SND_App/تقارير directory.');
-      } catch (fsError) {
-        console.warn('Skipping Device Filesystem save:', fsError);
-      }
-
-      // Save to SQLite database table (saved_pdfs history log)
-      try {
-        // Create table dynamically in sqlite if not created
-        await localDb.run(`
-          CREATE TABLE IF NOT EXISTS saved_pdfs (
-            id TEXT PRIMARY KEY,
-            customerId TEXT,
-            customerName TEXT,
-            filename TEXT,
-            createdAt TEXT,
-            fileSize TEXT,
-            fileData TEXT
-          )
-        `);
-        const docId = `pdf_${Date.now()}`;
-        const fileSize = `${Math.round(pdfBase64.length * 0.75 / 1024)} KB`;
-        await localDb.run(
-          `INSERT INTO saved_pdfs (id, customerId, customerName, filename, createdAt, fileSize, fileData) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [docId, customerId, cust.name, filename, new Date().toISOString(), fileSize, pdfBase64]
-        );
-        console.log('PDF saved to local database saved_pdfs table!');
-      } catch (dbError) {
-        console.warn('Failed to save to SQLite database table saved_pdfs:', dbError);
-      }
-
-      pdf.save(filename);
-
-      // 3. Launch WhatsApp link or Native Share
-      const totalCost = totalInvoicesCost;
-      const totalPaid = totalInvoicesPaid + totalSeparateCollections;
-      const diff = totalCost - totalPaid;
-      const currency = 'USD';
-
-      let statusText = '';
-      if (diff < -0.01) {
-        statusText = `رصيد دائن للعميل بفائض: ${Math.abs(diff).toLocaleString('en-US')} ${currency}`;
-      } else if (diff > 0.01) {
-        statusText = `متبقي عليه كديون متراكمة: ${Math.abs(diff).toLocaleString('en-US')} ${currency}`;
-      } else {
-        statusText = `الحساب متزن بالكامل (0.00)`;
-      }
-
-      let message = `*كشف حساب مالي رسمي وموحد (منقولات الخزينة) بصيغة PDF* 📄\n\n`;
-      message += `عزيزي العميل *${cust.name}*،\n`;
-      message += `تجدون أدناه الملخص المالي لحسابات الخزينة وقسم الصيانة والقيود المسجلة لدينا. كما تم تنزيل وحفظ مستند الـ PDF للتقرير في مجلد قاعدة البيانات.\n\n`;
-      message += `- *الرصيد الصافي:* ${statusText}\n`;
-      message += `- *إجمالي قيمة صيانة الأجهزة المقبولة:* ${totalCost.toLocaleString('en-US')} ${currency}\n`;
-      message += `- *إجمالي المقبوضات والسندات:* ${totalPaid.toLocaleString('en-US')} ${currency}\n\n`;
-      message += `يرجى مشاركة وإرسال كشف مستند الـ PDF المحفوظ الآن بنجاح على جهازكم.`;
-
-      // Native Share API if supported (to attach actual PDF sheet on mobile)
-      let sharedNatively = false;
-      try {
-        const pdfBlob = pdf.output('blob');
-        sharedNatively = await sharePdfFile(pdfBlob, filename, message, 'report');
-      } catch (shareErr) {
-        console.warn('Native share was skipped:', shareErr);
-      }
-
-      if (!sharedNatively) {
-        openWhatsApp(message, cust.phone1 || '');
-      }
-    } catch (e) {
-      console.error('Failed to export PDF & share:', e);
-    } finally {
-      if (restore) restore();
-      window.getComputedStyle = originalGetComputedStyle;
-      if (tempEl && tempEl.parentNode) {
-        tempEl.parentNode.removeChild(tempEl);
-      }
-      setIsGeneratingPDF(false);
-    }
-  };
-
   // --- REVENUE & EXPENSE REPORT STATISTICS ---
   const isValidTx = (tx: VaultTransaction) => isAccountingTransactionValid(tx);
 
@@ -3551,26 +3082,32 @@ export default function Vault({
                        </button>
 
                        <div className="pt-1 space-y-1">
-                         <button 
-                           onClick={() => setActiveSegment('funds')}
-                           className="w-full flex items-center justify-between p-3 px-5 bg-transparent hover:bg-white/5 rounded-xl transition-all"
-                         >
-                           <div className="flex items-center gap-3">
-                              <Wallet size={18} className="text-blue-500" />
-                              <span className="text-xs font-bold text-gray-300 font-cairo leading-none">{t('vault.fundBalances', 'رصيد وحركات الصناديق المال')}</span>
-                           </div>
-                         </button>
+                          <button 
+                            onClick={() => setActiveSegment('funds')}
+                            className="w-full flex items-center justify-between p-3 px-5 bg-transparent hover:bg-white/5 rounded-xl transition-all"
+                          >
+                            <div className="flex items-center gap-3">
+                               <Wallet size={18} className="text-blue-500" />
+                               <span className="text-xs font-bold text-gray-300 font-cairo leading-none">{t('vault.fundBalances', 'رصيد وحركات الصناديق المال')}</span>
+                            </div>
+                          </button>
 
-                         <button 
-                           onClick={() => setActiveSegment('customer-ledger')}
-                           className="w-full flex items-center justify-between p-3 px-5 bg-transparent hover:bg-white/5 rounded-xl transition-all"
-                         >
-                           <div className="flex items-center gap-3">
-                              <Users size={18} className="text-purple-500" />
-                              <span className="text-xs font-bold text-gray-300 font-cairo leading-none">{t('vault.customersLedger', 'كشف حساب العملاء')}</span>
-                           </div>
-                         </button>
-                       </div>
+                          <button 
+                            type="button"
+                            onClick={() => onShowAlerts?.()}
+                            className="w-full flex items-center justify-between p-3 px-5 bg-transparent hover:bg-white/5 rounded-xl transition-all cursor-pointer"
+                          >
+                            <div className="flex items-center gap-3">
+                               <Bell size={18} className="text-amber-500" />
+                               <span className="text-xs font-bold text-gray-300 font-cairo leading-none">اشعارات التنبيه والضمان و المستحقات</span>
+                            </div>
+                            {typeof activeAlertsCount === 'number' && activeAlertsCount > 0 && (
+                              <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 text-[10px] font-bold text-amber-400 font-mono border border-amber-500/20">
+                                {activeAlertsCount}
+                              </span>
+                            )}
+                          </button>
+                        </div>
                      </>
                    )}
                 </div>
@@ -4960,282 +4497,6 @@ export default function Vault({
             </div>
           )}
 
-          {/* 3. CLIENT STATEMENT LEDGERS */}
-          {activeSegment === 'customer-ledger' && (
-            <div className="space-y-6">
-              {/* Header */}
-              <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-                <div className="flex items-center gap-3">
-                  <button 
-                    onClick={() => setActiveSegment('dashboard')}
-                    className="p-2.5 bg-white/5 hover:bg-white/10 rounded-xl text-gray-400 hover:text-white transition-all ml-2 cursor-pointer active:scale-95"
-                  >
-                    <ArrowRight size={20} />
-                  </button>
-                  <div>
-                    <h3 className="text-xl font-black text-white font-cairo flex items-center gap-2">
-                      <Users className="text-purple-400" size={22} />
-                      كشف حسابات العملاء والديون
-                    </h3>
-                    <p className="text-[10px] sm:text-xs text-gray-400 font-cairo mt-0.5">مراقبة كشوفات الحسابات الشاملة وتحصيل الديون المترتبة على العملاء.</p>
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-3 relative">
-                  <div className="relative group flex-1 sm:flex-none sm:w-96">
-                    <Search className="absolute right-3 top-2.5 text-gray-500 group-focus-within:text-purple-500 transition-colors" size={16} />
-                    <input 
-                      type="text" 
-                      placeholder="ابحث باسم العميل أو الشركة أو الهاتف..."
-                      value={ledgerSearchTerm}
-                      onChange={(e) => {
-                        setLedgerSearchTerm(e.target.value);
-                        setLedgerListPage(1); // Reset page on search
-                      }}
-                      className="w-full bg-[#181818] border border-white/5 rounded-xl pr-10 pl-4 py-2 text-xs font-cairo text-white outline-none focus:border-purple-500/50 transition-all font-bold"
-                    />
-
-                    {/* Auto-suggest Autocomplete Dropdown */}
-                    {ledgerSearchTerm.trim() !== '' && (
-                      <div className="absolute right-0 left-0 mt-2 bg-[#121212] border border-white/10 rounded-2xl shadow-2xl z-[90] max-h-64 overflow-y-auto divide-y divide-white/5 font-cairo">
-                        {customers
-                          .filter(c => 
-                            (c.name || '').toLowerCase().includes((ledgerSearchTerm || '').toLowerCase()) || 
-                            (c.companyName && (c.companyName || '').toLowerCase().includes((ledgerSearchTerm || '').toLowerCase())) || 
-                            (c.phone1 && c.phone1.includes(ledgerSearchTerm))
-                          )
-                          .slice(0, 8)
-                          .map((cust, cIdx) => {
-                            const unpaid = getCustomerUnpaidBalance(cust.id);
-                            return (
-                              <div
-                                key={`sug-cust-${cust.id || 'noid'}-${cIdx}`}
-                                onClick={() => {
-                                  setLedgerCustomerId(cust.id);
-                                  setIsLedgerModalOpen(true);
-                                  setLedgerSearchTerm(''); // clear search
-                                }}
-                                className="p-3 hover:bg-purple-600/10 cursor-pointer flex items-center justify-between text-right transition-colors"
-                              >
-                                <div className="text-right">
-                                  <span className="text-xs font-bold text-white block">{cust.name}</span>
-                                  {cust.companyName && <span className="text-[10px] text-gray-400 block">{cust.companyName}</span>}
-                                </div>
-                                <div className="text-left font-mono">
-                                  <span className={`text-[9px] px-2 py-0.5 rounded font-black ${unpaid > 0.01 ? 'bg-rose-500/10 text-rose-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                                    {unpaid > 0.01 ? `${unpaid.toFixed(2)} USD` : 'خالٍ من الديون'}
-                                  </span>
-                                </div>
-                              </div>
-                            );
-                          })
-                        }
-                        {customers.filter(c => 
-                          (c.name || '').toLowerCase().includes((ledgerSearchTerm || '').toLowerCase()) || 
-                          (c.companyName && (c.companyName || '').toLowerCase().includes((ledgerSearchTerm || '').toLowerCase())) || 
-                          (c.phone1 && c.phone1.includes(ledgerSearchTerm))
-                        ).length === 0 && (
-                          <div className="p-4 text-center text-gray-500 text-xs font-bold font-cairo">لا توجد نتائج مطابقة لبحثك.</div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Add New Customer Button Removed per user request */}
-                </div>
-              </div>
-
-              {/* Bento Quick Debt Stats cards */}
-              <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                <div className="bg-[#181818] p-3 sm:p-4 rounded-2xl border border-white/5 flex items-center gap-3">
-                  <div className="p-2 sm:p-3 bg-purple-600/10 rounded-xl text-purple-400 shrink-0">
-                    <Users size={20} className="sm:w-[22px] sm:h-[22px]" />
-                  </div>
-                  <div>
-                    <span className="text-[9px] sm:text-[10px] text-gray-500 font-cairo block leading-none">النشطون</span>
-                    <span className="font-mono text-sm sm:text-lg font-black text-white mt-1 block">{customers.length}</span>
-                  </div>
-                </div>
-
-                <div className="bg-[#181818] p-3 sm:p-4 rounded-2xl border border-white/5 flex items-center gap-3">
-                  <div className="p-2 sm:p-3 bg-red-600/10 rounded-xl text-red-400 shrink-0">
-                    <TrendingDown size={20} className="sm:w-[22px] sm:h-[22px]" />
-                  </div>
-                  <div>
-                    <span className="text-[9px] sm:text-[10px] text-gray-500 font-cairo block leading-none">المدينون</span>
-                    <span className="font-mono text-sm sm:text-lg font-black text-rose-500 mt-1 block">
-                      {new Set(customerStats.filter(stat => stat.unpaidBalance > 0.01).map(stat => stat.customer.id)).size}
-                    </span>
-                  </div>
-                </div>
-
-                <div className="col-span-2 md:col-span-1 bg-[#181818] p-3 sm:p-4 rounded-2xl border border-white/5 flex items-center gap-3">
-                  <div className="p-2 sm:p-3 bg-amber-600/10 rounded-xl text-amber-400 shrink-0">
-                    <Coins size={20} className="sm:w-[22px] sm:h-[22px]" />
-                  </div>
-                  <div>
-                    <span className="text-[9px] sm:text-[10px] text-gray-500 font-cairo block leading-none">إجمالي الديون المعلقة</span>
-                    <span className="font-mono text-[10px] sm:text-xs md:text-sm font-black text-amber-500 mt-1 block flex flex-wrap gap-1 leading-tight">
-                      {Object.entries(
-                        customerStats.reduce((acc, stat) => {
-                          if (stat.unpaidBalance > 0.01) {
-                            acc[stat.currency] = (acc[stat.currency] || 0) + stat.unpaidBalance;
-                          }
-                          return acc;
-                        }, {} as Record<string, number>)
-                      ).map(([curr, amount], idx, arr) => (
-                        <span key={curr}>
-                          {(amount as number).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-[8px] sm:text-[9px] text-gray-400">{curr}</span>
-                          {idx < arr.length - 1 && <span className="mx-1 text-gray-600">|</span>}
-                        </span>
-                      ))}
-                      {customerStats.filter(stat => stat.unpaidBalance > 0.01).length === 0 && '0.00'}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Structured Customer Debt Table */}
-              <div className="space-y-4">
-                <div className="flex items-center justify-between border-b border-white/5 pb-2">
-                  <h4 className="text-xs font-black text-white font-cairo flex items-center gap-2">
-                    <span className="w-2 h-2 bg-purple-500 rounded-full animate-pulse"></span>
-                    سجل ديون العملاء ({filteredLedgerStats.length})
-                  </h4>
-                  {ledgerSearchTerm && (
-                    <button 
-                      onClick={() => setLedgerSearchTerm('')}
-                      className="text-[10px] text-purple-400 font-bold hover:underline font-cairo"
-                    >
-                      مسح التصفية
-                    </button>
-                  )}
-                </div>
-
-                <div className="bg-[#121212] border border-white/5 rounded-2xl overflow-hidden shadow-xl text-xs w-full">
-                  <div className="w-full">
-                    <table className="w-full border-collapse text-right table-fixed">
-                      <thead>
-                        <tr className="bg-white/[0.03] border-b border-white/5 text-gray-400 font-cairo font-bold text-[9px] sm:text-[11px]">
-                          <th className="py-2 sm:py-3 px-2 sm:px-4 w-[35%]">العميل</th>
-                          <th className="py-2 sm:py-3 px-2 sm:px-4 hidden md:table-cell w-[15%]">الهاتف</th>
-                          <th className="py-2 sm:py-3 px-2 sm:px-4 hidden lg:table-cell w-[15%]">آخر نشاط</th>
-                          <th className="py-2 sm:py-3 px-2 sm:px-4 w-[35%]">صافي الدين</th>
-                          <th className="py-2 sm:py-3 px-2 sm:px-4 text-center w-[15%] sm:w-28">إجراء</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-white/5 text-gray-300 font-mono">
-                        {currentLedgerListStats.map((stat, idx) => {
-                          const hasDebt = stat.unpaidBalance > 0.01;
-                          return (
-                            <tr 
-                              key={`${stat.customer?.id || stat.customer?.name || 'cust'}-${stat.currency || 'USD'}-${idx}`} 
-                              onClick={() => {
-                                setLedgerCustomerId(stat.customer.id);
-                                setLedgerCurrency(stat.currency);
-                                setIsLedgerModalOpen(true);
-                              }}
-                              className="hover:bg-white/[0.03] transition-colors cursor-pointer group"
-                            >
-                              {/* Customer Name */}
-                              <td className="py-2 sm:py-3 px-2 sm:px-4 text-right overflow-hidden max-w-[120px] sm:max-w-[200px]">
-                                <span className="font-bold text-white block group-hover:text-purple-400 transition-colors font-cairo text-xs sm:text-sm truncate">
-                                  {stat.customer.name}
-                                </span>
-                                {stat.customer.companyName && (
-                                  <span className="text-[9px] text-gray-500 block font-cairo mt-0.5 truncate">
-                                    {stat.customer.companyName}
-                                  </span>
-                                )}
-                              </td>
-
-                              {/* Phone */}
-                              <td className="py-2 sm:py-3 px-2 sm:px-4 text-right font-mono text-[11px] text-gray-400 hidden md:table-cell">
-                                {stat.customer.phone1 ? (
-                                  <span className="flex items-center gap-1.5 justify-start truncate">
-                                    <Phone size={12} className="text-gray-600 shrink-0" />
-                                    <span className="truncate">{stat.customer.phone1}</span>
-                                  </span>
-                                ) : (
-                                  <span className="text-gray-600 font-cairo">لا يوجد</span>
-                                )}
-                              </td>
-
-                              {/* Last Activity */}
-                              <td className="py-2 sm:py-3 px-2 sm:px-4 text-right font-cairo text-xs text-gray-400 hidden lg:table-cell">
-                                {stat.lastActivityDate ? (
-                                  <span className="font-mono text-[11px] text-gray-300 font-bold block truncate">
-                                    {stat.lastActivityDate.toLocaleDateString('ar-YE', { year: 'numeric', month: '2-digit', day: '2-digit' })}
-                                  </span>
-                                ) : (
-                                  <span className="text-gray-600 font-bold text-[10px] truncate">بدون حركة</span>
-                                )}
-                              </td>
-
-                              {/* Outstanding Debt */}
-                              <td className="py-2 sm:py-3 px-2 sm:px-4 text-right font-mono">
-                                <span className={`inline-flex items-center px-1.5 sm:px-2 py-0.5 rounded-full text-[9px] sm:text-[10px] font-black truncate max-w-full ${hasDebt ? 'bg-red-500/10 text-red-400' : 'bg-emerald-500/10 text-emerald-400'}`}>
-                                  {hasDebt ? `${stat.unpaidBalance.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} ${stat.currency}` : 'خالٍ من المديونية'}
-                                </span>
-                              </td>
-
-                              {/* Action */}
-                              <td className="py-2 sm:py-3 px-1 sm:px-4 text-center whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
-                                <button
-                                  onClick={() => {
-                                    setLedgerCustomerId(stat.customer.id);
-                                    setLedgerCurrency(stat.currency);
-                                    setIsLedgerModalOpen(true);
-                                  }}
-                                  className="px-2 sm:px-3 py-1.5 bg-purple-600/10 hover:bg-purple-600 text-purple-400 hover:text-white rounded-lg transition-all border border-purple-500/20 text-[9px] sm:text-[10px] font-black cursor-pointer inline-flex items-center justify-center gap-1 hover:scale-105 active:scale-95 w-full sm:w-auto"
-                                >
-                                  <Eye size={12} className="shrink-0" />
-                                  <span className="hidden sm:inline">كشف الحساب</span>
-                                  <span className="sm:hidden">كشف</span>
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-
-                        {currentLedgerListStats.length === 0 && (
-                          <tr>
-                            <td colSpan={5} className="text-center py-10 text-gray-500 font-cairo font-bold text-xs">لا يوجد عملاء مطابقين لخيارات البحث المحددة.</td>
-                          </tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Main List Pagination */}
-                  {totalLedgerListPages > 1 && (
-                    <div className="flex items-center justify-between px-4 py-3 border-t border-white/5 bg-white/[0.01]">
-                      <span className="text-[10px] text-gray-400 font-bold font-cairo">
-                        عرض الصفحة {safeLedgerListPage} من {totalLedgerListPages} (إجمالي {filteredLedgerStats.length} عميل)
-                      </span>
-                      <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => setLedgerListPage(p => Math.max(1, p - 1))}
-                          disabled={safeLedgerListPage === 1}
-                          className="p-1.5 rounded-lg bg-white/5 text-gray-400 disabled:opacity-30 hover:bg-white/10 transition-colors cursor-pointer"
-                        >
-                          <ArrowLeft size={14} className="rotate-180" />
-                        </button>
-                        <button
-                          onClick={() => setLedgerListPage(p => Math.min(totalLedgerListPages, p + 1))}
-                          disabled={safeLedgerListPage === totalLedgerListPages}
-                          className="p-1.5 rounded-lg bg-white/5 text-gray-400 disabled:opacity-30 hover:bg-white/10 transition-colors cursor-pointer"
-                        >
-                          <ArrowLeft size={14} />
-                        </button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
-          )}
-
           {/* 4. FINANCIAL REPORTS VIEW */}
           {activeSegment === 'reports' && (
             <div className="space-y-4 animate-fade-in">
@@ -6252,282 +5513,6 @@ export default function Vault({
         </div>
 
       </div>
-
-      {/* 5. DEDICATED ACCOUNTS STATEMENT DETAIL MODAL */}
-      <AnimatePresence>
-        {isLedgerModalOpen && ledgerCustomerId && selectedLedgerCustomer && (
-          <div className="fixed inset-0 z-[80] flex items-center justify-center bg-[#0e0e0e] overflow-y-auto">
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.2 }}
-              className="w-full h-full flex flex-col py-6 space-y-6 overflow-y-auto text-right text-gray-200"
-              dir="rtl"
-            >
-              {/* Header */}
-              <div className="flex items-center justify-between border-b border-white/5 pb-4 px-4 md:px-8">
-                <div className="flex items-center gap-4 w-full">
-                  <div className="p-3 bg-purple-600/10 text-purple-400 rounded-xl">
-                    <FileText size={24} />
-                  </div>
-                  <div className="flex-1">
-                    <h3 className="text-lg md:text-xl font-black text-purple-400 font-cairo">
-                      كشف الحساب المالي التفصيلي
-                    </h3>
-                    <h4 className="text-sm md:text-base font-bold text-white font-cairo mt-1">
-                      {selectedLedgerCustomer.name}
-                      {selectedLedgerCustomer.companyName && (
-                        <span className="text-gray-500 mr-2 text-xs">| {selectedLedgerCustomer.companyName}</span>
-                      )}
-                    </h4>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsLedgerModalOpen(false);
-                      setLedgerCustomerId('');
-                    }}
-                    className="p-3 bg-white/5 hover:bg-red-500/20 hover:text-red-400 rounded-xl text-gray-400 transition-all cursor-pointer"
-                    title="إغلاق"
-                  >
-                    <X size={20} />
-                  </button>
-                </div>
-              </div>
-
-              {/* Stat boxes inside modal */}
-              <div className="flex flex-col sm:flex-row gap-3 px-2 sm:px-4 md:px-8">
-                <div className="bg-[#141414] p-4 rounded-xl border border-white/5 flex flex-col justify-between flex-1">
-                  <span className="text-[11px] text-gray-500 font-cairo leading-none font-bold">إجمالي فواتير الصيانة</span>
-                  <p className="font-mono text-base md:text-lg font-black text-white mt-2">
-                    {totalInvoicesCost.toLocaleString('en-US')} <span className="text-[10px] font-sans text-gray-500">{ledgerCurrency}</span>
-                  </p>
-                  <span className="text-[9px] text-gray-600 font-cairo mt-1">عدد الفواتير المسجلة: {ledgerCustomerInvoices.length}</span>
-                </div>
-
-                <div className="flex flex-row gap-3 flex-[2]">
-                  <div className="bg-[#141414] p-4 rounded-xl border border-white/5 flex flex-col justify-between flex-1">
-                    <span className="text-[11px] text-green-400 font-cairo leading-none font-bold">مجموع المبالغ المسددة</span>
-                    <p className="font-mono text-base md:text-lg font-black text-green-400 mt-2">
-                      {(totalInvoicesPaid + totalSeparateCollections).toLocaleString('en-US')} <span className="text-[10px] font-sans text-gray-500">{ledgerCurrency}</span>
-                    </p>
-                    <span className="text-[9px] text-gray-500 font-cairo mt-1">فواتير: {totalInvoicesPaid} + قبض مستقل: {totalSeparateCollections}</span>
-                  </div>
-
-                  <div className="bg-[#141414] p-4 rounded-xl border border-white/5 flex flex-col justify-between flex-1">
-                    <span className="text-[11px] text-rose-400 font-cairo leading-none font-bold">صافي المديونية المتبقية</span>
-                    <p className={`font-mono text-base md:text-lg font-black mt-2 ${customerUnpaidBalance > 0.01 ? 'text-rose-500' : 'text-emerald-400'}`}>
-                      {customerUnpaidBalance.toLocaleString('en-US')} <span className="text-[10px] font-sans text-gray-500">{ledgerCurrency}</span>
-                    </p>
-                    <span className="text-[9px] text-gray-600 font-cairo mt-1">مستحق بذمة العميل للمركز</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Tabs for Invoices vs Transactions */}
-              <div className="flex items-center gap-2 border-b border-white/5 pb-1 px-2 sm:px-4 md:px-8">
-                <button
-                  onClick={() => setLedgerModalTab('invoices')}
-                  className={`px-4 py-2 text-xs font-bold font-cairo border-b-2 transition-all ${ledgerModalTab === 'invoices' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-400 hover:text-white'}`}
-                >
-                  دفتر الفواتير والديون ({ledgerCustomerInvoices.length})
-                </button>
-                <button
-                  onClick={() => setLedgerModalTab('transactions')}
-                  className={`px-4 py-2 text-xs font-bold font-cairo border-b-2 transition-all ${ledgerModalTab === 'transactions' ? 'border-purple-500 text-purple-400' : 'border-transparent text-gray-400 hover:text-white'}`}
-                >
-                  حركات السندات والمقبوضات ({ledgerCustomerTransactions.length})
-                </button>
-              </div>
-
-              {/* Modal Active Tab Content */}
-              <div className="flex-1 min-h-[250px] space-y-4">
-                {ledgerModalTab === 'invoices' ? (
-                  <div className="space-y-3">
-                    <div className="bg-[#121212] border-y border-white/5 overflow-x-auto text-xs w-full">
-                      <table className="w-full border-collapse text-right min-w-[600px]">
-                        <thead>
-                          <tr className="bg-white/5 border-b border-white/5 text-gray-400 font-cairo font-bold">
-                            <th className="py-2.5 px-3">رقم الفاتورة</th>
-                            <th className="py-2.5 px-3">تاريخ الفاتورة</th>
-                            <th className="py-2.5 px-3">قيمة الفاتورة</th>
-                            <th className="py-2.5 px-3 text-green-400">المسدد منها</th>
-                            <th className="py-2.5 px-3 text-red-500">المبلغ المتبقي</th>
-                            <th className="py-2.5 px-3 text-center">الحالة</th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-white/5 text-gray-300 font-mono">
-                          {currentLedgerInvoices.map((inv, invIdx) => {
-                            const invItems = getInvoiceItemsForInvoice(inv.invoiceNumber);
-                            const actualCost = getInvoiceActualCost(invItems, inv);
-                            const unpaid = Math.max(0, actualCost - inv.amountPaid);
-                            return (
-                              <tr key={`ledg-inv-${inv.id || inv.invoiceNumber || 'noid'}-${invIdx}`} className="hover:bg-white/5 font-mono text-[11px]">
-                                <td className="py-2.5 px-3 text-white font-bold">#{inv.invoiceNumber}</td>
-                                <td className="py-2.5 px-3 text-gray-400">
-                                  {parseDate(inv.createdAt)
-                                    ? parseDate(inv.createdAt)!.toLocaleDateString('ar-YE', { year: 'numeric', month: '2-digit', day: '2-digit' })
-                                    : '---'}
-                                </td>
-                                <td className="py-2.5 px-3">{actualCost?.toLocaleString('en-US')} {inv.currency}</td>
-                                <td className="py-2.5 px-3 text-green-400">{inv.amountPaid?.toLocaleString('en-US')} {inv.currency}</td>
-                                <td className="py-2.5 px-3 text-rose-500 font-bold">{unpaid.toLocaleString('en-US')} {inv.currency}</td>
-                                <td className="py-2.5 px-3 text-center font-cairo">
-                                  <span className={`px-2 py-0.5 rounded text-[9px] font-bold ${inv.status === 'delivered' ? 'bg-green-600/15 text-green-400' : 'bg-amber-600/15 text-amber-500'}`}>
-                                    {inv.status === 'delivered' ? 'مكتملة ومسلمة' : 'قيد الصيانة'}
-                                  </span>
-                                </td>
-                              </tr>
-                            );
-                          })}
-                          {ledgerCustomerInvoices.length === 0 && (
-                            <tr>
-                              <td colSpan={6} className="text-center py-8 text-gray-500 font-cairo text-xs font-bold px-3">لا توجد فواتير صيانة مسجلة لهذا العميل.</td>
-                            </tr>
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-
-                    {/* Pagination for Invoices */}
-                    {totalLedgerInvoicesPages > 1 && (
-                      <div className="flex items-center justify-between mx-2 px-4 py-2 border border-white/5 bg-black/10 rounded-xl">
-                        <span className="text-[10px] text-gray-500 font-bold font-cairo">
-                          صفحة {safeLedgerInvoicesPage} من {totalLedgerInvoicesPages}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                            disabled={safeLedgerInvoicesPage === 1}
-                            className="p-1 rounded bg-white/5 text-gray-400 disabled:opacity-30 hover:bg-white/10 transition-colors cursor-pointer"
-                          >
-                            <ArrowLeft size={12} className="rotate-180" />
-                          </button>
-                          <button
-                            onClick={() => setCurrentPage(p => Math.min(totalLedgerInvoicesPages, p + 1))}
-                            disabled={safeLedgerInvoicesPage === totalLedgerInvoicesPages}
-                            className="p-1 rounded bg-white/5 text-gray-400 disabled:opacity-30 hover:bg-white/10 transition-colors cursor-pointer"
-                          >
-                            <ArrowLeft size={12} />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="space-y-3">
-                    <div className="bg-[#121212] border-y border-white/5 divide-y divide-white/5">
-                      {currentLedgerTransactions.map((tx, txIdx) => (
-                        <div key={`ledg-tx-${tx.id || 'noid'}-${txIdx}`} className="px-3 py-3.5 text-xs flex items-center justify-between hover:bg-white/5 transition-colors">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-white font-mono text-xs">سند رقم: {tx.voucherNumber}</span>
-                              <span className={`text-[9px] font-bold px-2 py-0.5 rounded ${tx.type === 'receipt' ? 'bg-green-600/15 text-green-400' : 'bg-amber-600/15 text-amber-500'}`}>
-                                {tx.type === 'receipt' ? 'سند قبض مالي' : 'سند صرف للعميل'}
-                              </span>
-                              <span className="text-[10px] text-purple-400 font-cairo">({tx.transactionCategory})</span>
-                            </div>
-                            <p className="text-[10px] text-gray-400 font-cairo leading-relaxed">{tx.notes || 'سند مالي مستحق على الدفاتر.'}</p>
-                            <span className="text-[9px] text-gray-600 font-mono">
-                              {formatTxDate(tx)}
-                            </span>
-                          </div>
-                          
-                          <div className="text-left font-mono">
-                            <span className={`text-xs sm:text-sm font-black ${tx.type === 'receipt' ? 'text-green-500' : 'text-amber-500'}`}>
-                              {tx.type === 'receipt' ? '+' : '-'}{Math.abs(tx.amount).toLocaleString('en-US')} {tx.currency}
-                            </span>
-                            <p className="text-[9px] text-gray-500 font-cairo mt-0.5">{getFundDisplayName(tx)}</p>
-                          </div>
-                        </div>
-                      ))}
-                      {ledgerCustomerTransactions.length === 0 && (
-                        <div className="text-center py-8 text-gray-500 font-cairo text-xs font-bold px-3">لا يوجد سندات قبض أو صرف مسجلة لهذا العميل.</div>
-                      )}
-                    </div>
-
-                    {/* Pagination for Transactions */}
-                    {totalLedgerTransactionsPages > 1 && (
-                      <div className="flex items-center justify-between mx-2 px-4 py-2 border border-white/5 bg-black/10 rounded-xl">
-                        <span className="text-[10px] text-gray-500 font-bold font-cairo">
-                          صفحة {safeLedgerTransactionsPage} من {totalLedgerTransactionsPages}
-                        </span>
-                        <div className="flex items-center gap-1">
-                          <button
-                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                            disabled={safeLedgerTransactionsPage === 1}
-                            className="p-1 rounded bg-white/5 text-gray-400 disabled:opacity-30 hover:bg-white/10 transition-colors cursor-pointer"
-                          >
-                            <ArrowLeft size={12} className="rotate-180" />
-                          </button>
-                          <button
-                            onClick={() => setCurrentPage(p => Math.min(totalLedgerTransactionsPages, p + 1))}
-                            disabled={safeLedgerTransactionsPage === totalLedgerTransactionsPages}
-                            className="p-1 rounded bg-white/5 text-gray-400 disabled:opacity-30 hover:bg-white/10 transition-colors cursor-pointer"
-                          >
-                            <ArrowLeft size={12} />
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Action Buttons Footer */}
-              <div className="flex flex-col sm:flex-row items-center justify-between gap-4 border-t border-white/5 pt-4 pb-2 mt-auto px-4 md:px-8">
-                <p className="text-[10px] sm:text-xs text-gray-400 font-cairo font-bold leading-relaxed text-right flex-1 w-full">
-                  استخرج ملف PDF تفصيلي بكشف الحساب للطباعة أو الإرسال.
-                </p>
-                <div className="w-full sm:w-auto">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const entries = getStatementEntries(ledgerCustomerId, ledgerCurrency);
-                      
-                      const formattedEntries = entries.map((entry) => {
-                        const year = entry.date.getFullYear();
-                        const month = String(entry.date.getMonth() + 1).padStart(2, '0');
-                        const day = String(entry.date.getDate()).padStart(2, '0');
-                        const hours = String(entry.date.getHours()).padStart(2, '0');
-                        const minutes = String(entry.date.getMinutes()).padStart(2, '0');
-                        const formattedDate = `${year}/${month}/${day} ${hours}:${minutes}`;
-
-                        return {
-                          ...entry,
-                          formattedDate
-                        };
-                      });
-                      
-                      setPreviewData({
-                        type: 'statement',
-                        data: {
-                          statement: {
-                            customerName: selectedLedgerCustomer.name,
-                            companyName: selectedLedgerCustomer.companyName || '',
-                            customerPhone: selectedLedgerCustomer.phone1 || '',
-                            customerNumber: selectedLedgerCustomer.customerNumber || selectedLedgerCustomer.id?.substring(0, 5) || '',
-                            currency: ledgerCurrency,
-                            liabilityCurrency: selectedLedgerCustomer.liabilityCurrency || 'USD',
-                            entries: formattedEntries
-                          }
-                        }
-                      });
-                    }}
-                    className="w-full sm:w-auto px-6 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white rounded-xl text-xs sm:text-sm font-bold font-cairo shadow-lg shadow-purple-500/20 transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95 hover:shadow-purple-500/40"
-                  >
-                    <Printer size={16} />
-                    <span>إصدار كشف الحساب التفصيلي</span>
-                  </button>
-                </div>
-              </div>
-            </motion.div>
-          </div>
-        )}
-      </AnimatePresence>
-
-
 
       {previewData && (
         <PrintPreviewOverlay

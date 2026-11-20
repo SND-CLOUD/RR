@@ -123,7 +123,7 @@ export default function App() {
   
   // State for navigating to Vault with preloaded customer and receipt voucher
   const [vaultInitialProps, setVaultInitialProps] = useState<{
-    segment?: 'dashboard' | 'receipt' | 'payment' | 'transfer' | 'funds' | 'customer-ledger' | 'reports';
+    segment?: 'dashboard' | 'receipt' | 'payment' | 'transfer' | 'funds' | 'reports';
     customerName?: string;
     customerId?: string;
     liabilityCurrency?: string;
@@ -1495,6 +1495,8 @@ export default function App() {
             initialInvoiceNumber={vaultInitialProps?.invoiceNumber}
             initialInvoiceId={vaultInitialProps?.invoiceId}
             onClearInitialProps={() => setVaultInitialProps(null)}
+            activeAlertsCount={activeAlerts.length}
+            onShowAlerts={() => setShowAllAlertsModal(true)}
           />
         );
       case 'customers':
