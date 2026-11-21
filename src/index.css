@@ -373,7 +373,7 @@ html.light-app .border-gray-700 {
 }
 
 /* Global inputs, checkboxes & select elements */
-html.light-app input,
+html.light-app input:not(.quick-jump-input),
 html.light-app select,
 html.light-app textarea {
   background-color: #ffffff !important;
@@ -391,7 +391,7 @@ html.light-app textarea::placeholder {
   color: #94a3b8 !important;
 }
 
-html.light-app input:focus,
+html.light-app input:not(.quick-jump-input):focus,
 html.light-app select:focus,
 html.light-app textarea:focus {
   border-color: #ea580c !important;

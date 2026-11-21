@@ -303,7 +303,9 @@ export default function Vault({
   const { t, i18n } = useTranslation();
   const { hasPermission, canAdd, canEdit, canDelete, canPrint, canAdvanced } = usePermissions(user, 'vault');
   const canUseAdvanced = canAdvanced || user.isPrimary || user.role === 'admin';
-  const [isAdvancedMode, setIsAdvancedMode] = useState<boolean>(false);
+  const [isAdvancedMode, setIsAdvancedMode] = useState<boolean>(() =>
+    Boolean(canUseAdvanced && initialSegment && ['transfer', 'funds', 'reports'].includes(initialSegment))
+  );
 
   if (!hasPermission('view')) {
     return (
@@ -1330,6 +1332,9 @@ export default function Vault({
         setSelectedInvoiceId(initialInvoiceId);
       }
       if (initialSegment) {
+        if (['transfer', 'funds', 'reports'].includes(initialSegment) && canUseAdvanced) {
+          setIsAdvancedMode(true);
+        }
         setActiveSegment(initialSegment);
       }
       if (initialShowAddModal) {

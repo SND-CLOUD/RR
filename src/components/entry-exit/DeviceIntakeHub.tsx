@@ -27,10 +27,15 @@ interface DeviceIntakeHubProps {
   user: User;
   onBack: () => void;
   onNavigateToInspection?: (invoice: Invoice) => void;
+  initialSubView?: 'hub' | 'entry';
 }
 
-export default function DeviceIntakeHub({ user, onBack }: DeviceIntakeHubProps) {
-  const [subView, setSubView] = useState<'hub' | 'entry'>('hub');
+export default function DeviceIntakeHub({ user, onBack, initialSubView = 'hub' }: DeviceIntakeHubProps) {
+  const [subView, setSubView] = useState<'hub' | 'entry'>(initialSubView);
+
+  useEffect(() => {
+    setSubView(initialSubView);
+  }, [initialSubView]);
   
   // Data states
   const [invoices, setInvoices] = useState<Invoice[]>([]);

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { parseTxDate } from '../lib/dateUtils';
 import { 
   FilePlus, 
@@ -29,22 +29,69 @@ import {
   FileOutput,
   ArrowDownToLine,
   ArrowUpFromLine,
-  FileText
+  FileText,
+  ShoppingCart,
+  BookOpen,
+  ArrowRightLeft,
+  Landmark,
+  CornerDownLeft,
+  Percent
 } from 'lucide-react';
 import { collection, query, where, getDocs, onSnapshot, orderBy } from '../firebase';
 import { db } from '../firebase';
-import { VaultTransaction, InvoiceItem, isInShopMaintenanceDevice, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../types';
+import { VaultTransaction, InvoiceItem, User, isInShopMaintenanceDevice, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../types';
+import { usePermissions } from '../hooks/usePermissions';
 import { useTranslation } from 'react-i18next';
 
+export interface QuickJumpTarget {
+  tab:
+    | 'device-intake'
+    | 'device-exit'
+    | 'device-movement'
+    | 'inspection'
+    | 'approval'
+    | 'maintenance'
+    | 'invoices'
+    | 'device-management'
+    | 'other-services'
+    | 'vault'
+    | 'customers'
+    | 'inventory'
+    | 'reports'
+    | 'search'
+    | 'settings'
+    | 'advanced-database-maintenance'
+    | 'alerts';
+  subView?: 'hub' | 'entry';
+  vaultSegment?: 'dashboard' | 'receipt' | 'payment' | 'discounts' | 'transfer' | 'funds' | 'reports';
+  vaultShowAddModal?: boolean;
+  otherServicesTab?: 'hub' | 'software' | 'maintenance' | 'parts' | 'purchase' | 'catalog' | 'stock';
+}
+
+interface QuickJumpItem {
+  id: string;
+  label: string;
+  category: string;
+  keywords: string[];
+  icon: React.ReactNode;
+  iconBg: string;
+  target: QuickJumpTarget;
+  isAllowed: boolean;
+}
+
 export default function Dashboard({ 
-  onNavigate, 
+  onNavigate,
+  onQuickNavigate,
+  user,
   shopName, 
   fiscalYear,
   activeAlertsCount = 0,
   onShowAlerts = () => {},
   resetTrigger = 0
 }: { 
-  onNavigate: (tab: any, subView?: any) => void, 
+  onNavigate: (tab: any, subView?: any) => void,
+  onQuickNavigate?: (target: QuickJumpTarget) => void,
+  user?: User | null,
   shopName?: string, 
   fiscalYear?: string,
   activeAlertsCount?: number,
@@ -52,6 +99,7 @@ export default function Dashboard({
   resetTrigger?: number
 }) {
   const { t } = useTranslation();
+  const { hasPermission } = usePermissions(user || null);
   const [vaultTotals, setVaultTotals] = useState<Record<string, number>>({
     RY: 0,
     SAR: 0,
@@ -117,6 +165,14 @@ export default function Dashboard({
   const [showInventoryReportsModal, setShowInventoryReportsModal] = useState(false);
   const inventoryReportsModalRef = useRef<HTMLDivElement>(null);
 
+  // "خذني إلى" Quick Navigation Input State
+  const [quickJumpQuery, setQuickJumpQuery] = useState('');
+  const [isQuickJumpOpen, setIsQuickJumpOpen] = useState(false);
+  const [highlightedQuickJumpIdx, setHighlightedQuickJumpIdx] = useState(0);
+  const quickJumpContainerRef = useRef<HTMLDivElement>(null);
+  const quickJumpInputRef = useRef<HTMLInputElement>(null);
+  const quickJumpListRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (inventoryReportsModalRef.current && !inventoryReportsModalRef.current.contains(event.target as Node)) {
@@ -130,6 +186,448 @@ export default function Dashboard({
       document.removeEventListener('mousedown', handleClickOutside);
     };
   }, [showInventoryReportsModal]);
+
+  useEffect(() => {
+    function handleQuickJumpOutside(event: MouseEvent | TouchEvent) {
+      if (quickJumpContainerRef.current && !quickJumpContainerRef.current.contains(event.target as Node)) {
+        setIsQuickJumpOpen(false);
+      }
+    }
+    if (isQuickJumpOpen) {
+      document.addEventListener('mousedown', handleQuickJumpOutside);
+      document.addEventListener('touchstart', handleQuickJumpOutside);
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleQuickJumpOutside);
+      document.removeEventListener('touchstart', handleQuickJumpOutside);
+    };
+  }, [isQuickJumpOpen]);
+
+  const quickJumpScreens = useMemo<QuickJumpItem[]>(() => {
+    const canViewInventory = !user || hasPermission('inventory', 'view');
+    const canViewInvoices = !user || hasPermission('invoices', 'view');
+    const canViewVault = !user || hasPermission('vault', 'view');
+    const canAddVault = !user || hasPermission('vault', 'add');
+    const canVaultAdvanced = !user || user.isPrimary || user.role === 'admin' || hasPermission('vault', 'advancedView');
+    const canViewCustomers = !user || hasPermission('customers', 'view');
+    const canViewReports = !user || hasPermission('reports', 'view');
+    const canViewSettings = !user || hasPermission('settings', 'view');
+    const canViewDeviceMgmt = !user || user.isPrimary || user.role === 'admin' || hasPermission('settings_device_management', 'view');
+    const canViewAdvMaint = !user || user.isPrimary || user.role === 'admin' || hasPermission('settings_advanced_maintenance', 'view');
+
+    return [
+      // إجراءات الصيانة وفواتير الصيانة
+      {
+        id: 'qj-device-intake-entry',
+        label: 'استلام جهاز جديد (فاتورة دخول صيانة)',
+        category: 'فواتير وإجراءات الصيانة',
+        keywords: ['دخول', 'استلام', 'جهاز', 'فاتورة', 'صيانة', 'intake', 'entry'],
+        icon: <FilePlus size={16} />,
+        iconBg: 'bg-orange-500/15 text-orange-600 dark:text-orange-400',
+        target: { tab: 'device-intake', subView: 'entry' },
+        isAllowed: canViewInventory
+      },
+      {
+        id: 'qj-device-intake-hub',
+        label: 'دخول أجهزة',
+        category: 'إجراءات الصيانة',
+        keywords: ['دخول', 'أجهزة', 'استلام', 'intake'],
+        icon: <ArrowDownToLine size={16} />,
+        iconBg: 'bg-orange-500/15 text-orange-600 dark:text-orange-400',
+        target: { tab: 'device-intake', subView: 'hub' },
+        isAllowed: canViewInventory
+      },
+      {
+        id: 'qj-device-movement',
+        label: 'قسم الصيانة (مركز الإجراءات)',
+        category: 'إجراءات الصيانة',
+        keywords: ['قسم', 'الصيانة', 'حركة', 'movement'],
+        icon: <SettingsIcon size={16} />,
+        iconBg: 'bg-orange-500/15 text-orange-600 dark:text-orange-400',
+        target: { tab: 'device-movement' },
+        isAllowed: canViewInventory
+      },
+      {
+        id: 'qj-inspection',
+        label: 'فحص الأجهزة',
+        category: 'إجراءات الصيانة',
+        keywords: ['فحص', 'الأجهزة', 'أولي', 'inspection'],
+        icon: <ClipboardCheck size={16} />,
+        iconBg: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+        target: { tab: 'inspection' },
+        isAllowed: canViewInventory
+      },
+      {
+        id: 'qj-approval',
+        label: 'انتظار الموافقة والقطع',
+        category: 'إجراءات الصيانة',
+        keywords: ['موافقة', 'الموافقة', 'القطع', 'approval'],
+        icon: <Clock size={16} />,
+        iconBg: 'bg-yellow-500/15 text-yellow-600 dark:text-yellow-400',
+        target: { tab: 'approval' },
+        isAllowed: canViewInventory
+      },
+      {
+        id: 'qj-maintenance',
+        label: 'صيانة الأجهزة (تنفيذ الصيانة)',
+        category: 'إجراءات الصيانة',
+        keywords: ['صيانة', 'اصلاح', 'تنفيذ', 'maintenance'],
+        icon: <Wrench size={16} />,
+        iconBg: 'bg-orange-500/15 text-orange-600 dark:text-orange-400',
+        target: { tab: 'maintenance' },
+        isAllowed: canViewInventory
+      },
+      {
+        id: 'qj-device-exit',
+        label: 'خروج أجهزة (تسليم الأجهزة)',
+        category: 'إجراءات الصيانة',
+        keywords: ['خروج', 'تسليم', 'أجهزة', 'exit'],
+        icon: <ArrowUpFromLine size={16} />,
+        iconBg: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+        target: { tab: 'device-exit' },
+        isAllowed: canViewInventory
+      },
+      {
+        id: 'qj-invoices',
+        label: 'إدارة الفواتير (صيانة ومبيعات)',
+        category: 'الفواتير',
+        keywords: ['فواتير', 'فاتورة', 'صيانة', 'تعديل', 'invoices'],
+        icon: <FileText size={16} />,
+        iconBg: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+        target: { tab: 'invoices' },
+        isAllowed: canViewInvoices
+      },
+      {
+        id: 'qj-device-management',
+        label: 'إدارة الأجهزة',
+        category: 'الأجهزة',
+        keywords: ['أجهزة', 'حالات', 'إدارة', 'devices'],
+        icon: <Smartphone size={16} />,
+        iconBg: 'bg-slate-500/15 text-slate-600 dark:text-slate-300',
+        target: { tab: 'device-management' },
+        isAllowed: canViewDeviceMgmt
+      },
+
+      // الفواتير الأخرى والخدمات الإضافية والمشتريات
+      {
+        id: 'qj-other-services-hub',
+        label: 'خدمات أخرى (القائمة الرئيسية)',
+        category: 'فواتير أخرى',
+        keywords: ['خدمات', 'أخرى', 'فواتير', 'other'],
+        icon: <Layers size={16} />,
+        iconBg: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400',
+        target: { tab: 'other-services', otherServicesTab: 'hub' },
+        isAllowed: canViewInvoices || canViewInventory
+      },
+      {
+        id: 'qj-other-software',
+        label: 'فاتورة خدمات برمجية (سوفت وير)',
+        category: 'فواتير أخرى',
+        keywords: ['برمجية', 'سوفت', 'وير', 'فاتورة', 'software'],
+        icon: <Cpu size={16} />,
+        iconBg: 'bg-cyan-500/15 text-cyan-600 dark:text-cyan-400',
+        target: { tab: 'other-services', otherServicesTab: 'software' },
+        isAllowed: canViewInvoices || canViewInventory
+      },
+      {
+        id: 'qj-other-maintenance',
+        label: 'فاتورة صيانة خارجية',
+        category: 'فواتير أخرى',
+        keywords: ['صيانة', 'خارجية', 'فاتورة', 'maintenance'],
+        icon: <Wrench size={16} />,
+        iconBg: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+        target: { tab: 'other-services', otherServicesTab: 'maintenance' },
+        isAllowed: canViewInvoices || canViewInventory
+      },
+      {
+        id: 'qj-other-parts',
+        label: 'فاتورة بيع قطع غيار وملحقات',
+        category: 'فواتير أخرى',
+        keywords: ['بيع', 'قطع', 'غيار', 'ملحقات', 'فاتورة', 'parts'],
+        icon: <Tag size={16} />,
+        iconBg: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+        target: { tab: 'other-services', otherServicesTab: 'parts' },
+        isAllowed: canViewInvoices || canViewInventory
+      },
+      {
+        id: 'qj-other-purchase',
+        label: 'فاتورة شراء قطع وملحقات',
+        category: 'فواتير أخرى والمشتريات',
+        keywords: ['شراء', 'مشتريات', 'قطع', 'ملحقات', 'فاتورة', 'purchase'],
+        icon: <ShoppingCart size={16} />,
+        iconBg: 'bg-purple-500/15 text-purple-600 dark:text-purple-400',
+        target: { tab: 'other-services', otherServicesTab: 'purchase' },
+        isAllowed: canViewInvoices || canViewInventory
+      },
+      {
+        id: 'qj-other-catalog',
+        label: 'دليل القطع والملحقات',
+        category: 'فواتير أخرى والمخزون',
+        keywords: ['دليل', 'أصناف', 'قطع', 'ملحقات', 'catalog'],
+        icon: <BookOpen size={16} />,
+        iconBg: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+        target: { tab: 'other-services', otherServicesTab: 'catalog' },
+        isAllowed: canViewInventory
+      },
+      {
+        id: 'qj-other-stock',
+        label: 'مخزون ودفوعات المحل',
+        category: 'فواتير أخرى والمخزون',
+        keywords: ['مخزون', 'دفوعات', 'المحل', 'stock'],
+        icon: <Package size={16} />,
+        iconBg: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400',
+        target: { tab: 'other-services', otherServicesTab: 'stock' },
+        isAllowed: canViewInventory
+      },
+
+      // السندات والحسابات
+      {
+        id: 'qj-vault-dashboard',
+        label: 'الحسابات (الشاشة الرئيسية)',
+        category: 'الحسابات والسندات',
+        keywords: ['حسابات', 'خزينة', 'الصندوق', 'vault'],
+        icon: <CircleDollarSign size={16} />,
+        iconBg: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+        target: { tab: 'vault', vaultSegment: 'dashboard' },
+        isAllowed: canViewVault
+      },
+      {
+        id: 'qj-vault-receipt-new',
+        label: 'إنشاء سند قبض جديد',
+        category: 'السندات',
+        keywords: ['سند', 'قبض', 'تحصيل', 'استلام', 'مبلغ', 'receipt'],
+        icon: <ArrowDownToLine size={16} />,
+        iconBg: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+        target: { tab: 'vault', vaultSegment: 'receipt', vaultShowAddModal: true },
+        isAllowed: canViewVault && canAddVault
+      },
+      {
+        id: 'qj-vault-receipt-list',
+        label: 'سندات القبض',
+        category: 'السندات',
+        keywords: ['سندات', 'سند', 'قبض', 'receipt'],
+        icon: <ArrowDownToLine size={16} />,
+        iconBg: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
+        target: { tab: 'vault', vaultSegment: 'receipt', vaultShowAddModal: false },
+        isAllowed: canViewVault
+      },
+      {
+        id: 'qj-vault-payment-new',
+        label: 'إنشاء سند صرف جديد',
+        category: 'السندات',
+        keywords: ['سند', 'صرف', 'دفع', 'مصروف', 'payment'],
+        icon: <ArrowUpFromLine size={16} />,
+        iconBg: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+        target: { tab: 'vault', vaultSegment: 'payment', vaultShowAddModal: true },
+        isAllowed: canViewVault && canAddVault
+      },
+      {
+        id: 'qj-vault-payment-list',
+        label: 'سندات الصرف',
+        category: 'السندات',
+        keywords: ['سندات', 'سند', 'صرف', 'payment'],
+        icon: <ArrowUpFromLine size={16} />,
+        iconBg: 'bg-amber-500/15 text-amber-600 dark:text-amber-400',
+        target: { tab: 'vault', vaultSegment: 'payment', vaultShowAddModal: false },
+        isAllowed: canViewVault
+      },
+      {
+        id: 'qj-vault-discounts',
+        label: 'الخصومات والتنازلات',
+        category: 'الحسابات والسندات',
+        keywords: ['خصم', 'خصومات', 'تنازل', 'تنازلات', 'discounts'],
+        icon: <Percent size={16} />,
+        iconBg: 'bg-rose-500/15 text-rose-600 dark:text-rose-400',
+        target: { tab: 'vault', vaultSegment: 'discounts' },
+        isAllowed: canViewVault
+      },
+      {
+        id: 'qj-vault-transfer',
+        label: 'تحويل بين الصناديق',
+        category: 'الحسابات المتقدمة',
+        keywords: ['تحويل', 'صناديق', 'نقل', 'transfer'],
+        icon: <ArrowRightLeft size={16} />,
+        iconBg: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
+        target: { tab: 'vault', vaultSegment: 'transfer' },
+        isAllowed: canViewVault && canVaultAdvanced
+      },
+      {
+        id: 'qj-vault-funds',
+        label: 'الصناديق والبنوك',
+        category: 'الحسابات المتقدمة',
+        keywords: ['صناديق', 'بنوك', 'أرصدة', 'funds'],
+        icon: <Landmark size={16} />,
+        iconBg: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400',
+        target: { tab: 'vault', vaultSegment: 'funds' },
+        isAllowed: canViewVault && canVaultAdvanced
+      },
+      {
+        id: 'qj-vault-reports',
+        label: 'تقارير الحسابات',
+        category: 'الحسابات المتقدمة',
+        keywords: ['تقارير', 'أرباح', 'إيرادات', 'مصروفات', 'مستحقات', 'reports'],
+        icon: <BarChart3 size={16} />,
+        iconBg: 'bg-purple-500/15 text-purple-600 dark:text-purple-400',
+        target: { tab: 'vault', vaultSegment: 'reports' },
+        isAllowed: canViewVault && canVaultAdvanced
+      },
+      {
+        id: 'qj-alerts',
+        label: 'اشعارات التنبيه والضمان والمستحقات',
+        category: 'التنبيهات والمستحقات',
+        keywords: ['اشعارات', 'تنبيه', 'ضمان', 'مستحقات', 'مديونية', 'alerts'],
+        icon: <Bell size={16} />,
+        iconBg: 'bg-orange-500/15 text-orange-600 dark:text-orange-400',
+        target: { tab: 'alerts' },
+        isAllowed: true
+      },
+
+      // الشاشات العامة والإدارية
+      {
+        id: 'qj-customers',
+        label: 'العملاء',
+        category: 'العملاء',
+        keywords: ['عميل', 'عملاء', 'زبائن', 'customers'],
+        icon: <Users size={16} />,
+        iconBg: 'bg-slate-500/15 text-slate-600 dark:text-slate-300',
+        target: { tab: 'customers' },
+        isAllowed: canViewCustomers
+      },
+      {
+        id: 'qj-inventory',
+        label: 'المخزون وتقارير القطع',
+        category: 'المخزون',
+        keywords: ['مخزون', 'قطع', 'جرد', 'inventory'],
+        icon: <Package size={16} />,
+        iconBg: 'bg-orange-500/15 text-orange-600 dark:text-orange-400',
+        target: { tab: 'inventory' },
+        isAllowed: canViewInventory
+      },
+      {
+        id: 'qj-reports',
+        label: 'التقارير الشاملة',
+        category: 'التقارير',
+        keywords: ['تقرير', 'تقارير', 'إحصائيات', 'reports'],
+        icon: <BarChart3 size={16} />,
+        iconBg: 'bg-orange-500/15 text-orange-600 dark:text-orange-400',
+        target: { tab: 'reports' },
+        isAllowed: canViewReports
+      },
+      {
+        id: 'qj-search',
+        label: 'البحث السريع',
+        category: 'البحث',
+        keywords: ['بحث', 'سريع', 'فاتورة', 'سند', 'search'],
+        icon: <Search size={16} />,
+        iconBg: 'bg-orange-500/15 text-orange-600 dark:text-orange-400',
+        target: { tab: 'search' },
+        isAllowed: true
+      },
+      {
+        id: 'qj-settings',
+        label: 'الإعدادات',
+        category: 'الإدارة',
+        keywords: ['إعدادات', 'اعدادات', 'مستخدمين', 'نسخ', 'نظام', 'settings'],
+        icon: <SettingsIcon size={16} />,
+        iconBg: 'bg-slate-500/15 text-slate-600 dark:text-slate-300',
+        target: { tab: 'settings' },
+        isAllowed: canViewSettings
+      },
+      {
+        id: 'qj-adv-maintenance',
+        label: 'الصيانة المتقدمة لقاعدة البيانات',
+        category: 'الإدارة المتقدمة',
+        keywords: ['قاعدة', 'بيانات', 'صيانة', 'متقدمة', 'database'],
+        icon: <Database size={16} />,
+        iconBg: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400',
+        target: { tab: 'advanced-database-maintenance' },
+        isAllowed: canViewAdvMaint
+      }
+    ].filter(item => item.isAllowed);
+  }, [user, hasPermission]);
+
+  // Case-sensitive flexible matching: matches any character anywhere in any word
+  const filteredQuickJumpScreens = useMemo(() => {
+    if (quickJumpQuery.length === 0) return [];
+    const matches = quickJumpScreens.filter(item =>
+      item.label.includes(quickJumpQuery) ||
+      item.category.includes(quickJumpQuery) ||
+      item.keywords.some(kw => kw.includes(quickJumpQuery))
+    );
+    return matches.sort((a, b) => {
+      const aStarts = a.label.startsWith(quickJumpQuery) ? 0 : 1;
+      const bStarts = b.label.startsWith(quickJumpQuery) ? 0 : 1;
+      if (aStarts !== bStarts) return aStarts - bStarts;
+      const aInLabel = a.label.includes(quickJumpQuery) ? 0 : 1;
+      const bInLabel = b.label.includes(quickJumpQuery) ? 0 : 1;
+      return aInLabel - bInLabel;
+    });
+  }, [quickJumpQuery, quickJumpScreens]);
+
+  useEffect(() => {
+    setHighlightedQuickJumpIdx(0);
+  }, [quickJumpQuery]);
+
+  useEffect(() => {
+    if (!isQuickJumpOpen || !quickJumpListRef.current) return;
+    const activeEl = quickJumpListRef.current.children[highlightedQuickJumpIdx] as HTMLElement | undefined;
+    if (activeEl) {
+      activeEl.scrollIntoView({ block: 'nearest' });
+    }
+  }, [highlightedQuickJumpIdx, isQuickJumpOpen]);
+
+  const handleSelectQuickJump = (item: QuickJumpItem) => {
+    setQuickJumpQuery('');
+    setIsQuickJumpOpen(false);
+    setHighlightedQuickJumpIdx(0);
+    if (item.target.tab === 'alerts') {
+      onShowAlerts();
+      return;
+    }
+    if (onQuickNavigate) {
+      onQuickNavigate(item.target);
+      return;
+    }
+    if (item.target.otherServicesTab) {
+      localStorage.setItem('otherServicesTab', item.target.otherServicesTab);
+    }
+    onNavigate(item.target.tab, item.target.subView);
+  };
+
+  const handleQuickJumpKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      setIsQuickJumpOpen(false);
+      return;
+    }
+    if (!isQuickJumpOpen || filteredQuickJumpScreens.length === 0) return;
+
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setHighlightedQuickJumpIdx(prev => (prev + 1) % filteredQuickJumpScreens.length);
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlightedQuickJumpIdx(prev => (prev - 1 + filteredQuickJumpScreens.length) % filteredQuickJumpScreens.length);
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      const chosen = filteredQuickJumpScreens[highlightedQuickJumpIdx] || filteredQuickJumpScreens[0];
+      if (chosen) handleSelectQuickJump(chosen);
+    }
+  };
+
+  const renderHighlightedLabel = (label: string, queryStr: string) => {
+    if (!queryStr) return label;
+    const idx = label.indexOf(queryStr);
+    if (idx === -1) return label;
+    return (
+      <>
+        {label.slice(0, idx)}
+        <span className="text-orange-600 dark:text-orange-400 underline decoration-orange-500/40 underline-offset-2">
+          {label.slice(idx, idx + queryStr.length)}
+        </span>
+        {label.slice(idx + queryStr.length)}
+      </>
+    );
+  };
 
   useEffect(() => {
     // Listen to all vault transactions
@@ -317,7 +815,7 @@ export default function Dashboard({
   ];
 
   return (
-    <div className="space-y-4 pb-10">
+    <div className="space-y-4 pb-10 w-full max-w-full" dir="rtl">
       {/* Top Main Active Devices Multi-Counter Carousel */}
       <div 
         ref={carouselRef}
@@ -366,17 +864,117 @@ export default function Dashboard({
         ))}
       </div>
 
-      {/* Quick Search */}
-      <div className="w-full pt-1">
-        <button 
-          onClick={() => onNavigate('search')}
-          className="w-full bg-white dark:bg-[#161616] py-3.5 px-5 rounded-2xl border border-slate-200/90 dark:border-white/8 flex items-center justify-between hover:bg-slate-50 dark:hover:bg-[#1d1d1d] hover:border-orange-500/40 transition-all group shadow-sm text-slate-600 dark:text-gray-400 cursor-pointer"
-        >
-          <div className="flex items-center gap-3 flex-1 text-right"> 
-            <span className="text-sm font-bold font-cairo">البحث السريع</span>
+      {/* Take Me To (خذني إلى) + Compact Quick Search Icon Button */}
+      <div className="w-full max-w-full pt-1 relative box-border" ref={quickJumpContainerRef}>
+        {/* Upward-opening scrollable dropdown (opens as soon as first character is typed) */}
+        {isQuickJumpOpen && quickJumpQuery.length > 0 && (
+          <div
+            ref={quickJumpListRef}
+            role="listbox"
+            aria-label="قائمة الانتقال إلى الشاشات"
+            dir="rtl"
+            className="absolute bottom-full left-0 right-0 mb-2 z-50 max-h-[176px] sm:max-h-[220px] overflow-y-auto overscroll-contain bg-white dark:bg-[#161616] rounded-3xl border border-slate-200/95 dark:border-white/10 shadow-2xl p-2 space-y-1"
+          >
+            {filteredQuickJumpScreens.length > 0 ? (
+              filteredQuickJumpScreens.map((item, idx) => {
+                const isActive = idx === highlightedQuickJumpIdx;
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="option"
+                    aria-selected={isActive}
+                    onMouseEnter={() => setHighlightedQuickJumpIdx(idx)}
+                    onClick={() => handleSelectQuickJump(item)}
+                    className={`w-full flex items-center justify-between gap-2.5 px-3 py-2 rounded-2xl text-right transition-colors cursor-pointer ${
+                      isActive
+                        ? 'bg-orange-500/12 dark:bg-orange-500/15 border border-orange-500/30 text-slate-900 dark:text-white'
+                        : 'border border-transparent hover:bg-slate-50 dark:hover:bg-white/[0.05] text-slate-700 dark:text-slate-200'
+                    }`}
+                  >
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                      <div className={`w-8 h-8 rounded-xl flex items-center justify-center shrink-0 ${item.iconBg}`}>
+                        {item.icon}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="text-xs sm:text-sm font-bold font-cairo truncate">
+                          {renderHighlightedLabel(item.label, quickJumpQuery)}
+                        </div>
+                        <div className="text-[10px] font-cairo text-slate-400 dark:text-gray-500 truncate">
+                          {item.category}
+                        </div>
+                      </div>
+                    </div>
+                    <CornerDownLeft size={14} className={`shrink-0 ${isActive ? 'text-orange-500' : 'text-slate-300 dark:text-gray-600'}`} />
+                  </button>
+                );
+              })
+            ) : (
+              <div className="py-4 px-3 text-center text-xs font-bold font-cairo text-slate-400 dark:text-gray-500">
+                لا توجد شاشة مطابقة لـ «{quickJumpQuery}»
+              </div>
+            )}
           </div>
-          <Search size={20} className="text-slate-400 dark:text-gray-500 group-hover:text-orange-600 dark:group-hover:text-orange-400 transition-colors" />
-        </button>
+        )}
+
+        <div className="flex items-center gap-2.5 w-full min-w-0 box-border" dir="rtl">
+          {/* New Field: خذني إلى */}
+          <div className="flex-1 min-w-0 relative h-12 bg-white dark:bg-[#161616] rounded-3xl overflow-hidden border border-slate-200/90 dark:border-white/8 focus-within:border-orange-500/50 transition-all shadow-sm flex items-center box-border">
+            {quickJumpQuery.length === 0 && (
+              <span
+                aria-hidden="true"
+                className="absolute right-5 top-1/2 -translate-y-1/2 text-sm font-bold font-cairo text-slate-400 dark:text-gray-500 opacity-75 pointer-events-none select-none z-20"
+              >
+                خذني إلى
+              </span>
+            )}
+            <input
+              ref={quickJumpInputRef}
+              type="text"
+              size={1}
+              dir="rtl"
+              aria-label="خذني إلى"
+              value={quickJumpQuery}
+              onFocus={() => {
+                if (quickJumpQuery.length > 0) {
+                  setIsQuickJumpOpen(true);
+                }
+              }}
+              onChange={(e) => {
+                const val = e.target.value;
+                setQuickJumpQuery(val);
+                setIsQuickJumpOpen(val.length > 0);
+              }}
+              onKeyDown={handleQuickJumpKeyDown}
+              className="quick-jump-input w-full min-w-0 h-full bg-transparent border-0 rounded-3xl pr-5 pl-9 text-sm font-bold font-cairo text-slate-800 dark:text-slate-100 focus:outline-none relative z-10"
+            />
+            {quickJumpQuery.length > 0 && (
+              <button
+                type="button"
+                aria-label="مسح النص"
+                onClick={() => {
+                  setQuickJumpQuery('');
+                  setIsQuickJumpOpen(false);
+                  quickJumpInputRef.current?.focus();
+                }}
+                className="absolute left-3 top-1/2 -translate-y-1/2 p-1 rounded-full text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-white/10 transition-colors z-30 cursor-pointer"
+              >
+                <X size={15} />
+              </button>
+            )}
+          </div>
+
+          {/* Original Quick Search preserved at far-left end of the row as a compact lens square */}
+          <button
+            type="button"
+            onClick={() => onNavigate('search')}
+            aria-label="مربع البحث السريع"
+            title="البحث السريع"
+            className="w-12 h-12 shrink-0 bg-white dark:bg-[#161616] rounded-3xl border border-slate-200/90 dark:border-white/8 flex items-center justify-center hover:bg-slate-50 dark:hover:bg-[#1d1d1d] hover:border-orange-500/40 transition-all group shadow-sm text-slate-500 dark:text-gray-400 hover:text-orange-600 dark:hover:text-orange-400 cursor-pointer box-border"
+          >
+            <Search size={20} className="transition-colors" />
+          </button>
+        </div>
       </div>
 
       {/* Action Grid - 3x2 layout */}

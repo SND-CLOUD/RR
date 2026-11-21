@@ -50,7 +50,7 @@ import { parseDate, formatDateTime, parseTxDate } from './lib/dateUtils';
 import PrintPreviewOverlay from './components/PrintPreviewOverlay';
 
 // Components
-import Dashboard from './components/Dashboard';
+import Dashboard, { QuickJumpTarget } from './components/Dashboard';
 import EntryExit from './components/entry-exit';
 import DeviceIntakeHub from './components/entry-exit/DeviceIntakeHub';
 import DeviceExitHub from './components/entry-exit/DeviceExitHub';
@@ -92,11 +92,13 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'entry-exit' | 'device-movement' | 'inspection' | 'maintenance' | 'inventory' | 'reports' | 'customers' | 'settings' | 'search' | 'vault' | 'device-management' | 'approval' | 'other-services' | 'advanced-database-maintenance' | 'device-intake' | 'device-exit' | 'invoices'>('dashboard');
   const [dashboardResetTrigger, setDashboardResetTrigger] = useState(0);
   const [inspectionInitialInvoice, setInspectionInitialInvoice] = useState<any | null>(null);
+  const [deviceIntakeInitialSubView, setDeviceIntakeInitialSubView] = useState<'hub' | 'entry'>('hub');
 
   const goToDashboard = () => {
     setActiveTab('dashboard');
     setVaultInitialProps(null);
     setInspectionInitialInvoice(null);
+    setDeviceIntakeInitialSubView('hub');
     setDashboardResetTrigger(prev => prev + 1);
     window.dispatchEvent(new CustomEvent('reset-dashboard-counter'));
   };
@@ -123,7 +125,7 @@ export default function App() {
   
   // State for navigating to Vault with preloaded customer and receipt voucher
   const [vaultInitialProps, setVaultInitialProps] = useState<{
-    segment?: 'dashboard' | 'receipt' | 'payment' | 'transfer' | 'funds' | 'reports';
+    segment?: 'dashboard' | 'receipt' | 'payment' | 'discounts' | 'transfer' | 'funds' | 'reports';
     customerName?: string;
     customerId?: string;
     liabilityCurrency?: string;
@@ -1455,7 +1457,8 @@ export default function App() {
         return (
           <DeviceIntakeHub 
             user={user} 
-            onBack={goToDashboard} 
+            onBack={goToDashboard}
+            initialSubView={deviceIntakeInitialSubView}
             onNavigateToInspection={(inv) => {
               setInspectionInitialInvoice(inv);
               setActiveTab('inspection');
@@ -1566,7 +1569,7 @@ export default function App() {
           <nav className="flex-1 px-4 py-5 space-y-1.5 overflow-y-auto">
             <NavItem active={activeTab === 'dashboard'} onClick={goToDashboard} icon={<LayoutDashboard size={22} />} label="الرئيسية" />
             <NavItem active={activeTab === 'settings'} onClick={() => { setVaultInitialProps(null); setActiveTab('settings'); }} icon={<SettingsIcon size={22} />} label="اعدادات" />
-            <NavItem active={activeTab === 'device-intake'} onClick={() => { setVaultInitialProps(null); setActiveTab('device-intake'); }} icon={<ArrowDownToLine size={22} />} label="دخول أجهزة" />
+            <NavItem active={activeTab === 'device-intake'} onClick={() => { setVaultInitialProps(null); setDeviceIntakeInitialSubView('hub'); setActiveTab('device-intake'); }} icon={<ArrowDownToLine size={22} />} label="دخول أجهزة" />
             <NavItem active={activeTab === 'inspection'} onClick={() => { setVaultInitialProps(null); setActiveTab('inspection'); }} icon={<ClipboardCheck size={22} />} label="فحص" />
             <NavItem active={activeTab === 'approval'} onClick={() => { setVaultInitialProps(null); setActiveTab('approval'); }} icon={<Clock size={22} />} label="الموافقة" />
             <NavItem active={activeTab === 'maintenance'} onClick={() => { setVaultInitialProps(null); setActiveTab('maintenance'); }} icon={<Wrench size={22} />} label="صيانه" />
@@ -1790,13 +1793,38 @@ export default function App() {
               {/* Keep Dashboard mounted permanently so returning to main screen is instantaneous */}
               <div className={activeTab === 'dashboard' ? 'block' : 'hidden'}>
                 <Dashboard 
+                  user={user}
                   onNavigate={(tab: any, subView?: any) => {
                     setVaultInitialProps(null);
+                    setDeviceIntakeInitialSubView('hub');
                     if (tab === 'entry-exit' && subView) {
                       setEntryExitView(subView);
                     }
                     setActiveTab(tab);
-                  }} 
+                  }}
+                  onQuickNavigate={(target: QuickJumpTarget) => {
+                    if (target.tab === 'alerts') {
+                      setShowAllAlertsModal(true);
+                      return;
+                    }
+                    setVaultInitialProps(null);
+                    setInspectionInitialInvoice(null);
+                    setDeviceIntakeInitialSubView(target.tab === 'device-intake' && target.subView === 'entry' ? 'entry' : 'hub');
+
+                    if (target.tab === 'other-services') {
+                      localStorage.setItem('otherServicesTab', target.otherServicesTab || 'hub');
+                    }
+                    if (target.tab === 'vault') {
+                      setVaultInitialProps({
+                        segment: target.vaultSegment || 'dashboard',
+                        showAddModal: Boolean(target.vaultShowAddModal)
+                      });
+                    }
+                    if (target.tab === 'device-movement') {
+                      setMovementView('hub');
+                    }
+                    setActiveTab(target.tab);
+                  }}
                   shopName={shopConfig?.shopName} 
                   fiscalYear={shopConfig?.fiscalYear} 
                   activeAlertsCount={activeAlerts.length} 
@@ -1818,7 +1846,7 @@ export default function App() {
             <div className="flex-1 flex items-center justify-around min-w-0">
               <MobileNavItem 
                 active={activeTab === 'device-intake'} 
-                onClick={() => setActiveTab('device-intake')} 
+                onClick={() => { setDeviceIntakeInitialSubView('hub'); setActiveTab('device-intake'); }} 
                 icon={<ArrowDownToLine size={20} />} 
                 label="دخول أجهزة"
                 colorClass="text-orange-600 dark:text-orange-400"
