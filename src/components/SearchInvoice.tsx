@@ -1461,10 +1461,10 @@ export default function SearchInvoice({ onBack, user }: { onBack?: () => void, u
                     <Search className="absolute right-4 top-1/2 -translate-y-1/2 text-gray-500" size={18} />
                     <input 
                       type="text" 
-                      placeholder="أدخل رقم سند الصرف أو القبض (مثال: 1001)"
+                      placeholder="أدخل رقم السند أو اسم العميل..."
                       value={voucherSearchTerm}
                       onChange={(e) => {
-                        setVoucherSearchTerm(e.target.value.replace(/[^0-9]/g, '')); // only numbers
+                        setVoucherSearchTerm(e.target.value);
                         setShowVoucherDropdown(true);
                       }}
                       onKeyDown={(e) => {
