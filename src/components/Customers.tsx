@@ -847,10 +847,13 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
 
+  const normalizeAlef = (text: string) => text.replace(/[أإآٱ]/g, 'ا').toLowerCase();
+
   // Filtered and sorted list of all customers
   const getProcessedCustomers = () => {
+    const normalizedSearch = normalizeAlef(search || '');
     let list = customers.filter(c => 
-      (c.name || '').toLowerCase().includes((search || '').toLowerCase()) ||
+      normalizeAlef(c.name || '').includes(normalizedSearch) ||
       (c.phone1 && c.phone1.includes(search || '')) || (c.phone2 && c.phone2.includes(search || ''))
     );
     
@@ -2419,7 +2422,7 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
 
         const filteredInvs = allInvs.filter(inv => {
           if (!logSearch) return true;
-          const s = logSearch.toLowerCase();
+          const s = normalizeAlef(logSearch);
           
           const formattedDateStr = inv.createdAt 
             ? (function(){
@@ -2430,12 +2433,12 @@ export default function Customers({ user, shopConfig, onBack }: { user: SystemUs
 
           const invItems = items.filter(it => it.invoiceNumber === inv.invoiceNumber);
           const deviceMatches = invItems.some(it => 
-            String(it.deviceName || '').toLowerCase().includes(s) || 
-            String(it.serialNumber || '').toLowerCase().includes(s)
+            normalizeAlef(String(it.deviceName || '')).includes(s) || 
+            normalizeAlef(String(it.serialNumber || '')).includes(s)
           );
 
           return (
-            String(inv.invoiceNumber || '').toLowerCase().includes(s) ||
+            normalizeAlef(String(inv.invoiceNumber || '')).includes(s) ||
             formattedDateStr.includes(s) ||
             deviceMatches
           );

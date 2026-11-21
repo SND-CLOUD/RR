@@ -546,20 +546,25 @@ export default function Dashboard({
     ].filter(item => item.isAllowed);
   }, [user, hasPermission]);
 
-  // Case-sensitive flexible matching: matches any character anywhere in any word
+  const normalizeQuickJumpAlef = (text: string) => text.replace(/[أإآٱ]/g, 'ا');
+
+  // Case-sensitive flexible matching (with unified Arabic Alef forms): matches any character anywhere in any word
   const filteredQuickJumpScreens = useMemo(() => {
     if (quickJumpQuery.length === 0) return [];
+    const normalizedQuery = normalizeQuickJumpAlef(quickJumpQuery);
     const matches = quickJumpScreens.filter(item =>
-      item.label.includes(quickJumpQuery) ||
-      item.category.includes(quickJumpQuery) ||
-      item.keywords.some(kw => kw.includes(quickJumpQuery))
+      normalizeQuickJumpAlef(item.label).includes(normalizedQuery) ||
+      normalizeQuickJumpAlef(item.category).includes(normalizedQuery) ||
+      item.keywords.some(kw => normalizeQuickJumpAlef(kw).includes(normalizedQuery))
     );
     return matches.sort((a, b) => {
-      const aStarts = a.label.startsWith(quickJumpQuery) ? 0 : 1;
-      const bStarts = b.label.startsWith(quickJumpQuery) ? 0 : 1;
+      const aNormLabel = normalizeQuickJumpAlef(a.label);
+      const bNormLabel = normalizeQuickJumpAlef(b.label);
+      const aStarts = aNormLabel.startsWith(normalizedQuery) ? 0 : 1;
+      const bStarts = bNormLabel.startsWith(normalizedQuery) ? 0 : 1;
       if (aStarts !== bStarts) return aStarts - bStarts;
-      const aInLabel = a.label.includes(quickJumpQuery) ? 0 : 1;
-      const bInLabel = b.label.includes(quickJumpQuery) ? 0 : 1;
+      const aInLabel = aNormLabel.includes(normalizedQuery) ? 0 : 1;
+      const bInLabel = bNormLabel.includes(normalizedQuery) ? 0 : 1;
       return aInLabel - bInLabel;
     });
   }, [quickJumpQuery, quickJumpScreens]);
@@ -616,15 +621,16 @@ export default function Dashboard({
 
   const renderHighlightedLabel = (label: string, queryStr: string) => {
     if (!queryStr) return label;
-    const idx = label.indexOf(queryStr);
+    const normalizedQuery = normalizeQuickJumpAlef(queryStr);
+    const idx = normalizeQuickJumpAlef(label).indexOf(normalizedQuery);
     if (idx === -1) return label;
     return (
       <>
         {label.slice(0, idx)}
         <span className="text-orange-600 dark:text-orange-400 underline decoration-orange-500/40 underline-offset-2">
-          {label.slice(idx, idx + queryStr.length)}
+          {label.slice(idx, idx + normalizedQuery.length)}
         </span>
-        {label.slice(idx + queryStr.length)}
+        {label.slice(idx + normalizedQuery.length)}
       </>
     );
   };

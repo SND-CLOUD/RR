@@ -18,6 +18,13 @@ import * as htmlToImage from 'html-to-image';
 import { sanitizeDocumentStyles, sanitizeElementInlineStyles, cleanOklchInStyleText } from '../../lib/html2canvasHelper';
 import { generateOptimizedPdfFromElement, downloadPdfBlob } from '../../lib/pdfHelper';
 import { localDb } from '../../lib/local-db';
+import {
+  normalizePartText,
+  cleanDisplayText,
+  sanitizePartDocId,
+  isNonBatchStock,
+  findMatchingStockCandidates
+} from '../../lib/partsNormalization';
 
 export default function Maintenance({ user, onBack, initialInvoice }: { user: User, onBack: () => void, initialInvoice?: Invoice | null }) {
   const { t } = useTranslation();
@@ -460,51 +467,109 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
       }
 
       // Deduct electronic parts from shop_parts_inventory for repaired devices
+      // Track live virtual balances so multiple rows/parts in one maintenance batch allocate across positive rows sequentially
+      const virtualStockMap = new Map<string, { qty: number; used: number; stock: ShopPartItem }>();
+      shopPartsList.forEach(s => {
+        if (s.id) {
+          virtualStockMap.set(s.id, {
+            qty: Number(s.quantity || 0),
+            used: Number(s.usedQuantity || 0),
+            stock: s
+          });
+        }
+      });
+      const modifiedStockIds = new Set<string>();
+      const newNegativeStocksByKey = new Map<string, { ref: any; data: ShopPartItem }>();
+
       for (const row of actionItems) {
         if (!row.id || Number(row.count) <= 0 || row.outcome !== 'repaired') continue;
         const parts = (row as any).partsUsed || [];
         for (const p of parts) {
           if (p.isScrap) continue; // Scrap parts are NOT deducted and cost 0
           const partQty = Number(p.quantity) || 1;
-          const cleanName = (p.partName || '').trim();
+          const cleanName = cleanDisplayText(p.partName);
           if (!cleanName) continue;
+          const normKey = normalizePartText(cleanName);
+          const resolvedPartId = p.partId || sanitizePartDocId(cleanName);
 
-          const existingStock = shopPartsList.find(s => 
-            (s.partId && s.partId === p.partId) ||
-            s.name.trim().toLowerCase() === cleanName.toLowerCase() ||
-            s.id === p.partId
-          );
+          // Gather all matching stock rows sorted with live positive qty & non-batch preferred
+          const liveStocks = Array.from(virtualStockMap.values()).map(v => ({
+            ...v.stock,
+            quantity: v.qty,
+            usedQuantity: v.used
+          }));
+          const candidates = findMatchingStockCandidates(liveStocks, {
+            partId: resolvedPartId,
+            partName: cleanName
+          });
 
-          if (existingStock && existingStock.id) {
-            const currentQty = Number(existingStock.quantity) || 0;
-            const newQty = currentQty - partQty; // allows negative stock!
-            const newUsed = (Number(existingStock.usedQuantity) || 0) + partQty;
-            batch.update(doc(db, 'shop_parts_inventory', existingStock.id), {
-              quantity: newQty,
-              usedQuantity: newUsed,
-              updatedAt: serverTimestamp()
-            });
+          if (candidates.length > 0) {
+            let remainingToDeduct = partQty;
+
+            // Step A: Consume positive stock rows sequentially first (e.g. Row 1 then Row 2)
+            for (const cand of candidates) {
+              if (remainingToDeduct <= 0) break;
+              const entry = virtualStockMap.get(cand.id!);
+              if (!entry || entry.qty <= 0) continue;
+
+              const take = Math.min(entry.qty, remainingToDeduct);
+              entry.qty -= take;
+              entry.used += take;
+              modifiedStockIds.add(cand.id!);
+              remainingToDeduct -= take;
+            }
+
+            // Step B: If deficit still remains, apply negative balance ONLY to the primary non-batch candidate (or first candidate)
+            if (remainingToDeduct > 0) {
+              const primaryCand = candidates.find(c => isNonBatchStock(c)) || candidates[0];
+              const entry = virtualStockMap.get(primaryCand.id!);
+              if (entry) {
+                entry.qty -= remainingToDeduct;
+                entry.used += remainingToDeduct;
+                modifiedStockIds.add(primaryCand.id!);
+              }
+            }
           } else {
-            // Negative stock item
-            const newStockRef = doc(collection(db, 'shop_parts_inventory'));
-            const newStockItem: ShopPartItem = {
-              id: newStockRef.id,
-              partId: p.partId || cleanName.replace(/[\/\\]/g, '_'),
-              name: cleanName,
-              itemType: 'electronic_part',
-              groupId: p.groupId || '',
-              groupName: p.groupName || 'عام',
-              category: p.groupName || 'عام',
-              quantity: 0 - partQty,
-              usedQuantity: partQty,
-              unitCost: Number(p.unitCost) || 0,
-              salePrice: Number(p.unitSalePrice) || 0,
-              createdAt: serverTimestamp(),
-              updatedAt: serverTimestamp()
-            };
-            batch.set(newStockRef, newStockItem);
+            // Check if a negative placeholder was already queued in this same maintenance submission
+            const existingNewNeg = newNegativeStocksByKey.get(normKey);
+            if (existingNewNeg) {
+              existingNewNeg.data.quantity -= partQty;
+              existingNewNeg.data.usedQuantity = (existingNewNeg.data.usedQuantity || 0) + partQty;
+            } else {
+              const newStockRef = doc(collection(db, 'shop_parts_inventory'));
+              const newStockItem: ShopPartItem = {
+                id: newStockRef.id,
+                partId: resolvedPartId,
+                name: cleanName,
+                itemType: 'electronic_part',
+                groupId: p.groupId || '',
+                groupName: cleanDisplayText(p.groupName) || 'عام',
+                category: cleanDisplayText(p.groupName) || 'عام',
+                quantity: 0 - partQty,
+                usedQuantity: partQty,
+                unitCost: Number(p.unitCost) || 0,
+                salePrice: Number(p.unitSalePrice) || 0,
+                createdAt: serverTimestamp(),
+                updatedAt: serverTimestamp()
+              };
+              newNegativeStocksByKey.set(normKey, { ref: newStockRef, data: newStockItem });
+            }
           }
         }
+      }
+
+      for (const stockId of modifiedStockIds) {
+        const entry = virtualStockMap.get(stockId);
+        if (entry) {
+          batch.update(doc(db, 'shop_parts_inventory', stockId), {
+            quantity: entry.qty,
+            usedQuantity: entry.used,
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+      for (const negEntry of newNegativeStocksByKey.values()) {
+        batch.set(negEntry.ref, negEntry.data);
       }
       
       // Calculate final statuses of all items in this invoice

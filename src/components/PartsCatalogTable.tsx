@@ -8,6 +8,13 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { useBackHandler } from '../hooks/useBackHandler';
+import {
+  normalizePartText,
+  cleanDisplayText,
+  sanitizePartDocId,
+  findMatchingGroup,
+  findMatchingCatalogPart
+} from '../lib/partsNormalization';
 
 // Initial pre-loaded dataset from the user's manual spreadsheet screenshot
 const INITIAL_SPREADSHEET_DATA: { group: string; parts: { code: string; cost: number; sale: number }[] }[] = [
@@ -275,9 +282,17 @@ export default function PartsCatalogTable() {
 
     setIsSaving(true);
     try {
-      const cleanName = groupNameInput.trim();
-      const docId = editingGroupId || cleanName.replace(/[\/\\]/g, '_');
-      const order = editingGroupId ? (groups.find(g => g.id === editingGroupId)?.orderIndex ?? groups.length) : groups.length;
+      const cleanName = cleanDisplayText(groupNameInput);
+      const existingById = editingGroupId ? groups.find(g => g.id === editingGroupId) : undefined;
+      const existingByName = !editingGroupId ? findMatchingGroup(groups, null, cleanName) : undefined;
+      const targetGroup = existingById || existingByName;
+
+      const docId = targetGroup?.id || sanitizePartDocId(cleanName);
+      const oldGroupName = targetGroup?.name || '';
+      const oldNameNorm = normalizePartText(oldGroupName);
+      const order = targetGroup
+        ? (groups.find(g => g.id === targetGroup.id)?.orderIndex ?? groups.length)
+        : groups.length;
 
       const payload: ElectronicPartGroup = {
         id: docId,
@@ -287,23 +302,58 @@ export default function PartsCatalogTable() {
         updatedAt: serverTimestamp()
       };
 
-      if (!editingGroupId) {
+      if (!targetGroup) {
         payload.createdAt = serverTimestamp();
       }
 
       await setDoc(doc(db, 'electronic_part_groups', docId), payload, { merge: true });
 
-      // If renamed, update linked parts in parts_catalog
-      if (editingGroupId && editingGroupId !== cleanName) {
-        const linkedParts = items.filter(p => p.groupId === editingGroupId || p.groupName === editingGroupId);
-        if (linkedParts.length > 0) {
+      // Propagate canonical group name to ALL linked parts in parts_catalog and shop_parts_inventory
+      const linkedCatalogParts = items.filter(p => {
+        if (!p.id) return false;
+        if (p.groupId === docId) return true;
+        if (oldNameNorm) {
+          if (normalizePartText(p.groupName) === oldNameNorm) return true;
+          if (normalizePartText(p.category) === oldNameNorm) return true;
+          if (normalizePartText(p.groupId) === oldNameNorm) return true;
+        }
+        return normalizePartText(p.groupName) === normalizePartText(cleanName);
+      });
+
+      const linkedStockParts = shopParts.filter(s => {
+        if (!s.id) return false;
+        if (s.groupId === docId) return true;
+        if (oldNameNorm) {
+          if (normalizePartText(s.groupName) === oldNameNorm) return true;
+          if (normalizePartText(s.category) === oldNameNorm) return true;
+          if (normalizePartText(s.groupId) === oldNameNorm) return true;
+        }
+        return normalizePartText(s.groupName) === normalizePartText(cleanName);
+      });
+
+      const syncTargets: Array<{ col: 'parts_catalog' | 'shop_parts_inventory'; id: string }> = [
+        ...linkedCatalogParts.map(p => ({ col: 'parts_catalog' as const, id: p.id! })),
+        ...linkedStockParts.map(s => ({ col: 'shop_parts_inventory' as const, id: s.id! }))
+      ];
+
+      if (syncTargets.length > 0) {
+        const CHUNK_SIZE = 400;
+        for (let i = 0; i < syncTargets.length; i += CHUNK_SIZE) {
           const batch = writeBatch(db);
-          linkedParts.forEach(p => {
-            const ref = doc(db, 'parts_catalog', p.id!);
-            batch.update(ref, { groupId: docId, groupName: cleanName, category: cleanName });
+          syncTargets.slice(i, i + CHUNK_SIZE).forEach(target => {
+            batch.update(doc(db, target.col, target.id), {
+              groupId: docId,
+              groupName: cleanName,
+              category: cleanName,
+              updatedAt: serverTimestamp()
+            });
           });
           await batch.commit();
         }
+      }
+
+      if (oldNameNorm && normalizePartText(selectedGroupFilter) === oldNameNorm) {
+        setSelectedGroupFilter(cleanName);
       }
 
       setShowGroupModal(false);
@@ -357,17 +407,32 @@ export default function PartsCatalogTable() {
 
     setIsSaving(true);
     try {
-      const cleanName = partName.trim();
-      const docId = editingPartId || cleanName.replace(/[\/\\]/g, '_');
-      const order = editingPartId ? (items.find(i => i.id === editingPartId)?.orderIndex ?? items.length) : items.length;
+      const cleanName = cleanDisplayText(partName);
+      const canonicalGroup = partItemType === 'electronic_part'
+        ? findMatchingGroup(groups, partGroupId, partGroupName)
+        : undefined;
+      const resolvedGroupId = canonicalGroup?.id || (partItemType === 'electronic_part' ? (partGroupId || partGroupName || '') : '');
+      const resolvedGroupName = cleanDisplayText(canonicalGroup?.name || partGroupName || (partItemType === 'electronic_part' ? partCategory : '') || '');
+
+      const existingById = editingPartId ? items.find(i => i.id === editingPartId) : undefined;
+      const existingByName = !editingPartId ? findMatchingCatalogPart(items, null, cleanName, resolvedGroupId) : undefined;
+      const targetPart = existingById || existingByName;
+      const oldNameNorm = normalizePartText(targetPart?.name);
+
+      const docId = targetPart?.id || sanitizePartDocId(cleanName);
+      const order = targetPart
+        ? (items.find(i => i.id === targetPart.id)?.orderIndex ?? items.length)
+        : items.length;
+
+      const resolvedCategory = resolvedGroupName || cleanDisplayText(partCategory) || 'عام';
 
       const payload: PartCatalogItem = {
         id: docId,
         name: cleanName,
         itemType: partItemType,
-        category: partGroupName || partCategory || 'عام',
-        groupId: partGroupId || partGroupName || '',
-        groupName: partGroupName || partCategory || '',
+        category: resolvedCategory,
+        groupId: resolvedGroupId,
+        groupName: resolvedGroupName,
         orderIndex: order,
         defaultCost: partDefaultCost === '' ? 0 : Number(partDefaultCost),
         defaultSalePrice: partDefaultSalePrice === '' ? 0 : Number(partDefaultSalePrice),
@@ -375,11 +440,37 @@ export default function PartsCatalogTable() {
         updatedAt: serverTimestamp()
       };
 
-      if (!editingPartId) {
+      if (!targetPart) {
         payload.createdAt = serverTimestamp();
       }
 
       await setDoc(doc(db, 'parts_catalog', docId), payload, { merge: true });
+
+      // Sync canonical metadata to matching shop_parts_inventory rows
+      const matchingStock = shopParts.filter(s =>
+        Boolean(s.id) && (
+          s.partId === docId ||
+          s.id === docId ||
+          (oldNameNorm && normalizePartText(s.name) === oldNameNorm) ||
+          normalizePartText(s.name) === normalizePartText(cleanName)
+        )
+      );
+      if (matchingStock.length > 0) {
+        const batch = writeBatch(db);
+        matchingStock.forEach(s => {
+          batch.update(doc(db, 'shop_parts_inventory', s.id!), {
+            partId: docId,
+            name: cleanName,
+            itemType: partItemType,
+            groupId: resolvedGroupId,
+            groupName: resolvedGroupName,
+            category: resolvedCategory,
+            updatedAt: serverTimestamp()
+          });
+        });
+        await batch.commit();
+      }
+
       setShowPartModal(false);
       setNotification({ text: `تم حفظ الصنف "${cleanName}" بنجاح`, type: 'success' });
       setTimeout(() => setNotification(null), 3000);
@@ -479,17 +570,22 @@ export default function PartsCatalogTable() {
   const filteredElectronics = electronicParts
     .filter(i => {
       if (selectedGroupFilter !== 'all') {
-        const matchesGroup = (i.groupId && (i.groupId === selectedGroupFilter || i.groupName === selectedGroupFilter)) ||
-                             (i.category && i.category === selectedGroupFilter);
+        const selectedNorm = normalizePartText(selectedGroupFilter);
+        const matchedGroup = findMatchingGroup(groups, selectedGroupFilter, selectedGroupFilter);
+        const matchesGroup =
+          (matchedGroup && i.groupId && i.groupId === matchedGroup.id) ||
+          normalizePartText(i.groupId) === selectedNorm ||
+          normalizePartText(i.groupName) === selectedNorm ||
+          normalizePartText(i.category) === selectedNorm;
         if (!matchesGroup) return false;
       }
       if (!search.trim()) return true;
-      const q = search.toLowerCase().trim();
+      const q = normalizePartText(search);
       return (
-        (i.name || '').toLowerCase().includes(q) ||
-        (i.groupName || '').toLowerCase().includes(q) ||
-        (i.category || '').toLowerCase().includes(q) ||
-        (i.notes || '').toLowerCase().includes(q)
+        normalizePartText(i.name).includes(q) ||
+        normalizePartText(i.groupName).includes(q) ||
+        normalizePartText(i.category).includes(q) ||
+        normalizePartText(i.notes).includes(q)
       );
     })
     .sort((a, b) => (Number(a.orderIndex) || 0) - (Number(b.orderIndex) || 0));
@@ -668,8 +764,13 @@ export default function PartsCatalogTable() {
                 جميع المجموعات ({electronicParts.length})
               </button>
               {groups.map((g, gIdx) => {
-                const count = electronicParts.filter(p => p.groupId === g.id || p.groupName === g.name || p.category === g.name).length;
-                const isSelected = selectedGroupFilter === g.name || selectedGroupFilter === g.id;
+                const gNorm = normalizePartText(g.name);
+                const count = electronicParts.filter(p =>
+                  p.groupId === g.id ||
+                  normalizePartText(p.groupName) === gNorm ||
+                  normalizePartText(p.category) === gNorm
+                ).length;
+                const isSelected = selectedGroupFilter === g.id || normalizePartText(selectedGroupFilter) === gNorm;
                 return (
                   <button
                     key={`grp-flt-${g.id || g.name || 'grp'}-${gIdx}`}
@@ -743,12 +844,14 @@ export default function PartsCatalogTable() {
                             <span className="font-mono text-sm tracking-wide text-emerald-300 font-bold">{item.name}</span>
                           </div>
                           {(() => {
-                            const stock = shopParts.find(s => 
+                            const matchingStocks = shopParts.filter(s =>
                               (s.partId && s.partId === item.id) ||
-                              s.name.trim().toLowerCase() === item.name.trim().toLowerCase() ||
-                              s.id === item.id
+                              s.id === item.id ||
+                              normalizePartText(s.name) === normalizePartText(item.name)
                             );
-                            const qty = stock ? Number(stock.quantity ?? 0) : null;
+                            const qty = matchingStocks.length > 0
+                              ? matchingStocks.reduce((acc, s) => acc + Number(s.quantity ?? 0), 0)
+                              : null;
                             if (qty !== null && qty < 0) {
                               return (
                                 <div className="mt-1 flex items-center gap-1.5 flex-wrap">

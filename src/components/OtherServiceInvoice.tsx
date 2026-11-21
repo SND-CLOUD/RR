@@ -16,6 +16,15 @@ import jsPDF from 'jspdf';
 import * as htmlToImage from 'html-to-image';
 import { sanitizeDocumentStyles, sanitizeElementInlineStyles } from '../lib/html2canvasHelper';
 import { ProviderFactory } from '../data/ProviderFactory';
+import {
+  normalizePartText,
+  cleanDisplayText,
+  sanitizePartDocId,
+  isNonBatchStock,
+  findMatchingGroup,
+  findMatchingCatalogPart,
+  findMatchingStockCandidates
+} from '../lib/partsNormalization';
 
 type ServiceType = 'hub' | 'software' | 'maintenance' | 'parts' | 'purchase' | 'catalog' | 'stock';
 
@@ -90,10 +99,10 @@ export default function OtherServiceInvoice({
   // Batch Purchase Fields
   const [batchName, setBatchName] = useState('');
   const [totalBatchCost, setTotalBatchCost] = useState<number | ''>('');
-  const [purchaseItems, setPurchaseItems] = useState<{ id: string; name: string; category: string; itemType?: string; groupId?: string; groupName?: string; quantity: number; unitCost: number; salePrice: number; notes: string }[]>([]);
+  const [purchaseItems, setPurchaseItems] = useState<{ id: string; partId?: string; name: string; category: string; itemType?: string; groupId?: string; groupName?: string; quantity: number; unitCost: number; salePrice: number; notes: string }[]>([]);
   
   // Current Item for Purchase
-  const initialPurchaseItem = { id: '', name: '', category: 'قطع غيار وملحقات', itemType: 'accessory_part', groupId: '', groupName: '', quantity: 1, unitCost: 0, salePrice: 0, notes: 'سليم' };
+  const initialPurchaseItem = { id: '', partId: '', name: '', category: 'قطع غيار وملحقات', itemType: 'accessory_part', groupId: '', groupName: '', quantity: 1, unitCost: 0, salePrice: 0, notes: 'سليم' };
   const [currentPurchaseItem, setCurrentPurchaseItem] = useState(initialPurchaseItem);
   const [editingPurchaseIdx, setEditingPurchaseIdx] = useState<number | null>(null);
 
@@ -308,8 +317,9 @@ export default function OtherServiceInvoice({
     }
   }, [customer.name, supplierName, selectedCustomerId, existingCustomers]);
 
-  // Load shop parts stock and disassembly batches for live matching & inventory deductions
+  // Load shop parts stock, parts catalog, and disassembly batches for live matching & inventory deductions
   const [shopPartsList, setShopPartsList] = useState<any[]>([]);
+  const [partsCatalogList, setPartsCatalogList] = useState<any[]>([]);
   const [disassemblyBatchesList, setDisassemblyBatchesList] = useState<any[]>([]);
 
   useEffect(() => {
@@ -317,12 +327,17 @@ export default function OtherServiceInvoice({
       const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setShopPartsList(items);
     });
+    const unsubCatalog = onSnapshot(collection(db, 'parts_catalog'), (snapshot) => {
+      const cList = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      setPartsCatalogList(cList);
+    });
     const unsubBatches = onSnapshot(collection(db, 'disassembly_batches'), (snapshot) => {
       const bList = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
       setDisassemblyBatchesList(bList);
     });
     return () => {
       unsubStock();
+      unsubCatalog();
       unsubBatches();
     };
   }, []);
@@ -340,20 +355,25 @@ export default function OtherServiceInvoice({
   const handleQuickAddGroup = async () => {
     if (!quickGroupName.trim()) return;
     try {
-      const cleanName = quickGroupName.trim();
-      const docId = cleanName.replace(/[\/\\]/g, '_');
-      await setDoc(doc(db, 'electronic_part_groups', docId), {
-        id: docId,
-        name: cleanName,
-        orderIndex: electronicGroups.length,
-        createdAt: serverTimestamp(),
-        updatedAt: serverTimestamp()
-      }, { merge: true });
+      const cleanName = cleanDisplayText(quickGroupName);
+      const existing = findMatchingGroup(electronicGroups, null, cleanName);
+      const docId = existing?.id || sanitizePartDocId(cleanName);
+      const resolvedName = existing ? cleanDisplayText(existing.name) : cleanName;
+
+      if (!existing) {
+        await setDoc(doc(db, 'electronic_part_groups', docId), {
+          id: docId,
+          name: resolvedName,
+          orderIndex: electronicGroups.length,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp()
+        }, { merge: true });
+      }
       setCurrentPurchaseItem(prev => ({
         ...prev,
         groupId: docId,
-        groupName: cleanName,
-        category: cleanName
+        groupName: resolvedName,
+        category: resolvedName
       }));
       setQuickGroupName('');
       setShowQuickAddGroupModal(false);
@@ -387,12 +407,13 @@ export default function OtherServiceInvoice({
     let itemToSave = { ...currentItem };
     // Auto-resolve stock item and batch details if missing or typed manually
     if (activeTab === 'parts') {
-      const trimmedName = itemToSave.name.trim().toLowerCase();
       let matchedStock = itemToSave.partInventoryId ? shopPartsList.find(s => s.id === itemToSave.partInventoryId) : null;
       if (!matchedStock) {
-        matchedStock = (itemToSave.batchId ? shopPartsList.find(s => s.batchId === itemToSave.batchId && s.name.trim().toLowerCase() === trimmedName) : null)
-                    || shopPartsList.find(s => s.name.trim().toLowerCase() === trimmedName && (s.quantity || 0) > 0)
-                    || shopPartsList.find(s => s.name.trim().toLowerCase() === trimmedName);
+        const candidates = findMatchingStockCandidates(shopPartsList, {
+          partName: itemToSave.name,
+          batchId: itemToSave.batchId || undefined
+        });
+        matchedStock = candidates[0] || null;
       }
       if (matchedStock) {
         itemToSave.partInventoryId = matchedStock.id;
@@ -623,51 +644,154 @@ export default function OtherServiceInvoice({
       }
 
       // 4. Add/Update items in parts_catalog & shop_parts_inventory
+      // Accumulate updates per stock record so multiple lines for the same part in one invoice merge cleanly.
+      const pendingExistingStockUpdates = new Map<string, { addedQty: number; updates: Record<string, any> }>();
+      const pendingNewNonBatchStock = new Map<string, { docRef: any; payload: any }>();
+
       for (const item of purchaseItems) {
         const isElectronic = purchaseType === 'electronic' || item.itemType === 'electronic_part';
-        const cleanName = item.name.trim();
-        const catDocId = cleanName.replace(/[\/\\]/g, '_');
+        const cleanName = cleanDisplayText(item.name);
+        const normName = normalizePartText(cleanName);
 
-        // Master Catalog update
-        batchOp.set(doc(db, 'parts_catalog', catDocId), {
-          id: cleanName,
-          name: cleanName,
+        // Resolve canonical group
+        const matchedGroup = isElectronic
+          ? findMatchingGroup(electronicGroups, item.groupId, item.groupName || item.category)
+          : undefined;
+        const resolvedGroupId = isElectronic ? (matchedGroup?.id || item.groupId || '') : '';
+        const resolvedGroupName = isElectronic
+          ? cleanDisplayText(matchedGroup?.name || item.groupName || item.category || '')
+          : '';
+        const resolvedCategory = resolvedGroupName || cleanDisplayText(item.category) || (isElectronic ? 'قطع غيار إلكترونية' : 'قطع غيار وملحقات');
+
+        // Resolve canonical catalog record (reuse existing catalog entry instead of duplicating)
+        const existingCat = findMatchingCatalogPart(partsCatalogList, item.partId, cleanName, resolvedGroupId);
+        const catDocId = existingCat?.id || sanitizePartDocId(cleanName);
+
+        const catalogPayload: any = {
+          id: catDocId,
+          name: existingCat?.name ? cleanDisplayText(existingCat.name) : cleanName,
           itemType: isElectronic ? 'electronic_part' : 'accessory_part',
-          category: item.groupName || item.category || (isElectronic ? 'قطع غيار إلكترونية' : 'قطع غيار وملحقات'),
-          groupId: item.groupId || '',
-          groupName: item.groupName || item.category || '',
-          defaultCost: Number(item.unitCost || 0),
-          defaultSalePrice: Number(item.salePrice || 0),
-          notes: item.notes || '',
-          createdAt: serverTimestamp(),
+          category: resolvedCategory,
+          groupId: resolvedGroupId,
+          groupName: resolvedGroupName,
+          defaultCost: Number(item.unitCost || 0) || Number(existingCat?.defaultCost || 0),
+          defaultSalePrice: Number(item.salePrice || 0) || Number(existingCat?.defaultSalePrice || 0),
+          notes: item.notes || existingCat?.notes || '',
           updatedAt: serverTimestamp()
-        }, { merge: true });
+        };
+        if (!existingCat) {
+          catalogPayload.createdAt = serverTimestamp();
+        }
+        batchOp.set(doc(db, 'parts_catalog', catDocId), catalogPayload, { merge: true });
 
         // Shop Parts Inventory entry
-        const invDocRef = doc(collection(db, 'shop_parts_inventory'));
-        batchOp.set(invDocRef, {
-          id: invDocRef.id,
-          name: item.name.trim(),
-          category: item.groupName || item.category || (isElectronic ? 'قطع غيار إلكترونية' : 'قطع غيار وملحقات'),
-          itemType: isElectronic ? 'electronic_part' : 'accessory_part',
-          groupId: item.groupId || '',
-          groupName: item.groupName || item.category || '',
-          quantity: item.quantity,
-          unitCost: Number(item.unitCost || 0),
-          salePrice: Number(item.salePrice || 0),
-          notes: item.notes || '',
-          isDisassemblyBatch: purchaseType === 'batch',
-          batchId: purchaseType === 'batch' ? batchId : '',
-          batchName: purchaseType === 'batch' ? batchName.trim() : '',
-          batchTotalCost: assignedBatchTotalCost,
-          supplierName: supplierName.trim(),
-          purchaseInvoiceId: purInvoiceRef.id,
-          purchaseInvoiceNumber: assignedPurchaseNumber,
-          currency,
-          purchaseDate: serverTimestamp(),
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp()
-        });
+        let invDocId = '';
+        const addedQty = Number(item.quantity || 1);
+
+        if (purchaseType === 'batch') {
+          // Batch disassembly items remain linked to their batch
+          const invDocRef = doc(collection(db, 'shop_parts_inventory'));
+          invDocId = invDocRef.id;
+          batchOp.set(invDocRef, {
+            id: invDocRef.id,
+            partId: catDocId,
+            name: cleanName,
+            category: resolvedCategory,
+            itemType: isElectronic ? 'electronic_part' : 'accessory_part',
+            groupId: resolvedGroupId,
+            groupName: resolvedGroupName,
+            quantity: addedQty,
+            usedQuantity: 0,
+            unitCost: Number(item.unitCost || 0),
+            salePrice: Number(item.salePrice || 0),
+            notes: item.notes || '',
+            isDisassemblyBatch: true,
+            batchId: batchId,
+            batchName: batchName.trim(),
+            batchTotalCost: assignedBatchTotalCost,
+            supplierName: supplierName.trim(),
+            purchaseInvoiceId: purInvoiceRef.id,
+            purchaseInvoiceNumber: assignedPurchaseNumber,
+            currency,
+            purchaseDate: serverTimestamp(),
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          });
+        } else {
+          // Non-batch purchase: reuse existing non-batch stock record if it exists!
+          const pendingNew = pendingNewNonBatchStock.get(normName);
+          if (pendingNew) {
+            invDocId = pendingNew.docRef.id;
+            pendingNew.payload.quantity += addedQty;
+            if (Number(item.unitCost || 0) > 0) pendingNew.payload.unitCost = Number(item.unitCost);
+            if (Number(item.salePrice || 0) > 0) pendingNew.payload.salePrice = Number(item.salePrice);
+          } else {
+            const matchingNonBatch = findMatchingStockCandidates(shopPartsList, {
+              partId: catDocId,
+              partName: cleanName,
+              nonBatchOnly: true
+            });
+            const primaryExisting = matchingNonBatch[0];
+
+            if (primaryExisting && primaryExisting.id) {
+              invDocId = primaryExisting.id;
+              const prevEntry = pendingExistingStockUpdates.get(invDocId);
+              const accQty = (prevEntry?.addedQty || 0) + addedQty;
+              const updateFields: Record<string, any> = {
+                partId: catDocId,
+                name: cleanName,
+                category: resolvedCategory,
+                itemType: isElectronic ? 'electronic_part' : 'accessory_part',
+                groupId: resolvedGroupId,
+                groupName: resolvedGroupName,
+                supplierName: supplierName.trim(),
+                purchaseInvoiceId: purInvoiceRef.id,
+                purchaseInvoiceNumber: assignedPurchaseNumber,
+                currency,
+                purchaseDate: serverTimestamp(),
+                updatedAt: serverTimestamp()
+              };
+              if (Number(item.unitCost || 0) > 0) updateFields.unitCost = Number(item.unitCost);
+              if (Number(item.salePrice || 0) > 0) updateFields.salePrice = Number(item.salePrice);
+              if (item.notes) updateFields.notes = item.notes;
+              pendingExistingStockUpdates.set(invDocId, {
+                addedQty: accQty,
+                updates: updateFields
+              });
+            } else {
+              const invDocRef = doc(collection(db, 'shop_parts_inventory'));
+              invDocId = invDocRef.id;
+              pendingNewNonBatchStock.set(normName, {
+                docRef: invDocRef,
+                payload: {
+                  id: invDocRef.id,
+                  partId: catDocId,
+                  name: cleanName,
+                  category: resolvedCategory,
+                  itemType: isElectronic ? 'electronic_part' : 'accessory_part',
+                  groupId: resolvedGroupId,
+                  groupName: resolvedGroupName,
+                  quantity: addedQty,
+                  usedQuantity: 0,
+                  unitCost: Number(item.unitCost || 0),
+                  salePrice: Number(item.salePrice || 0),
+                  notes: item.notes || '',
+                  isDisassemblyBatch: false,
+                  batchId: '',
+                  batchName: '',
+                  batchTotalCost: 0,
+                  supplierName: supplierName.trim(),
+                  purchaseInvoiceId: purInvoiceRef.id,
+                  purchaseInvoiceNumber: assignedPurchaseNumber,
+                  currency,
+                  purchaseDate: serverTimestamp(),
+                  createdAt: serverTimestamp(),
+                  updatedAt: serverTimestamp()
+                }
+              });
+            }
+          }
+        }
 
         // Store invoice items as well so they appear in statements/logs
         const invoiceItemRef = doc(collection(db, 'invoice_items'));
@@ -678,16 +802,17 @@ export default function OtherServiceInvoice({
           invoiceNumber: assignedPurchaseNumber,
           customerId: finalCustomerId,
           customerName: supplierName.trim(),
-          name: item.name.trim(),
-          deviceType: item.name.trim(),
-          deviceName: item.name.trim(),
-          quantity: item.quantity,
-          cost: item.quantity * Number(item.unitCost || 0),
+          name: cleanName,
+          deviceType: cleanName,
+          deviceName: cleanName,
+          quantity: addedQty,
+          cost: addedQty * Number(item.unitCost || 0),
           unitCost: Number(item.unitCost || 0),
           status: 'delivered',
           source: 'purchase',
           isPurchase: 1,
-          partInventoryId: invDocRef.id,
+          partInventoryId: invDocId,
+          partId: catDocId,
           batchId: purchaseType === 'batch' ? batchId : '',
           batchName: purchaseType === 'batch' ? batchName.trim() : '',
           deviceNotes: item.notes || '',
@@ -695,6 +820,17 @@ export default function OtherServiceInvoice({
           createdAt: serverTimestamp(),
           createdBy: user?.name || 'System'
         });
+      }
+
+      // Commit accumulated non-batch stock updates & creations
+      for (const [stockId, entry] of pendingExistingStockUpdates.entries()) {
+        batchOp.update(doc(db, 'shop_parts_inventory', stockId), {
+          ...entry.updates,
+          quantity: increment(entry.addedQty)
+        });
+      }
+      for (const entry of pendingNewNonBatchStock.values()) {
+        batchOp.set(entry.docRef, entry.payload);
       }
 
       // 5. Disburse Funds from Vault
@@ -1183,28 +1319,42 @@ export default function OtherServiceInvoice({
       batch.set(invoiceRef, invoiceDataToSave);
 
       // Save Invoice Items & Update Disassembly Batches / Stock
+      // Track virtual remaining quantities and accumulated deductions across all items in this sale invoice
+      const saleVirtualQty = new Map<string, number>();
+      shopPartsList.forEach(s => {
+        if (s.id) saleVirtualQty.set(s.id, Number(s.quantity || 0));
+      });
+      const saleStockDeductions = new Map<string, number>();
+
       for (const item of items) {
         let finalPartInventoryId = item.partInventoryId || '';
         let finalBatchId = item.batchId || '';
         let finalBatchName = item.batchName || '';
 
-        // Verify stock item against active stock to prevent creating phantom negative records
-        let stockItem = finalPartInventoryId ? shopPartsList.find(s => s.id === finalPartInventoryId) : null;
-        if (!stockItem && item.name) {
-          const trimmedName = item.name.trim().toLowerCase();
-          stockItem = (finalBatchId ? shopPartsList.find(s => s.batchId === finalBatchId && s.name.trim().toLowerCase() === trimmedName) : null)
-                   || shopPartsList.find(s => s.name.trim().toLowerCase() === trimmedName && (s.quantity || 0) > 0)
-                   || shopPartsList.find(s => s.name.trim().toLowerCase() === trimmedName);
+        const matchedCandidates: any[] = [];
+        const directStock = finalPartInventoryId ? shopPartsList.find(s => s.id === finalPartInventoryId) : null;
+        if (directStock) matchedCandidates.push(directStock);
+
+        if (item.name) {
+          const otherMatches = findMatchingStockCandidates(shopPartsList, {
+            partName: item.name,
+            batchId: finalBatchId || undefined
+          });
+          for (const cand of otherMatches) {
+            if (!matchedCandidates.some(m => m.id === cand.id)) {
+              matchedCandidates.push(cand);
+            }
+          }
         }
 
-        if (stockItem) {
-          finalPartInventoryId = stockItem.id;
-          if (!finalBatchId && stockItem.batchId) {
-            finalBatchId = stockItem.batchId;
-            finalBatchName = stockItem.batchName || '';
+        const primaryStock = matchedCandidates[0] || null;
+        if (primaryStock) {
+          finalPartInventoryId = primaryStock.id;
+          if (!finalBatchId && primaryStock.batchId) {
+            finalBatchId = primaryStock.batchId;
+            finalBatchName = primaryStock.batchName || '';
           }
         } else {
-          // If no matching stock item in shop_parts_inventory, clear ID so it doesn't corrupt database with ghost records
           finalPartInventoryId = '';
         }
 
@@ -1231,14 +1381,24 @@ export default function OtherServiceInvoice({
           createdBy: user?.name || 'System'
         });
 
-        // Deduct quantity from shop stock ONLY if verified stock item exists
-        if (finalPartInventoryId) {
-          const invRef = doc(db, 'shop_parts_inventory', finalPartInventoryId);
-          batch.update(invRef, {
-            quantity: increment(-item.quantity),
-            usedQuantity: increment(item.quantity),
-            updatedAt: serverTimestamp()
-          });
+        // Deduct sequentially across positive matched stock rows before dipping negative on primary row
+        if (matchedCandidates.length > 0) {
+          let remainingToDeduct = Number(item.quantity || 1);
+          for (const cand of matchedCandidates) {
+            if (remainingToDeduct <= 0) break;
+            const avail = saleVirtualQty.get(cand.id) ?? 0;
+            if (avail > 0) {
+              const take = Math.min(avail, remainingToDeduct);
+              saleVirtualQty.set(cand.id, avail - take);
+              saleStockDeductions.set(cand.id, (saleStockDeductions.get(cand.id) || 0) + take);
+              remainingToDeduct -= take;
+            }
+          }
+          if (remainingToDeduct > 0 && finalPartInventoryId) {
+            const avail = saleVirtualQty.get(finalPartInventoryId) ?? 0;
+            saleVirtualQty.set(finalPartInventoryId, avail - remainingToDeduct);
+            saleStockDeductions.set(finalPartInventoryId, (saleStockDeductions.get(finalPartInventoryId) || 0) + remainingToDeduct);
+          }
         }
 
         // Batch Cost Recovery calculation
@@ -1257,6 +1417,17 @@ export default function OtherServiceInvoice({
           batch.update(batchRef, {
             recoveredAmount: increment(saleRevenue),
             isCostFullyRecovered: isFullyRecovered ? 1 : 0,
+            updatedAt: serverTimestamp()
+          });
+        }
+      }
+
+      // Apply accumulated sale deductions per stock doc
+      for (const [stockId, deductQty] of saleStockDeductions.entries()) {
+        if (deductQty > 0) {
+          batch.update(doc(db, 'shop_parts_inventory', stockId), {
+            quantity: increment(-deductQty),
+            usedQuantity: increment(deductQty),
             updatedAt: serverTimestamp()
           });
         }
@@ -1834,10 +2005,11 @@ export default function OtherServiceInvoice({
                         filterItemType={purchaseType === 'electronic' ? 'electronic_part' : (purchaseType === 'direct' ? 'accessory_part' : undefined)}
                         filterGroupId={purchaseType === 'electronic' && currentPurchaseItem.groupId ? currentPurchaseItem.groupId : undefined}
                         placeholder={purchaseType === 'electronic' && !currentPurchaseItem.groupId ? 'قم باختيار مجموعة محددة أولاً...' : (purchaseType === 'electronic' ? 'كود / اسم القطعة...' : 'اسم القطعة أو الملحق...')}
-                        onChange={(val) => setCurrentPurchaseItem(prev => ({ ...prev, name: val }))}
+                        onChange={(val) => setCurrentPurchaseItem(prev => ({ ...prev, partId: '', name: val }))}
                         onSelectPart={(part: any) => {
                           setCurrentPurchaseItem(prev => ({
                             ...prev,
+                            partId: part.partId || part.raw?.id || part.id || '',
                             name: part.name,
                             category: part.category || (part.groupName || prev.category),
                             groupId: part.groupId || prev.groupId,

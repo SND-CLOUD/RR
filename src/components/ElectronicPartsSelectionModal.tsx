@@ -2,6 +2,14 @@ import React, { useState, useEffect, useRef } from 'react';
 import { db, collection, onSnapshot, doc, setDoc, serverTimestamp } from '../firebase';
 import { ElectronicPartGroup, PartCatalogItem, ShopPartItem, DevicePartUsageItem } from '../types';
 import { Cpu, X, Plus, Edit2, Trash2, Check, ArrowRight, AlertCircle, Wrench, Package } from 'lucide-react';
+import {
+  normalizePartText,
+  cleanDisplayText,
+  sanitizePartDocId,
+  findMatchingGroup,
+  findMatchingCatalogPart,
+  findMatchingStockCandidates
+} from '../lib/partsNormalization';
 
 interface ElectronicPartsSelectionModalProps {
   isOpen: boolean;
@@ -135,17 +143,22 @@ export const ElectronicPartsSelectionModal: React.FC<ElectronicPartsSelectionMod
   };
 
   const filteredGroups = groups.filter(g => 
-    !groupNameInput.trim() || g.name.toLowerCase().includes(groupNameInput.trim().toLowerCase())
+    !groupNameInput.trim() || normalizePartText(g.name).includes(normalizePartText(groupNameInput))
   );
 
   const filteredParts = catalogItems.filter(item => {
     if (item.itemType && item.itemType !== 'electronic_part') return false;
-    if (selectedGroupId) {
-      const matchGroup = item.groupId === selectedGroupId || item.groupName === groupNameInput;
+    if (selectedGroupId || groupNameInput.trim()) {
+      const targetGroup = findMatchingGroup(groups, selectedGroupId, groupNameInput);
+      const targetGroupNorm = normalizePartText(targetGroup?.name || groupNameInput);
+      const matchGroup =
+        (targetGroup && item.groupId === targetGroup.id) ||
+        (selectedGroupId && item.groupId === selectedGroupId) ||
+        (targetGroupNorm && normalizePartText(item.groupName || item.category) === targetGroupNorm);
       if (!matchGroup) return false;
     }
     if (!partNameInput.trim()) return true;
-    return item.name.toLowerCase().includes(partNameInput.trim().toLowerCase());
+    return normalizePartText(item.name).includes(normalizePartText(partNameInput));
   });
 
   const handleSelectGroup = (g: ElectronicPartGroup) => {
@@ -167,8 +180,8 @@ export const ElectronicPartsSelectionModal: React.FC<ElectronicPartsSelectionMod
   };
 
   const handleAddOrUpdateItem = async () => {
-    const cleanGroup = groupNameInput.trim();
-    const cleanPart = partNameInput.trim();
+    const cleanGroup = cleanDisplayText(groupNameInput);
+    const cleanPart = cleanDisplayText(partNameInput);
 
     if (!cleanGroup) {
       alert('الرجاء اختيار أو كتابة اسم المجموعة الإلكترونية أولاً');
@@ -183,11 +196,12 @@ export const ElectronicPartsSelectionModal: React.FC<ElectronicPartsSelectionMod
       return;
     }
 
-    let resolvedGroupId = selectedGroupId;
-    let existingGroup = groups.find(g => g.name.trim().toLowerCase() === cleanGroup.toLowerCase() || g.id === selectedGroupId);
+    const existingGroup = findMatchingGroup(groups, selectedGroupId, cleanGroup);
+    let resolvedGroupId = existingGroup?.id || selectedGroupId || '';
+    const resolvedGroupName = existingGroup ? cleanDisplayText(existingGroup.name) : cleanGroup;
 
     if (!existingGroup) {
-      const newGroupId = `epg_${Date.now()}`;
+      const newGroupId = sanitizePartDocId(cleanGroup) || `epg_${Date.now()}`;
       resolvedGroupId = newGroupId;
       const newGroupData: ElectronicPartGroup = {
         id: newGroupId,
@@ -201,29 +215,32 @@ export const ElectronicPartsSelectionModal: React.FC<ElectronicPartsSelectionMod
       } catch (err) {
         console.error("Error creating new group on the fly:", err);
       }
-    } else {
-      resolvedGroupId = existingGroup.id;
     }
 
-    let existingCatalog = catalogItems.find(c => c.name.trim().toLowerCase() === cleanPart.toLowerCase());
+    const existingCatalog = findMatchingCatalogPart(catalogItems, null, cleanPart, resolvedGroupId);
     let unitCost = existingCatalog?.defaultCost || 0;
     let unitSalePrice = existingCatalog?.defaultSalePrice || 0;
 
-    const existingStock = shopParts.find(s => s.name.trim().toLowerCase() === cleanPart.toLowerCase());
+    const existingStock = findMatchingStockCandidates(shopParts, {
+      partId: existingCatalog?.id,
+      partName: cleanPart
+    })[0];
     if (existingStock) {
       if (!unitCost && existingStock.unitCost) unitCost = existingStock.unitCost;
       if (!unitSalePrice && existingStock.salePrice) unitSalePrice = existingStock.salePrice;
     }
 
+    const resolvedPartId = existingCatalog?.id || sanitizePartDocId(cleanPart);
+    const resolvedPartName = existingCatalog ? cleanDisplayText(existingCatalog.name) : cleanPart;
+
     if (!existingCatalog) {
-      const docId = cleanPart.replace(/[\/\\]/g, '_');
       const newPartData: PartCatalogItem = {
-        id: docId,
+        id: resolvedPartId,
         name: cleanPart,
         itemType: 'electronic_part',
         groupId: resolvedGroupId,
-        groupName: cleanGroup,
-        category: cleanGroup,
+        groupName: resolvedGroupName,
+        category: resolvedGroupName,
         orderIndex: catalogItems.length + 1,
         defaultCost: unitCost,
         defaultSalePrice: unitSalePrice,
@@ -231,7 +248,7 @@ export const ElectronicPartsSelectionModal: React.FC<ElectronicPartsSelectionMod
         updatedAt: serverTimestamp()
       };
       try {
-        await setDoc(doc(db, 'parts_catalog', docId), newPartData, { merge: true });
+        await setDoc(doc(db, 'parts_catalog', resolvedPartId), newPartData, { merge: true });
       } catch (err) {
         console.error("Error creating new part on the fly:", err);
       }
@@ -239,10 +256,10 @@ export const ElectronicPartsSelectionModal: React.FC<ElectronicPartsSelectionMod
 
     const newItem: DevicePartUsageItem = {
       id: editingIndex !== null ? tempPartsList[editingIndex]?.id || `dpu_${Date.now()}` : `dpu_${Date.now()}`,
-      partId: existingCatalog?.id || cleanPart.replace(/[\/\\]/g, '_'),
-      partName: cleanPart,
+      partId: resolvedPartId,
+      partName: resolvedPartName,
       groupId: resolvedGroupId,
-      groupName: cleanGroup,
+      groupName: resolvedGroupName,
       quantity: Number(quantity),
       unitCost: isScrap ? 0 : unitCost,
       unitSalePrice: isScrap ? 0 : unitSalePrice,

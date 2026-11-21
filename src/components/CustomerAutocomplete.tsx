@@ -53,6 +53,17 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
+  const normalizeAlef = (text: string) => text.replace(/[أإآٱ]/g, 'ا').toLowerCase();
+
+  const computeSuggestions = (val: string) => {
+    const normalizedVal = normalizeAlef(val);
+    return (customers || []).filter(c => {
+      const nameMatch = c.name && normalizeAlef(c.name).includes(normalizedVal);
+      const phoneMatch = (c.phone1 && c.phone1.includes(val)) || (c.phone2 && c.phone2.includes(val));
+      return nameMatch || phoneMatch;
+    }).slice(0, 5);
+  };
+
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const val = e.target.value;
     setQuery(val);
@@ -60,12 +71,7 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
     if (typeof onChange === 'function') onChange(val);
 
     if (val.trim().length > 0) {
-      const filtered = (customers || []).filter(c => {
-        const nameMatch = c.name && c.name.toLowerCase().includes(val.toLowerCase());
-        const phoneMatch = (c.phone1 && c.phone1.includes(val)) || (c.phone2 && c.phone2.includes(val));
-        return nameMatch || phoneMatch;
-      }).slice(0, 5);
-      setSuggestions(filtered);
+      setSuggestions(computeSuggestions(val));
       setIsOpen(true);
     } else {
       setSuggestions([]);
@@ -114,7 +120,10 @@ export const CustomerAutocomplete: React.FC<CustomerAutocompleteProps> = ({
             }
           }}
           onFocus={() => {
-            if (query.trim().length > 0) setIsOpen(true);
+            if (query.trim().length > 0) {
+              setSuggestions(computeSuggestions(query));
+              setIsOpen(true);
+            }
           }}
           placeholder={placeholder}
           className={`w-full bg-black/40 border border-white/10 rounded-xl ${onPickContact ? 'pl-11 pr-4' : 'px-10'} py-2.5 focus:border-orange-500 outline-none transition-all text-sm font-bold text-white text-right font-cairo`}

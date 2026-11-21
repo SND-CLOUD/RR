@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { db, collection, onSnapshot, doc, deleteDoc } from '../firebase';
-import { ShopPartItem, DisassemblyBatch } from '../types';
+import { ShopPartItem, DisassemblyBatch, ElectronicPartGroup, PartCatalogItem } from '../types';
 import { 
   Package, Layers, CircleDollarSign, CheckCircle, TrendingUp, AlertTriangle, 
   Search, Trash2, Tag, Calendar, User, ShieldAlert, Sparkles, RefreshCw, X, 
@@ -9,17 +9,32 @@ import {
 } from 'lucide-react';
 import { formatMoney } from '../lib/fundUtils';
 import { ProviderFactory } from '../data/ProviderFactory';
-import { auditOrphanedPartsStock, cleanOrphanedPartsStock, recalculateDisassemblyBatchesRecovery, recalculateInventoryUsedQuantities } from '../lib/invoiceCascadeService';
+import {
+  auditOrphanedPartsStock,
+  cleanOrphanedPartsStock,
+  consolidateAndSyncPartsInventory,
+  recalculateDisassemblyBatchesRecovery,
+  recalculateInventoryUsedQuantities
+} from '../lib/invoiceCascadeService';
+import {
+  normalizePartText,
+  cleanDisplayText,
+  resolveCanonicalGroupInfo,
+  findMatchingCatalogPart
+} from '../lib/partsNormalization';
 import { useBackHandler } from '../hooks/useBackHandler';
 
 export default function ShopPartsStockView() {
   const [stockItems, setStockItems] = useState<ShopPartItem[]>([]);
   const [batches, setBatches] = useState<DisassemblyBatch[]>([]);
   const [invoiceItems, setInvoiceItems] = useState<any[]>([]);
+  const [electronicGroups, setElectronicGroups] = useState<ElectronicPartGroup[]>([]);
+  const [catalogItems, setCatalogItems] = useState<PartCatalogItem[]>([]);
   const [activeTab, setActiveTab] = useState<'all' | 'electronics' | 'accessories' | 'batches'>('all');
   const [stockFilter, setStockFilter] = useState<'available' | 'sold' | 'all'>('available');
   const [selectedGroup, setSelectedGroup] = useState<string>('all');
   const [search, setSearch] = useState('');
+  const hasAutoConsolidatedRef = useRef(false);
 
   // Expanded batch cards for detailed breakdown
   const [expandedBatches, setExpandedBatches] = useState<Record<string, boolean>>({});
@@ -70,15 +85,64 @@ export default function ShopPartsStockView() {
       setInvoiceItems(list);
     });
 
+    const unsubGroups = onSnapshot(collection(db, 'electronic_part_groups'), (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ElectronicPartGroup));
+      list.sort((a, b) => (Number(a.orderIndex) || 0) - (Number(b.orderIndex) || 0));
+      setElectronicGroups(list);
+    });
+
+    const unsubCatalog = onSnapshot(collection(db, 'parts_catalog'), (snapshot) => {
+      const list = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as PartCatalogItem));
+      setCatalogItems(list);
+    });
+
     return () => {
       unsubStock();
       unsubBatches();
       unsubInvoiceItems();
+      unsubGroups();
+      unsubCatalog();
     };
   }, []);
 
-  // Get unique group names for filtering
-  const uniqueGroups = Array.from(new Set(stockItems.map(item => item.groupName).filter(Boolean))) as string[];
+  // Automatically merge any legacy duplicate non-batch stock items & sync renamed groups once on mount
+  useEffect(() => {
+    if (hasAutoConsolidatedRef.current) return;
+    hasAutoConsolidatedRef.current = true;
+    consolidateAndSyncPartsInventory().catch(() => {});
+  }, []);
+
+  // Resolve canonical group name for any stock item using live electronic_part_groups and parts_catalog
+  const getCanonicalGroupName = (item: ShopPartItem): string => {
+    const matchedCat = findMatchingCatalogPart(catalogItems, item.partId, item.name);
+    const grpInfo = resolveCanonicalGroupInfo(electronicGroups, {
+      groupId: matchedCat?.groupId || item.groupId,
+      groupName: matchedCat?.groupName || item.groupName,
+      category: matchedCat?.category || item.category
+    });
+    return grpInfo.groupName || cleanDisplayText(item.groupName);
+  };
+
+  // Deduplicated unique group names relevant to the active tab and stock availability filter (no empty ghosts)
+  const uniqueGroups = (() => {
+    const map = new Map<string, string>();
+    stockItems.forEach(item => {
+      if (activeTab === 'electronics' && item.itemType !== 'electronic_part') return;
+      if (activeTab === 'accessories' && item.itemType !== 'accessory_part') return;
+
+      const qty = Number(item.quantity || 0);
+      const used = Number(item.usedQuantity || 0);
+      if (stockFilter === 'available' && qty <= 0) return;
+      if (stockFilter === 'sold' && used <= 0) return;
+
+      const gName = getCanonicalGroupName(item);
+      const normKey = normalizePartText(gName);
+      if (gName && normKey && !map.has(normKey)) {
+        map.set(normKey, gName);
+      }
+    });
+    return Array.from(map.values());
+  })();
 
   // Filter stock items according to user tab, group and search (The base for counters)
   const baseFilteredStock = stockItems.filter(item => {
@@ -89,18 +153,20 @@ export default function ShopPartsStockView() {
       if (item.itemType !== 'accessory_part') return false;
     }
 
+    const canonicalGroupName = getCanonicalGroupName(item);
+
     // 2. Group Filter
     if (selectedGroup !== 'all') {
-      if (item.groupName !== selectedGroup) return false;
+      if (normalizePartText(canonicalGroupName) !== normalizePartText(selectedGroup)) return false;
     }
 
     // 3. Search query
-    const q = (search || '').toLowerCase();
+    const q = normalizePartText(search);
     if (q) {
-      const matchName = (item.name || '').toLowerCase().includes(q);
-      const matchSupplier = (item.supplierName || '').toLowerCase().includes(q);
-      const matchBatch = (item.batchName || '').toLowerCase().includes(q);
-      const matchGroupName = (item.groupName || '').toLowerCase().includes(q);
+      const matchName = normalizePartText(item.name).includes(q);
+      const matchSupplier = normalizePartText(item.supplierName).includes(q);
+      const matchBatch = normalizePartText(item.batchName).includes(q);
+      const matchGroupName = normalizePartText(canonicalGroupName).includes(q);
       if (!(matchName || matchSupplier || matchBatch || matchGroupName)) return false;
     }
 
@@ -579,9 +645,12 @@ export default function ShopPartsStockView() {
                               <Tag size={14} className={isSoldOut ? 'text-blue-400' : 'text-emerald-400'} />
                               <div>
                                 <span className="block">{item.name || 'صنف بدون اسم'}</span>
-                                {item.groupName && (
-                                  <span className="text-[10px] text-gray-500 font-bold block mt-0.5">المجموعة: {item.groupName}</span>
-                                )}
+                                {(() => {
+                                  const displayGrp = getCanonicalGroupName(item);
+                                  return displayGrp ? (
+                                    <span className="text-[10px] text-gray-500 font-bold block mt-0.5">المجموعة: {displayGrp}</span>
+                                  ) : null;
+                                })()}
                               </div>
                             </div>
                           </td>

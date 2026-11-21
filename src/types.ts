@@ -93,6 +93,7 @@ export interface InvoiceItem {
   unitCost?: number;
   estimatedCost?: number;
   partInventoryId?: string;
+  partId?: string;
   batchId?: string;
   batchName?: string;
   batchTotalCost?: number;

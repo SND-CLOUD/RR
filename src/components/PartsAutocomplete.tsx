@@ -1,7 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { db, collection, onSnapshot } from '../firebase';
-import { PartCatalogItem, ShopPartItem } from '../types';
+import { PartCatalogItem, ShopPartItem, ElectronicPartGroup } from '../types';
 import { Tag, Plus, Search, Check, ChevronDown, Wrench } from 'lucide-react';
+import {
+  normalizePartText,
+  cleanDisplayText,
+  findMatchingGroup,
+  resolveCanonicalGroupInfo
+} from '../lib/partsNormalization';
 
 interface PartsAutocompleteProps {
   value: string;
@@ -30,6 +36,7 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
 }) => {
   const [catalogItems, setCatalogItems] = useState<PartCatalogItem[]>([]);
   const [shopParts, setShopParts] = useState<ShopPartItem[]>([]);
+  const [electronicGroups, setElectronicGroups] = useState<ElectronicPartGroup[]>([]);
   const [isOpen, setIsOpen] = useState(false);
   const [isReadOnly, setIsReadOnly] = useState(true);
   
@@ -52,9 +59,16 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
       setShopParts(parts);
     });
 
+    // Listen to electronic part groups for canonical group name resolution
+    const unsubGroups = onSnapshot(collection(db, 'electronic_part_groups'), (snapshot) => {
+      const gList = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as ElectronicPartGroup));
+      setElectronicGroups(gList);
+    });
+
     return () => {
       unsubCat();
       unsubStock();
+      unsubGroups();
     };
   }, []);
 
@@ -78,14 +92,20 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
       if (!s || !s.name) return;
       const qty = Number(s.quantity || 0);
       if (qty <= 0) return; // Strict condition: must be in stock (> 0)
+      const canonicalGrp = resolveCanonicalGroupInfo(electronicGroups, {
+        groupId: (s as any).groupId,
+        groupName: (s as any).groupName,
+        category: s.category
+      });
 
       allList.push({
         id: s.id || '',
-        name: s.name,
-        category: s.category || 'قطع غيار وملحقات',
+        partId: (s as any).partId || '',
+        name: cleanDisplayText(s.name),
+        category: canonicalGrp.groupName || s.category || 'قطع غيار وملحقات',
         itemType: (s as any).itemType || 'accessory_part',
-        groupId: (s as any).groupId || '',
-        groupName: (s as any).groupName || '',
+        groupId: canonicalGrp.groupId,
+        groupName: canonicalGrp.groupName,
         defaultCost: s.unitCost || 0,
         defaultSalePrice: s.salePrice || 0,
         inStockQty: qty,
@@ -100,8 +120,8 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
         raw: {
           ...s,
           itemType: (s as any).itemType || 'accessory_part',
-          groupId: (s as any).groupId || '',
-          groupName: (s as any).groupName || '',
+          groupId: canonicalGrp.groupId,
+          groupName: canonicalGrp.groupName,
           partInventoryId: s.id || '',
           batchId: s.batchId || '',
           batchName: s.batchName || '',
@@ -119,12 +139,20 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
 
     catalogItems.forEach(c => {
       if (!c || !c.name) return;
-      combinedItemsMap.set(String(c.name).trim().toLowerCase(), {
-        name: c.name,
-        category: c.category || 'عام',
+      const canonicalGrp = resolveCanonicalGroupInfo(electronicGroups, {
+        groupId: (c as any).groupId,
+        groupName: (c as any).groupName,
+        category: c.category
+      });
+      const key = normalizePartText(c.name);
+      combinedItemsMap.set(key, {
+        id: c.id || '',
+        partId: c.id || '',
+        name: cleanDisplayText(c.name),
+        category: canonicalGrp.groupName || c.category || 'عام',
         itemType: (c as any).itemType || 'accessory_part',
-        groupId: (c as any).groupId || '',
-        groupName: (c as any).groupName || '',
+        groupId: canonicalGrp.groupId,
+        groupName: canonicalGrp.groupName,
         defaultCost: c.defaultCost || 0,
         defaultSalePrice: c.defaultSalePrice || 0,
         inStockQty: 0,
@@ -135,23 +163,31 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
 
     shopParts.forEach(s => {
       if (!s || !s.name) return;
-      const key = String(s.name).trim().toLowerCase();
+      const key = normalizePartText(s.name);
+      const canonicalGrp = resolveCanonicalGroupInfo(electronicGroups, {
+        groupId: (s as any).groupId,
+        groupName: (s as any).groupName,
+        category: s.category
+      });
       const existing = combinedItemsMap.get(key);
       if (existing) {
         existing.inStockQty = (existing.inStockQty || 0) + (s.quantity || 0);
+        if (!existing.partId && (s as any).partId) existing.partId = (s as any).partId;
         if (s.salePrice && !existing.defaultSalePrice) existing.defaultSalePrice = s.salePrice;
         if (s.unitCost && !existing.defaultCost) existing.defaultCost = s.unitCost;
         if (s.isDisassemblyBatch) existing.isBatch = true;
-        if ((s as any).itemType) existing.itemType = (s as any).itemType;
-        if ((s as any).groupId) existing.groupId = (s as any).groupId;
-        if ((s as any).groupName) existing.groupName = (s as any).groupName;
+        if ((s as any).itemType && !existing.itemType) existing.itemType = (s as any).itemType;
+        if (canonicalGrp.groupId && !existing.groupId) existing.groupId = canonicalGrp.groupId;
+        if (canonicalGrp.groupName && !existing.groupName) existing.groupName = canonicalGrp.groupName;
       } else {
         combinedItemsMap.set(key, {
-          name: s.name,
-          category: s.category || 'عام',
+          id: s.id || '',
+          partId: (s as any).partId || '',
+          name: cleanDisplayText(s.name),
+          category: canonicalGrp.groupName || s.category || 'عام',
           itemType: (s as any).itemType || 'accessory_part',
-          groupId: (s as any).groupId || '',
-          groupName: (s as any).groupName || '',
+          groupId: canonicalGrp.groupId,
+          groupName: canonicalGrp.groupName,
           defaultCost: s.unitCost || 0,
           defaultSalePrice: s.salePrice || 0,
           inStockQty: s.quantity || 0,
@@ -165,6 +201,8 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
   }
 
   const isGroupMissing = requireGroup && (!filterGroupId || !filterGroupId.trim());
+  const targetFilterGroup = filterGroupId ? findMatchingGroup(electronicGroups, filterGroupId, filterGroupId) : undefined;
+  const targetFilterGroupNorm = normalizePartText(targetFilterGroup?.name || filterGroupId);
 
   const filtered = isGroupMissing ? [] : allList.filter(item => {
     if (filterItemType && filterItemType !== 'all') {
@@ -172,14 +210,21 @@ export const PartsAutocomplete: React.FC<PartsAutocompleteProps> = ({
       if (it !== filterItemType) return false;
     }
     if (filterGroupId && filterGroupId.trim()) {
-      const match = item.groupId === filterGroupId || item.groupName === filterGroupId;
+      const match =
+        item.groupId === filterGroupId ||
+        (targetFilterGroup && item.groupId === targetFilterGroup.id) ||
+        normalizePartText(item.groupId) === targetFilterGroupNorm ||
+        normalizePartText(item.groupName) === targetFilterGroupNorm ||
+        normalizePartText(item.category) === targetFilterGroupNorm;
       if (!match) return false;
     }
+    const q = normalizePartText(value);
+    if (!q) return true;
     return (
-      item.name.toLowerCase().includes((value || '').toLowerCase()) ||
-      (item.category && item.category.toLowerCase().includes((value || '').toLowerCase())) ||
-      (item.groupName && item.groupName.toLowerCase().includes((value || '').toLowerCase())) ||
-      (item.batchName && item.batchName.toLowerCase().includes((value || '').toLowerCase()))
+      normalizePartText(item.name).includes(q) ||
+      normalizePartText(item.category).includes(q) ||
+      normalizePartText(item.groupName).includes(q) ||
+      normalizePartText(item.batchName).includes(q)
     );
   });
 
