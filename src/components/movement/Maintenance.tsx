@@ -590,7 +590,7 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
 
       // Determine overall invoice status
       let finalInvoiceStatus = '50';
-      if (finalItemStatuses.some(s => s === '70' || s === 'cancelled')) {
+      if (finalItemStatuses.length > 0 && finalItemStatuses.every(s => s === '70' || s === 'cancelled')) {
         finalInvoiceStatus = '70';
       } else if (finalItemStatuses.some(s => s === '10' || s === 'new')) {
         finalInvoiceStatus = '10';

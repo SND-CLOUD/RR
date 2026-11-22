@@ -24,6 +24,47 @@ export function isNonBatchStock(stock: any): boolean {
   return !hasBatchFlag && !hasBatchId;
 }
 
+/**
+ * Safely parses and normalizes an item's `partsUsed` field into a clean array of part objects.
+ * Handles native arrays, single/double-encoded JSON strings, and numeric-keyed objects
+ * (`{ "0": {...}, "1": {...} }`) caused by object-spread corruption on arrays.
+ */
+export function normalizePartsUsedList(raw: any): any[] {
+  if (raw === null || raw === undefined || raw === '') return [];
+
+  let current: any = raw;
+  for (let depth = 0; depth < 3 && typeof current === 'string'; depth++) {
+    const trimmed = current.trim();
+    if (!trimmed) return [];
+    try {
+      current = JSON.parse(trimmed);
+    } catch {
+      return [];
+    }
+  }
+
+  if (Array.isArray(current)) {
+    return current.filter(p => p && typeof p === 'object');
+  }
+
+  if (current && typeof current === 'object') {
+    const keys = Object.keys(current);
+    if (keys.length === 0) return [];
+    const numericKeys = keys.filter(k => /^\d+$/.test(k));
+    if (numericKeys.length > 0) {
+      return numericKeys
+        .sort((a, b) => Number(a) - Number(b))
+        .map(k => current[k])
+        .filter(p => p && typeof p === 'object');
+    }
+    if ('partName' in current || 'name' in current || 'part' in current || 'partId' in current || 'quantity' in current) {
+      return [current];
+    }
+  }
+
+  return [];
+}
+
 export function findMatchingGroup<T extends Record<string, any>>(
   groups: T[],
   groupId?: string | null,

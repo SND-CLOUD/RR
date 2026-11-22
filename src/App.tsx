@@ -196,6 +196,14 @@ export default function App() {
     };
   }, [user?.id]);
 
+  // Idempotently heal verified historical maintenance partsUsed records once on login
+  useEffect(() => {
+    if (!user?.id) return;
+    import('./lib/invoiceCascadeService')
+      .then((m) => m.healVerifiedHistoricalMaintenanceParts().catch(() => {}))
+      .catch(() => {});
+  }, [user?.id]);
+
   // Reflect initial comprehensive cloud download on the Sync button ONLY on the very first open of a new device
   // (manual comprehensive sync handles its own indicator via handleManualSync; subsequent background syncs stay silent)
   useEffect(() => {

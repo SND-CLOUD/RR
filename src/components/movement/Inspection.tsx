@@ -1010,7 +1010,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
       if (selectedInvoice.status === '21') {
         finalInvoiceStatus = '22';
       } else {
-        if (finalItemStatuses.some(s => s === '70' || s === 'cancelled')) {
+        if (finalItemStatuses.length > 0 && finalItemStatuses.every(s => s === '70' || s === 'cancelled')) {
           finalInvoiceStatus = '70';
         } else if (finalItemStatuses.some(s => s === '10' || s === 'new')) {
           finalInvoiceStatus = '10';

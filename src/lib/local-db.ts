@@ -49,6 +49,29 @@ class LocalDatabase {
   private inFlightFetches: Map<string, Promise<any[]>> = new Map();
   private isWebPlatform: boolean | null = null;
   private saveToStoreTimer: any = null;
+  private extraMigrationsApplied = false;
+
+  private async ensureExtraColumns(): Promise<void> {
+    if (!this.db || this.extraMigrationsApplied) return;
+    this.extraMigrationsApplied = true;
+    const statements = [
+      'ALTER TABLE invoices ADD COLUMN isCancelled INTEGER DEFAULT 0',
+      'ALTER TABLE invoice_items ADD COLUMN partId TEXT',
+      'ALTER TABLE invoice_items ADD COLUMN name TEXT',
+      'ALTER TABLE invoice_items ADD COLUMN isPurchase INTEGER DEFAULT 0',
+      'ALTER TABLE invoice_items ADD COLUMN isCancelled INTEGER DEFAULT 0',
+      'ALTER TABLE invoice_items ADD COLUMN partsUsed TEXT',
+      'ALTER TABLE invoice_items ADD COLUMN hasNoParts INTEGER DEFAULT 1',
+      'ALTER TABLE invoice_items ADD COLUMN sparePartsCost REAL DEFAULT 0',
+      'ALTER TABLE shop_parts_inventory ADD COLUMN usedQuantity INTEGER DEFAULT 0'
+    ];
+    for (const stmt of statements) {
+      try {
+        await this.db.run(stmt);
+      } catch (err) {}
+    }
+    this.columnCache.clear();
+  }
 
   private invalidateCacheFromSql(sql: string): void {
     const trimmed = sql.trim();
@@ -120,9 +143,11 @@ class LocalDatabase {
       try {
         const isOpen = await this.db.isDBOpen();
         if (isOpen.result) {
+          await this.ensureExtraColumns();
           return;
         }
         await this.db.open();
+        await this.ensureExtraColumns();
         return;
       } catch (err) {
         console.warn('Database connection check/open failed, resetting connection...', err);
@@ -313,6 +338,7 @@ class LocalDatabase {
           updatedAt TEXT,
           notes TEXT,
           cancelReason TEXT,
+          isCancelled INTEGER DEFAULT 0,
           printCount INTEGER DEFAULT 0
         );
 
@@ -321,6 +347,7 @@ class LocalDatabase {
           invoiceId TEXT,
           categoryId TEXT,
           deviceName TEXT,
+          name TEXT,
           deviceType TEXT DEFAULT "عام",
           invoiceNumber TEXT,
           quantity INTEGER,
@@ -331,6 +358,8 @@ class LocalDatabase {
           status TEXT,
           subStatus TEXT,
           source TEXT,
+          isPurchase INTEGER DEFAULT 0,
+          isCancelled INTEGER DEFAULT 0,
           customerProblem TEXT,
           engineerReport TEXT,
           failureReason TEXT,
@@ -341,6 +370,7 @@ class LocalDatabase {
           batchTotalCost REAL,
           purchaseDate TEXT,
           partInventoryId TEXT,
+          partId TEXT,
           deliveredAt TEXT,
           recipientName TEXT,
           createdBy TEXT,
@@ -993,6 +1023,7 @@ class LocalDatabase {
       try { await this.db.run('ALTER TABLE invoices ADD COLUMN batchId TEXT'); } catch (err) {}
       try { await this.db.run('ALTER TABLE invoices ADD COLUMN batchName TEXT'); } catch (err) {}
       try { await this.db.run('ALTER TABLE invoices ADD COLUMN batchTotalCost REAL'); } catch (err) {}
+      try { await this.db.run('ALTER TABLE invoices ADD COLUMN isCancelled INTEGER DEFAULT 0'); } catch (err) {}
 
       // Add batch and purchase fields to existing invoice_items table if needed
       try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN isDisassemblyBatch INTEGER DEFAULT 0'); } catch (err) {}
@@ -1001,6 +1032,10 @@ class LocalDatabase {
       try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN batchTotalCost REAL'); } catch (err) {}
       try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN purchaseDate TEXT'); } catch (err) {}
       try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN partInventoryId TEXT'); } catch (err) {}
+      try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN partId TEXT'); } catch (err) {}
+      try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN name TEXT'); } catch (err) {}
+      try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN isPurchase INTEGER DEFAULT 0'); } catch (err) {}
+      try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN isCancelled INTEGER DEFAULT 0'); } catch (err) {}
       try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN hasNoParts INTEGER DEFAULT 1'); } catch (err) {}
       try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN partsUsed TEXT'); } catch (err) {}
       try { await this.db.run('ALTER TABLE invoice_items ADD COLUMN sparePartsCost REAL DEFAULT 0'); } catch (err) {}

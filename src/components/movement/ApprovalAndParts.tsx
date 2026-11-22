@@ -664,6 +664,7 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
           batch.update(itemRef, {
             status: '40',
             subStatus: 'repairing',
+            failureReason: null,
             source: 'parts_available',
             entryDate: resolvedEntryDate,
             updatedAt: serverTimestamp()
@@ -1027,7 +1028,7 @@ export default function ApprovalAndParts({ user, onBack, initialInvoice }: { use
 
       // Determine overall invoice status
       let finalInvoiceStatus = '50';
-      if (finalItemStatuses.some(s => s === '70' || s === 'cancelled')) {
+      if (finalItemStatuses.length > 0 && finalItemStatuses.every(s => s === '70' || s === 'cancelled')) {
         finalInvoiceStatus = '70';
       } else if (finalItemStatuses.some(s => s === '10' || s === 'new')) {
         finalInvoiceStatus = '10';

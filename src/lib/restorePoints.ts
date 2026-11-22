@@ -7,6 +7,7 @@ import { parseDate } from './dateUtils';
 import { FirebaseProviderInstance } from '../data/FirebaseProvider';
 import { LocalProviderInstance } from '../data/LocalProvider';
 import { ProviderFactory } from '../data/ProviderFactory';
+import { normalizePartsUsedList } from './partsNormalization';
 
 export type RestorePointType =
   | 'manual'
@@ -140,6 +141,11 @@ function normalizeRowDates(row: any): any {
   for (const key of Object.keys(cleaned)) {
     const val = cleaned[key];
     if (val === null || val === undefined) continue;
+
+    if (key === 'partsUsed') {
+      cleaned[key] = normalizePartsUsedList(val);
+      continue;
+    }
 
     const lowerKey = key.toLowerCase();
     const isDateField =

@@ -719,24 +719,40 @@ export class FirebaseProvider implements IDataProvider {
   }
 
   private prepareDataForFirestore(data: any): any {
-    if (!data) return data;
-    const cleaned = { ...data };
-    Object.keys(cleaned).forEach(key => {
-      const val = cleaned[key];
-      if (val && typeof val === 'object') {
-        if (typeof val.toISOString === 'function') {
-          try {
-            cleaned[key] = val.toISOString();
-          } catch (e) {}
-        } else if (typeof val.toDate === 'function') {
-          try {
-            cleaned[key] = val.toDate().toISOString();
-          } catch (e) {}
-        } else if (val.type === 'increment') {
-          cleaned[key] = increment(Number(val.value) || 0);
-        } else {
-          cleaned[key] = this.prepareDataForFirestore(val);
-        }
+    if (data === null || data === undefined || typeof data !== 'object') return data;
+
+    if (typeof data.toISOString === 'function') {
+      try {
+        return data.toISOString();
+      } catch (e) {
+        return data;
+      }
+    }
+    if (typeof data.toDate === 'function') {
+      try {
+        return data.toDate().toISOString();
+      } catch (e) {
+        return data;
+      }
+    }
+    if ((data as any).type === 'increment') {
+      return increment(Number((data as any).value) || 0);
+    }
+    if (Array.isArray(data)) {
+      return data.map(item => this.prepareDataForFirestore(item));
+    }
+
+    // Preserve Firestore FieldValue / GeoPoint / DocumentReference / custom class instances intact
+    const proto = Object.getPrototypeOf(data);
+    if (proto !== null && proto !== Object.prototype) {
+      return data;
+    }
+
+    const cleaned: Record<string, any> = {};
+    Object.keys(data).forEach(key => {
+      const val = data[key];
+      if (val !== undefined) {
+        cleaned[key] = this.prepareDataForFirestore(val);
       }
     });
     return cleaned;

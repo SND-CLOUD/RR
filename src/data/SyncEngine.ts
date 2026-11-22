@@ -3,6 +3,7 @@ import { LocalProviderInstance } from './LocalProvider';
 import { FirebaseProviderInstance } from './FirebaseProvider';
 import { ProviderFactory } from './ProviderFactory';
 import { parseFundBalance } from '../lib/fundUtils';
+import { normalizePartsUsedList } from '../lib/partsNormalization';
 
 function isPermissionError(err: any): boolean {
   if (!err) return false;
@@ -278,7 +279,10 @@ export class SyncEngine {
             const docId = doc.id || rawData?.id;
             if (!docId) continue;
 
-            const cloudItem = { ...(rawData || {}), id: docId };
+            const cloudItem: any = { ...(rawData || {}), id: docId };
+            if (table === 'invoice_items' && cloudItem.partsUsed !== undefined) {
+              cloudItem.partsUsed = normalizePartsUsedList(cloudItem.partsUsed);
+            }
             if (pendingIds.has(docId)) continue; // Skip pulling if there is a pending local write
 
             if (table === 'deleted_records') {
@@ -925,6 +929,9 @@ export class SyncEngine {
           // Sync Cloud -> Local
           for (const cloudItem of cloudItems) {
             if (!cloudItem || !cloudItem.id) continue;
+            if (table === 'invoice_items' && cloudItem.partsUsed !== undefined) {
+              cloudItem.partsUsed = normalizePartsUsedList(cloudItem.partsUsed);
+            }
             if (pendingIds.has(cloudItem.id)) continue; // Skip pulling if there is a pending local write
 
             const localItem = localMap.get(cloudItem.id);

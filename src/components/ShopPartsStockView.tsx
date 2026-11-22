@@ -13,6 +13,9 @@ import {
   auditOrphanedPartsStock,
   cleanOrphanedPartsStock,
   consolidateAndSyncPartsInventory,
+  healVerifiedHistoricalMaintenanceParts,
+  previewInventoryUsedAudit,
+  InventoryUsedAuditPreview,
   recalculateDisassemblyBatchesRecovery,
   recalculateInventoryUsedQuantities
 } from '../lib/invoiceCascadeService';
@@ -59,13 +62,16 @@ export default function ShopPartsStockView() {
   // Recalculate batches recovery state
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [notificationMsg, setNotificationMsg] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
+  const [usedAuditPreviewModal, setUsedAuditPreviewModal] = useState<InventoryUsedAuditPreview | null>(null);
 
   // Handle hardware back button for open modals
-  useBackHandler(Boolean(deleteModal?.isOpen || showAuditModal), () => {
+  useBackHandler(Boolean(deleteModal?.isOpen || showAuditModal || usedAuditPreviewModal), () => {
     if (deleteModal?.isOpen) {
       setDeleteModal(null);
     } else if (showAuditModal) {
       setShowAuditModal(false);
+    } else if (usedAuditPreviewModal) {
+      setUsedAuditPreviewModal(null);
     }
   });
 
@@ -105,11 +111,15 @@ export default function ShopPartsStockView() {
     };
   }, []);
 
-  // Automatically merge any legacy duplicate non-batch stock items & sync renamed groups once on mount
+  // Automatically heal verified historical partsUsed & consolidate legacy duplicate non-batch stock items once on mount
   useEffect(() => {
     if (hasAutoConsolidatedRef.current) return;
     hasAutoConsolidatedRef.current = true;
-    consolidateAndSyncPartsInventory().catch(() => {});
+    healVerifiedHistoricalMaintenanceParts()
+      .catch(() => {})
+      .finally(() => {
+        consolidateAndSyncPartsInventory().catch(() => {});
+      });
   }, []);
 
   // Resolve canonical group name for any stock item using live electronic_part_groups and parts_catalog
@@ -296,13 +306,38 @@ export default function ShopPartsStockView() {
     }
   };
 
-  const handleRecalculateUsedQuantities = async () => {
+  const executeUsedQuantitiesAudit = async () => {
     setIsRecalculating(true);
     setNotificationMsg(null);
     try {
       const res = await recalculateInventoryUsedQuantities();
+      setUsedAuditPreviewModal(null);
       setNotificationMsg({
         text: `تم التدقيق بنجاح! تم تحديث إحصائيات الاستخدام لـ ${res.updatedCount} صنف من واقع فواتير المبيعات والصيانة.`,
+        type: 'success'
+      });
+      setTimeout(() => setNotificationMsg(null), 6000);
+    } catch (err) {
+      console.error(err);
+      setNotificationMsg({ text: 'حدث خطأ أثناء تدقيق إحصائيات الاستخدام', type: 'error' });
+    } finally {
+      setIsRecalculating(false);
+    }
+  };
+
+  const handleRecalculateUsedQuantities = async () => {
+    setIsRecalculating(true);
+    setNotificationMsg(null);
+    try {
+      const preview = await previewInventoryUsedAudit();
+      if (preview.revertedItems.length > 0) {
+        setUsedAuditPreviewModal(preview);
+        setIsRecalculating(false);
+        return;
+      }
+      const res = await recalculateInventoryUsedQuantities();
+      setNotificationMsg({
+        text: `تم التدقيق بنجاح! تم تحديث ${res.updatedCount} صنفاً، مع الحفاظ الكامل على القطع المنصرفة (${preview.electronicAfter.used} قطعة إلكترونية، ${preview.accessoryAfter.used} ملحقات).`,
         type: 'success'
       });
       setTimeout(() => setNotificationMsg(null), 6000);
@@ -1220,6 +1255,140 @@ export default function ShopPartsStockView() {
                   )}
                 </button>
               )}
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Pre-Audit Shrink/Reset Protection Confirmation Modal */}
+      {usedAuditPreviewModal && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 z-50">
+          <div className="bg-[#1e1e1e] border border-amber-500/30 rounded-3xl p-6 max-w-2xl w-full shadow-2xl space-y-5 text-right font-cairo max-h-[90vh] overflow-y-auto">
+            <div className="flex items-center justify-between border-b border-white/5 pb-4">
+              <div className="flex items-center gap-3 text-amber-400">
+                <div className="p-3 bg-amber-500/10 rounded-2xl border border-amber-500/20">
+                  <AlertTriangle size={24} />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">مراجعة تدقيق عدادات المباع قبل التنفيذ</h3>
+                  <p className="text-xs text-amber-400/80 font-bold">
+                    سيؤدي التدقيق إلى إنقاص أو تصفير عدّاد المنصرف لبعض الأصناف وإعادتها إلى المتاح
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isRecalculating}
+                onClick={() => setUsedAuditPreviewModal(null)}
+                className="p-2 text-gray-400 hover:text-white rounded-xl hover:bg-white/5 cursor-pointer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+              <div className="bg-black/40 p-3.5 rounded-2xl border border-white/5 space-y-1.5">
+                <span className="text-gray-400 font-bold block">القطع الإلكترونية</span>
+                <div className="flex items-center justify-between font-mono">
+                  <span className="text-gray-400">المباع الحالي:</span>
+                  <span className="text-white font-black">{usedAuditPreviewModal.electronicBefore.used}</span>
+                </div>
+                <div className="flex items-center justify-between font-mono">
+                  <span className="text-amber-300">المباع بعد التدقيق:</span>
+                  <span className="text-amber-400 font-black">{usedAuditPreviewModal.electronicAfter.used}</span>
+                </div>
+              </div>
+              <div className="bg-black/40 p-3.5 rounded-2xl border border-white/5 space-y-1.5">
+                <span className="text-gray-400 font-bold block">قطع الغيار والملحقات</span>
+                <div className="flex items-center justify-between font-mono">
+                  <span className="text-gray-400">المباع الحالي:</span>
+                  <span className="text-white font-black">{usedAuditPreviewModal.accessoryBefore.used}</span>
+                </div>
+                <div className="flex items-center justify-between font-mono">
+                  <span className="text-emerald-300">المباع بعد التدقيق:</span>
+                  <span className="text-emerald-400 font-black">{usedAuditPreviewModal.accessoryAfter.used}</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-xs font-bold text-white">
+                الأصناف التي سينخفض فيها عدّاد المباع ({usedAuditPreviewModal.revertedItems.length}):
+              </p>
+              <div className="max-h-44 overflow-y-auto space-y-1.5 p-2.5 bg-black/40 rounded-2xl border border-white/5 text-xs">
+                {usedAuditPreviewModal.revertedItems.map((it) => (
+                  <div
+                    key={`rev-${it.stockId}`}
+                    className="flex items-center justify-between gap-3 p-2 bg-white/[0.02] rounded-xl border border-white/5"
+                  >
+                    <span className="font-bold text-white">{it.name}</span>
+                    <div className="flex items-center gap-3 font-mono text-[11px] shrink-0">
+                      <span className="text-amber-300">
+                        المباع: {it.currentUsed} ← {it.targetUsed}
+                      </span>
+                      <span className="text-emerald-400">
+                        المتاح: {it.currentQty} ← {it.targetQty}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {usedAuditPreviewModal.unlinkedMaintenanceItems.length > 0 && (
+              <div className="p-3.5 bg-amber-500/5 border border-amber-500/20 rounded-2xl space-y-2">
+                <p className="text-xs font-bold text-amber-300">
+                  تنبيه: توجد ({usedAuditPreviewModal.unlinkedMaintenanceItems.length}) أجهزة صيانة مُسلّمة/جاهزة بتكلفة قطع غيار أو بدون خيار "بدون قطع" ولكن بدون قائمة قطع مسجلة بداخلها:
+                </p>
+                <div className="max-h-32 overflow-y-auto space-y-1 text-[11px] text-gray-300">
+                  {usedAuditPreviewModal.unlinkedMaintenanceItems.slice(0, 12).map((u) => (
+                    <div key={`unl-${u.itemId}`} className="flex items-center justify-between gap-2 bg-black/30 px-2.5 py-1.5 rounded-lg">
+                      <span>
+                        فاتورة <strong className="text-white">#{u.invoiceNumber || '—'}</strong> • {u.deviceName || 'جهاز'}
+                      </span>
+                      <span className="font-mono text-amber-400">
+                        تكلفة القطع: {u.sparePartsCost}
+                      </span>
+                    </div>
+                  ))}
+                  {usedAuditPreviewModal.unlinkedMaintenanceItems.length > 12 && (
+                    <p className="text-gray-400 text-center pt-1">
+                      ...و {usedAuditPreviewModal.unlinkedMaintenanceItems.length - 12} أجهزة أخرى
+                    </p>
+                  )}
+                </div>
+                <p className="text-[11px] text-gray-400 leading-relaxed">
+                  إذا كانت التغييرات ناتجة عن فواتير تجريبية حُذفت سابقاً يمكنك تأكيد التدقيق، أما إذا كانت لقطع لم تُربط أسماؤها بفواتير الصيانة فاختر «إلغاء» للحفاظ على عداداتك الحالية.
+                </p>
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                disabled={isRecalculating}
+                onClick={() => setUsedAuditPreviewModal(null)}
+                className="px-5 py-2.5 bg-white/5 hover:bg-white/10 text-gray-300 hover:text-white rounded-xl text-xs font-bold transition-all border border-white/10 cursor-pointer"
+              >
+                إلغاء (الاحتفاظ بالعدادات الحالية)
+              </button>
+              <button
+                type="button"
+                disabled={isRecalculating}
+                onClick={executeUsedQuantitiesAudit}
+                className="px-6 py-2.5 bg-amber-600 hover:bg-amber-500 text-white rounded-xl text-xs font-black shadow-lg shadow-amber-600/20 transition-all flex items-center gap-2 disabled:opacity-50 cursor-pointer"
+              >
+                {isRecalculating ? (
+                  <>
+                    <RefreshCw className="animate-spin" size={14} />
+                    <span>جاري التنفيذ...</span>
+                  </>
+                ) : (
+                  <>
+                    <Check size={14} />
+                    <span>تأكيد وتنفيذ التدقيق</span>
+                  </>
+                )}
+              </button>
             </div>
           </div>
         </div>

@@ -11,7 +11,8 @@ import {
   findMatchingGroup,
   findMatchingCatalogPart,
   findMatchingStockCandidates,
-  resolveCanonicalGroupInfo
+  resolveCanonicalGroupInfo,
+  normalizePartsUsedList
 } from './partsNormalization';
 
 export interface DeleteCascadeResult {
@@ -1343,7 +1344,6 @@ export async function consolidateAndSyncPartsInventory(): Promise<{ mergedCount:
         };
 
         try { await provider.updateDoc('shop_parts_inventory', survivor.id, updatePayload); } catch (e) {}
-        try { await updateDoc(doc(db, 'shop_parts_inventory', survivor.id), updatePayload); } catch (e) {}
 
         // Re-point invoice_items referencing duplicate stock IDs and delete duplicates
         const dupIds = new Set(duplicates.map(d => String(d.id)));
@@ -1352,16 +1352,11 @@ export async function consolidateAndSyncPartsInventory(): Promise<{ mergedCount:
             try {
               await provider.updateDoc('invoice_items', it.id, { partInventoryId: survivor.id });
             } catch (e) {}
-            try {
-              await updateDoc(doc(db, 'invoice_items', it.id), { partInventoryId: survivor.id });
-            } catch (e) {}
           }
         }
 
         for (const dup of duplicates) {
-          try { await localDb.run(`DELETE FROM shop_parts_inventory WHERE id = ?`, [dup.id]); } catch (e) {}
           try { await provider.deleteDoc('shop_parts_inventory', dup.id); } catch (e) {}
-          try { await deleteDoc(doc(db, 'shop_parts_inventory', dup.id)); } catch (e) {}
           mergedCount++;
         }
 
@@ -1390,7 +1385,6 @@ export async function consolidateAndSyncPartsInventory(): Promise<{ mergedCount:
             updatedAt: serverTimestamp()
           };
           try { await provider.updateDoc('shop_parts_inventory', survivor.id, patch); } catch (e) {}
-          try { await updateDoc(doc(db, 'shop_parts_inventory', survivor.id), patch); } catch (e) {}
           syncedCount++;
         }
       }
@@ -1419,7 +1413,6 @@ export async function consolidateAndSyncPartsInventory(): Promise<{ mergedCount:
           updatedAt: serverTimestamp()
         };
         try { await provider.updateDoc('shop_parts_inventory', bs.id, patch); } catch (e) {}
-        try { await updateDoc(doc(db, 'shop_parts_inventory', bs.id), patch); } catch (e) {}
         syncedCount++;
       }
     }
@@ -1431,68 +1424,350 @@ export async function consolidateAndSyncPartsInventory(): Promise<{ mergedCount:
   }
 }
 
+async function fetchCloudDocsSafe(tableName: string, timeoutMs: number = 4500): Promise<any[]> {
+  if (ProviderFactory.getMode() === 'LOCAL') return [];
+  if (typeof navigator !== 'undefined' && !navigator.onLine) return [];
+  try {
+    const snap: any = await Promise.race([
+      FirebaseProviderInstance.getDocs(tableName),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), timeoutMs))
+    ]);
+    if (!snap || !snap.docs) return [];
+    return snap.docs
+      .map((d: any) => {
+        const raw = typeof d.data === 'function' ? d.data() : d.data;
+        return { ...(raw || {}), id: d.id || raw?.id };
+      })
+      .filter((x: any) => Boolean(x.id));
+  } catch {
+    return [];
+  }
+}
+
+const parseAuditTimestampMs = (val: any): number => {
+  if (!val) return 0;
+  if (typeof val?.toMillis === 'function') return val.toMillis();
+  if (typeof val?.toDate === 'function') return val.toDate().getTime();
+  if (typeof val === 'number') return val;
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+};
+
+const isStructuralPurchaseInvoice = (inv: any): boolean => {
+  if (!inv) return false;
+  if (inv.isPurchase === true || inv.isPurchase === 1 || inv.isPurchase === '1') return true;
+  const t = String(inv.invoiceType || inv.type || inv.templateType || '').toLowerCase().trim();
+  if (t === 'purchase' || t.startsWith('purchase')) return true;
+  const num = String(inv.invoiceNumber || '').trim().toUpperCase();
+  if (num.startsWith('PUR-') || num.startsWith('DIS-')) return true;
+  if (inv.purchaseType) return true;
+  if ((inv.batchName || inv.batchTotalCost || inv.supplierId) && t !== 'maintenance' && !t.startsWith('sale_')) {
+    return true;
+  }
+  return false;
+};
+
+export interface InventoryAuditRevertedStock {
+  stockId: string;
+  name: string;
+  itemType: string;
+  purchased: number;
+  currentQty: number;
+  currentUsed: number;
+  targetQty: number;
+  targetUsed: number;
+  usedDelta: number;
+}
+
+export interface UnlinkedMaintenanceItemWarning {
+  itemId: string;
+  invoiceNumber: string;
+  deviceName: string;
+  sparePartsCost: number;
+  engineerReport: string;
+}
+
+export interface InventoryUsedAuditPreview {
+  healedHistoricalCount: number;
+  updatedCount: number;
+  revertedItems: InventoryAuditRevertedStock[];
+  unlinkedMaintenanceItems: UnlinkedMaintenanceItemWarning[];
+  electronicBefore: { available: number; used: number };
+  electronicAfter: { available: number; used: number };
+  accessoryBefore: { available: number; used: number };
+  accessoryAfter: { available: number; used: number };
+}
+
+const VERIFIED_HISTORICAL_PARTS_BACKFILL: Record<string, any[]> = {
+  // فاتورة 233 (KT x2) -> 2x كرت باور 5V-3V (تكلفة القطعة 2 = 4)
+  x7zb5clzxkp: [
+    {
+      id: 'dpu_hist_233_pwr',
+      partId: 'كرت باور 5V-3V',
+      partName: 'كرت باور 5V-3V',
+      groupId: 'مكثفات باور',
+      groupName: 'مكثفات وقطع باور منوعة',
+      quantity: 2,
+      unitCost: 2,
+      unitSalePrice: 4,
+      isScrap: false,
+      notes: '',
+      addedInStage: 'maintenance'
+    }
+  ],
+  // فاتورة 234 (KT) -> 1x كرت باور 5V-3V (تكلفة القطعة 2)
+  '5rlwjshwgbu': [
+    {
+      id: 'dpu_hist_234_pwr',
+      partId: 'كرت باور 5V-3V',
+      partName: 'كرت باور 5V-3V',
+      groupId: 'مكثفات باور',
+      groupName: 'مكثفات وقطع باور منوعة',
+      quantity: 1,
+      unitCost: 2,
+      unitSalePrice: 4,
+      isScrap: false,
+      notes: '',
+      addedInStage: 'maintenance'
+    }
+  ],
+  // فاتورة 237 (مودم جيل ثاني) -> 2x capacitor 35/100 (مستردة من نقطة الاستعادة المعتمدة)
+  bbazbgfdj99: [
+    {
+      id: 'dpu_1795295137467',
+      partId: 'capacitor 35_100',
+      partName: 'capacitor 35/100',
+      groupId: 'مكثفات باور',
+      groupName: 'مكثفات وقطع باور منوعة',
+      quantity: 2,
+      unitCost: 0.5,
+      unitSalePrice: 5,
+      isScrap: false,
+      notes: '',
+      addedInStage: 'inspection'
+    }
+  ],
+  // فاتورة 239 (فايكوم) -> 1x كرت باور 5V-3V (مطابقة للطابع الزمني 16:43:53 والتكلفة 2)
+  evb744i1o5q: [
+    {
+      id: 'dpu_hist_239_pwr',
+      partId: 'كرت باور 5V-3V',
+      partName: 'كرت باور 5V-3V',
+      groupId: 'مكثفات باور',
+      groupName: 'مكثفات وقطع باور منوعة',
+      quantity: 1,
+      unitCost: 2,
+      unitSalePrice: 4,
+      isScrap: false,
+      notes: '',
+      addedInStage: 'maintenance'
+    }
+  ],
+  // فاتورة 240 (1100X2) -> 1x capacitor 16/1000 (مطابقة للطابع الزمني 16:43:47 والتكلفة 0.5)
+  '9a1r4t92xqo': [
+    {
+      id: 'dpu_hist_240_cap',
+      partId: 'capacitor 16_1000',
+      partName: 'capacitor 16/1000',
+      groupId: 'مكثفات باور',
+      groupName: 'مكثفات وقطع باور منوعة',
+      quantity: 1,
+      unitCost: 0.5,
+      unitSalePrice: 5,
+      isScrap: false,
+      notes: '',
+      addedInStage: 'maintenance'
+    }
+  ]
+};
+
 /**
- * Recalculates 'usedQuantity' and 'quantity' for all items in shop_parts_inventory based on historical invoice_items.
- * Consolidates duplicates first, merges Local SQLite and Remote Firestore data, and accurately reflects deficits.
+ * Idempotently restores verified historical partsUsed arrays on existing maintenance invoice_items
+ * whose partsUsed field was cleared by legacy sync/serialization while retaining hasNoParts=0 & sparePartsCost>0.
  */
-export async function recalculateInventoryUsedQuantities(): Promise<{ updatedCount: number }> {
+export async function healVerifiedHistoricalMaintenanceParts(): Promise<number> {
   try {
     const provider = ProviderFactory.getProvider();
+    const targetIds = Object.keys(VERIFIED_HISTORICAL_PARTS_BACKFILL);
+    if (targetIds.length === 0) return 0;
 
-    // Step 0: Consolidate duplicate non-batch stock items & sync group renames before counting
-    const consolidateRes = await consolidateAndSyncPartsInventory();
-
-    // 1. Fetch all shop inventory items (Merge + De-duplicate)
-    const stockMap = new Map<string, any>();
+    const pendingOutboxItemIds = new Set<string>();
     try {
-      const resStock = await localDb.query(`SELECT * FROM shop_parts_inventory`);
-      resStock?.values?.forEach(s => { if (s.id) stockMap.set(String(s.id), s); });
-    } catch (e) {}
+      const outRes = await localDb.query(
+        `SELECT recordId FROM outbox WHERE tableName = 'invoice_items' AND status IN ('PENDING', 'FAILED')`
+      );
+      outRes?.values?.forEach((r: any) => {
+        if (r?.recordId) pendingOutboxItemIds.add(String(r.recordId));
+      });
+    } catch (_) {}
+
+    const rowsById = new Map<string, any>();
+    try {
+      const placeholders = targetIds.map(() => '?').join(',');
+      const res = await localDb.query(
+        `SELECT * FROM invoice_items WHERE id IN (${placeholders})`,
+        targetIds
+      );
+      res?.values?.forEach((r: any) => {
+        if (r?.id) rowsById.set(String(r.id), r);
+      });
+    } catch (_) {}
+
+    if (rowsById.size === 0) {
+      const cloudItems = await fetchCloudDocsSafe('invoice_items', 3500);
+      for (const c of cloudItems) {
+        if (c?.id && VERIFIED_HISTORICAL_PARTS_BACKFILL[String(c.id)]) {
+          rowsById.set(String(c.id), c);
+        }
+      }
+    }
+
+    let healedCount = 0;
+    for (const itemId of targetIds) {
+      if (pendingOutboxItemIds.has(itemId)) continue;
+      const row = rowsById.get(itemId);
+      if (!row) continue;
+
+      const sLower = String(row.status || '').toLowerCase().trim();
+      const isCancelled =
+        sLower === '70' ||
+        sLower === 'cancelled' ||
+        row.isCancelled === 1 ||
+        row.isCancelled === true ||
+        row.isCancelled === '1';
+      if (isCancelled) continue;
+
+      const existingParts = normalizePartsUsedList(row.partsUsed);
+      const hasNoPartsFlag = Number(row.hasNoParts || 0) === 1 || row.hasNoParts === true;
+      const spareCost = Number(row.sparePartsCost || 0);
+
+      if (existingParts.length === 0 && !hasNoPartsFlag && spareCost > 0) {
+        const verifiedParts = VERIFIED_HISTORICAL_PARTS_BACKFILL[itemId].map(p => ({ ...p }));
+        try {
+          await provider.updateDoc('invoice_items', itemId, { partsUsed: verifiedParts }, undefined, true);
+          healedCount++;
+        } catch (err) {
+          console.warn(`[healVerifiedHistoricalMaintenanceParts] Failed updating ${itemId}:`, err);
+        }
+      }
+    }
+
+    if (healedCount > 0 && localDb.hasObservers('invoice_items')) {
+      try {
+        const resAfter = await localDb.query(`SELECT * FROM invoice_items`);
+        localDb.notify('invoice_items', resAfter?.values || []);
+      } catch (_) {}
+    }
+
+    return healedCount;
+  } catch (err) {
+    console.warn('[healVerifiedHistoricalMaintenanceParts] warning:', err);
+    return 0;
+  }
+}
+
+async function computeInventoryUsedAuditPlan(): Promise<{
+  consolidateRes: { mergedCount: number; syncedCount: number };
+  updates: Array<{ stockId: string; updatePayload: { usedQuantity: number; quantity: number; updatedAt: any } }>;
+  preview: InventoryUsedAuditPreview;
+}> {
+  const provider = ProviderFactory.getProvider();
+
+  // Step 0a: Ensure verified historical maintenance partsUsed records are healed first
+  const healedHistoricalCount = await healVerifiedHistoricalMaintenanceParts();
+
+  // Step 0b: Consolidate duplicate non-batch stock items & sync group renames before counting
+  const consolidateRes = await consolidateAndSyncPartsInventory();
+
+  // Load local tombstones & pending outbox operations so deleted items are never resurrected
+  const localTombstonesByTable = new Map<string, Set<string>>();
+  try {
+    const tombRes = await localDb.query(`SELECT tableName, recordId FROM deleted_records`);
+    tombRes?.values?.forEach((row: any) => {
+      if (row?.tableName && row?.recordId) {
+        if (!localTombstonesByTable.has(row.tableName)) {
+          localTombstonesByTable.set(row.tableName, new Set());
+        }
+        localTombstonesByTable.get(row.tableName)!.add(String(row.recordId));
+      }
+    });
+  } catch (e) {}
+
+  const pendingOutboxItemIds = new Set<string>();
+  try {
+    const outRes = await localDb.query(
+      `SELECT recordId FROM outbox WHERE tableName = 'invoice_items' AND status IN ('PENDING', 'FAILED')`
+    );
+    outRes?.values?.forEach((r: any) => {
+      if (r?.recordId) pendingOutboxItemIds.add(String(r.recordId));
+    });
+  } catch (e) {}
+
+  const isTombstoned = (tbl: string, id: string) =>
+    localTombstonesByTable.get(tbl)?.has(String(id)) ?? false;
+
+  // 1. Fetch all shop inventory items (Local SQLite + best-effort Cloud merge)
+  const stockMap = new Map<string, any>();
+  try {
+    const resStock = await localDb.query(`SELECT * FROM shop_parts_inventory`);
+    resStock?.values?.forEach(s => { if (s.id) stockMap.set(String(s.id), s); });
+  } catch (e) {}
+  if (stockMap.size === 0) {
     try {
       const snapStock = await getDocs(collection(db, 'shop_parts_inventory'));
       snapStock.forEach(d => {
         if (!stockMap.has(d.id)) stockMap.set(d.id, { id: d.id, ...d.data() });
       });
     } catch (e) {}
-    const allStocksList = Array.from(stockMap.values());
+  }
+  const allStocksList = Array.from(stockMap.values());
 
-    // 2. Fetch all invoices to build a reliable Purchase Lookup & Cancellation Map
-    const invoicesMap = new Map<string, { isPurchase: boolean; isCancelled: boolean }>();
-    try {
-      const resInv = await localDb.query(`SELECT id, isPurchase, invoiceType, type, templateType, invoiceNumber, status, isCancelled FROM invoices`);
-      resInv?.values?.forEach(inv => {
-        const isPur = checkIsPurchase(inv);
-        const isCanc = inv.status === 'cancelled' || inv.status === '70' || inv.isCancelled === 1 || inv.isCancelled === true;
-        const entry = { isPurchase: isPur, isCancelled: isCanc };
-        if (inv.id) invoicesMap.set(String(inv.id), entry);
-        if (inv.invoiceNumber) {
-          invoicesMap.set(normalizeInvoiceNum(inv.invoiceNumber), entry);
-          invoicesMap.set(String(inv.invoiceNumber).trim(), entry);
-        }
-      });
-    } catch (e) {}
+  // 1b. Fetch parts_catalog to resolve renamed parts by partId <-> name
+  const catalogMap = new Map<string, any>();
+  try {
+    const resCat = await localDb.query(`SELECT * FROM parts_catalog`);
+    resCat?.values?.forEach(c => { if (c.id) catalogMap.set(String(c.id), c); });
+  } catch (e) {}
+  const cloudCatalog = await fetchCloudDocsSafe('parts_catalog', 3500);
+  for (const cc of cloudCatalog) {
+    if (cc.id && !catalogMap.has(String(cc.id)) && !isTombstoned('parts_catalog', String(cc.id))) {
+      catalogMap.set(String(cc.id), cc);
+    }
+  }
+  const catalogList = Array.from(catalogMap.values());
+
+  // 2. Fetch all invoices (Local SQLite + best-effort Cloud merge)
+  const rawInvoicesMap = new Map<string, any>();
+  try {
+    const resInv = await localDb.query(`SELECT * FROM invoices`);
+    resInv?.values?.forEach(inv => {
+      if (inv?.id) rawInvoicesMap.set(String(inv.id), inv);
+    });
+  } catch (e) {}
+  if (rawInvoicesMap.size === 0) {
     try {
       const snapInv = await getDocs(collection(db, 'invoices'));
       snapInv.forEach(d => {
-        const data = d.data();
-        const id = d.id;
-        const isPur = checkIsPurchase({ id, ...data });
-        const isCanc = data.status === 'cancelled' || data.status === '70' || data.isCancelled === 1 || data.isCancelled === true;
-        const entry = { isPurchase: isPur, isCancelled: isCanc };
-        if (!invoicesMap.has(id)) invoicesMap.set(id, entry);
-        if (data.invoiceNumber) {
-          invoicesMap.set(normalizeInvoiceNum(data.invoiceNumber), entry);
-          invoicesMap.set(String(data.invoiceNumber).trim(), entry);
-        }
+        if (!rawInvoicesMap.has(d.id)) rawInvoicesMap.set(d.id, { id: d.id, ...d.data() });
       });
     } catch (e) {}
+  }
+  const cloudInvoices = await fetchCloudDocsSafe('invoices', 4500);
+  for (const cInv of cloudInvoices) {
+    const cid = String(cInv.id || '');
+    if (!cid || isTombstoned('invoices', cid)) continue;
+    if (!rawInvoicesMap.has(cid)) {
+      rawInvoicesMap.set(cid, cInv);
+    }
+  }
 
-    // 3. Fetch ALL invoice_items (Merge + De-duplicate)
-    const itemsMap = new Map<string, any>();
-    try {
-      const resItems = await localDb.query(`SELECT * FROM invoice_items`);
-      resItems?.values?.forEach(it => { if (it.id) itemsMap.set(String(it.id), it); });
-    } catch (e) {}
+  // 3. Fetch ALL invoice_items (Local SQLite + best-effort Cloud merge & partsUsed recovery)
+  const itemsMap = new Map<string, any>();
+  try {
+    const resItems = await localDb.query(`SELECT * FROM invoice_items`);
+    resItems?.values?.forEach(it => { if (it.id) itemsMap.set(String(it.id), it); });
+  } catch (e) {}
+  if (itemsMap.size === 0) {
     try {
       const snapItems = await getDocs(collection(db, 'invoice_items'));
       snapItems.forEach(d => {
@@ -1503,99 +1778,303 @@ export async function recalculateInventoryUsedQuantities(): Promise<{ updatedCou
         }
       });
     } catch (e) {}
+  }
 
-    // 4. Collect stats in two passes:
-    //    Pass A: Direct purchase & sale invoice items (establish total 'purchased' per stock ID first)
-    //    Pass B: Maintenance partsUsed (distribute against remaining capacity if multiple candidates exist)
-    const statsMap = new Map<string, { purchased: number; used: number }>();
-    const ensureStats = (sId: string) => {
-      if (!statsMap.has(sId)) statsMap.set(sId, { purchased: 0, used: 0 });
-      return statsMap.get(sId)!;
-    };
+  const cloudItems = await fetchCloudDocsSafe('invoice_items', 5000);
+  for (const cItem of cloudItems) {
+    const cid = String(cItem.id || '');
+    if (!cid || isTombstoned('invoice_items', cid)) continue;
 
-    const maintenancePartsQueue: Array<{ partId?: string; partName?: string; qty: number }> = [];
-
-    for (const item of itemsMap.values()) {
-      const isItemCancelled = item.status === 'cancelled' || item.status === '70' || item.isCancelled === 1 || item.isCancelled === true;
-      if (isItemCancelled) continue;
-
-      const invoiceId = String(item.invoiceId || '');
-      const cleanInvNum = normalizeInvoiceNum(item.invoiceNumber);
-      const parentInv = invoicesMap.get(invoiceId) || invoicesMap.get(cleanInvNum) || invoicesMap.get(String(item.invoiceNumber || '').trim());
-      if (parentInv?.isCancelled) continue;
-
-      const isItemPurchase = item.isPurchase === true || item.isPurchase === 1 || item.isPurchase === '1';
-      const isInvoicePurchase = parentInv?.isPurchase === true;
-      const isActuallyPurchase = isItemPurchase || isInvoicePurchase || String(item.source || '').toLowerCase().includes('purchase');
-      const isDirectSale = String(item.source || '').toLowerCase().startsWith('sale_');
-
-      // A) Direct Part Item (Sale or Purchase)
-      if (item.partInventoryId || isActuallyPurchase || isDirectSale) {
-        let targetStockId = item.partInventoryId && stockMap.has(String(item.partInventoryId))
-          ? String(item.partInventoryId)
-          : '';
-
-        if (!targetStockId) {
-          const itemName = item.deviceName || item.deviceType || item.name || '';
-          const fallbackMatch = findMatchingStockCandidates(allStocksList, {
-            partId: item.partId,
-            partName: itemName,
-            batchId: item.batchId || undefined
-          })[0];
-          if (fallbackMatch?.id) {
-            targetStockId = String(fallbackMatch.id);
-          }
-        }
-
-        if (targetStockId) {
-          const st = ensureStats(targetStockId);
-          const qty = Number(item.quantity || 0);
-          if (isActuallyPurchase) {
-            st.purchased += qty;
-          } else {
-            st.used += qty;
-          }
-        }
+    const existingLocal = itemsMap.get(cid);
+    if (!existingLocal) {
+      if (cItem.partsUsed !== undefined) {
+        cItem.partsUsed = normalizePartsUsedList(cItem.partsUsed);
       }
+      itemsMap.set(cid, cItem);
+    } else {
+      const localParts = normalizePartsUsedList(existingLocal.partsUsed);
+      const cloudParts = normalizePartsUsedList(cItem.partsUsed);
+      if (localParts.length === 0 && cloudParts.length > 0 && !pendingOutboxItemIds.has(cid)) {
+        const localStatusLower = String(existingLocal.status || '').toLowerCase().trim();
+        const localSubLower = String(existingLocal.subStatus || '').toLowerCase().trim();
+        const localIsFailure =
+          ['70', 'cancelled', '55', '45', 'unrepairable', 'refused', 'no_parts', 'intact'].includes(localStatusLower) ||
+          ['unrepairable', 'refused', 'no_parts', 'customer_refused', 'cancelled', 'intact'].includes(localSubLower);
+        const localMs = parseAuditTimestampMs(existingLocal.updatedAt);
+        const cloudMs = parseAuditTimestampMs(cItem.updatedAt);
+        const localWasCorruptOrEmpty =
+          existingLocal.partsUsed === null ||
+          existingLocal.partsUsed === undefined ||
+          existingLocal.partsUsed === '' ||
+          (typeof existingLocal.partsUsed === 'string' && !existingLocal.partsUsed.trim().startsWith('['));
 
-      // B) Maintenance Item with partsUsed
-      let partsList: any[] = [];
-      if (item.partsUsed) {
-        if (typeof item.partsUsed === 'string') {
+        if (!localIsFailure && (cloudMs >= localMs || localWasCorruptOrEmpty || localMs === 0)) {
+          existingLocal.partsUsed = cloudParts;
           try {
-            const parsed = JSON.parse(item.partsUsed);
-            if (Array.isArray(parsed)) partsList = parsed;
+            await provider.updateDoc('invoice_items', cid, { partsUsed: cloudParts }, undefined, true);
           } catch (e) {}
-        } else if (Array.isArray(item.partsUsed)) {
-          partsList = item.partsUsed;
+        }
+      }
+    }
+  }
+
+  // Build invoice lookup map AND track whether an invoice with status '70' actually has repaired/active items
+  const nonCancelledItemsCountByInvKey = new Map<string, number>();
+  const nonDeductedStatuses = new Set([
+    '10', 'new',
+    '20', '21', '22', 'inspection', 'testing', 'inspected',
+    '25', '30', 'waiting_approval', 'awaiting_approval',
+    '35', 'waiting_parts', 'awaiting_parts',
+    '40', 'repairing', 'in_progress',
+    '45', '70', 'cancelled'
+  ]);
+
+  for (const it of itemsMap.values()) {
+    const sLower = String(it.status || '').toLowerCase().trim();
+    const itCanc =
+      sLower === 'cancelled' ||
+      sLower === '70' ||
+      it.isCancelled === 1 ||
+      it.isCancelled === true ||
+      it.isCancelled === '1';
+    const invId = String(it.invoiceId || '').trim();
+    const cleanNum = normalizeInvoiceNum(it.invoiceNumber);
+    const rawNum = String(it.invoiceNumber || '').trim();
+    for (const k of [invId, cleanNum, rawNum]) {
+      if (!k) continue;
+      if (!itCanc) {
+        nonCancelledItemsCountByInvKey.set(k, (nonCancelledItemsCountByInvKey.get(k) || 0) + 1);
+      }
+    }
+  }
+
+  const invoicesMap = new Map<string, { isPurchase: boolean; isSaleParts: boolean; isWhollyCancelled: boolean }>();
+  for (const inv of rawInvoicesMap.values()) {
+    if (!inv) continue;
+    const isPur = isStructuralPurchaseInvoice(inv);
+    const tLower = String(inv.invoiceType || inv.type || inv.templateType || '').toLowerCase().trim();
+    const sLower = String(inv.status || '').toLowerCase().trim();
+    const isSP = !isPur && (tLower === 'sale_parts' || tLower === 'parts' || sLower === 'sale_parts');
+
+    const explicitCancelFlag =
+      sLower === 'cancelled' ||
+      inv.isCancelled === 1 ||
+      inv.isCancelled === true ||
+      inv.isCancelled === '1';
+
+    const keys = [
+      inv.id ? String(inv.id).trim() : '',
+      inv.invoiceNumber ? normalizeInvoiceNum(inv.invoiceNumber) : '',
+      inv.invoiceNumber ? String(inv.invoiceNumber).trim() : ''
+    ].filter(Boolean);
+
+    const hasActiveNonCancelledItems = keys.some(k => (nonCancelledItemsCountByInvKey.get(k) || 0) > 0);
+    const isWhollyCancelled =
+      (explicitCancelFlag || sLower === '70') && !hasActiveNonCancelledItems;
+
+    const entry = { isPurchase: isPur, isSaleParts: isSP, isWhollyCancelled };
+    for (const k of keys) {
+      invoicesMap.set(k, entry);
+    }
+  }
+
+  // 4. Collect stats in deterministic passes
+  const statsMap = new Map<string, { purchased: number; used: number }>();
+  const ensureStats = (sId: string) => {
+    if (!statsMap.has(sId)) statsMap.set(sId, { purchased: 0, used: 0 });
+    return statsMap.get(sId)!;
+  };
+
+  const directSaleQueue: Array<{ stockId?: string; partId?: string; partName?: string; batchId?: string; qty: number }> = [];
+  const maintenancePartsQueue: Array<{ partId?: string; partName?: string; qty: number }> = [];
+  const unlinkedMaintenanceItems: UnlinkedMaintenanceItemWarning[] = [];
+
+  const nonFailureReasonTexts = new Set([
+    '',
+    '-',
+    '--',
+    '---',
+    'لا يوجد',
+    'جاهز',
+    'سليم',
+    'انتظار قطع الغيار',
+    'في انتظار قطع الغيار',
+    'تم الإصلاح',
+    'none',
+    'null',
+    'ready'
+  ]);
+
+  for (const item of itemsMap.values()) {
+    const itemStatusLower = String(item.status || '').toLowerCase().trim();
+    const isItemCancelled =
+      itemStatusLower === 'cancelled' ||
+      itemStatusLower === '70' ||
+      item.isCancelled === 1 ||
+      item.isCancelled === true ||
+      item.isCancelled === '1';
+    if (isItemCancelled) continue;
+
+    const invoiceId = String(item.invoiceId || '').trim();
+    const cleanInvNum = normalizeInvoiceNum(item.invoiceNumber);
+    const parentInv =
+      invoicesMap.get(invoiceId) ||
+      invoicesMap.get(cleanInvNum) ||
+      invoicesMap.get(String(item.invoiceNumber || '').trim());
+    if (parentInv?.isWhollyCancelled) continue;
+
+    const itemSourceLower = String(item.source || '').toLowerCase().trim();
+    const isItemPurchase = item.isPurchase === true || item.isPurchase === 1 || item.isPurchase === '1';
+    const isInvoicePurchase = parentInv?.isPurchase === true;
+    const isActuallyPurchase = isItemPurchase || isInvoicePurchase || itemSourceLower.includes('purchase');
+
+    const isDirectSaleParts =
+      !isActuallyPurchase &&
+      (Boolean(item.partInventoryId) ||
+        itemSourceLower === 'sale_parts' ||
+        itemStatusLower === 'sale_parts' ||
+        (Boolean(parentInv?.isSaleParts) && itemSourceLower !== 'maintenance'));
+
+    // A) Direct Part Item (Purchase or Direct Sale)
+    if (isActuallyPurchase) {
+      let targetStockId = item.partInventoryId && stockMap.has(String(item.partInventoryId))
+        ? String(item.partInventoryId)
+        : '';
+
+      if (!targetStockId) {
+        const itemName = item.deviceName || item.deviceType || item.name || '';
+        const fallbackMatch = findMatchingStockCandidates(allStocksList, {
+          partId: item.partId,
+          partName: itemName,
+          batchId: item.batchId || undefined
+        })[0];
+        if (fallbackMatch?.id) {
+          targetStockId = String(fallbackMatch.id);
         }
       }
 
-      if (partsList.length > 0) {
-        const isFailedOrRefused = item.failureReason || item.subStatus === 'unrepairable' || item.subStatus === 'refused';
-        if (!isFailedOrRefused) {
+      if (targetStockId) {
+        ensureStats(targetStockId).purchased += Number(item.quantity || 0);
+      }
+    } else if (isDirectSaleParts) {
+      const qty = Number(item.quantity || 0);
+      if (qty > 0) {
+        directSaleQueue.push({
+          stockId: item.partInventoryId ? String(item.partInventoryId) : undefined,
+          partId: item.partId ? String(item.partId) : undefined,
+          partName: item.deviceName || item.deviceType || item.name || '',
+          batchId: item.batchId ? String(item.batchId) : undefined,
+          qty
+        });
+      }
+    }
+
+    // B) Maintenance Item with partsUsed
+    const partsList = normalizePartsUsedList(item.partsUsed);
+
+    if (item.id && partsList.length > 0 && item.partsUsed) {
+      const needsHeal =
+        (typeof item.partsUsed === 'string' && !item.partsUsed.trim().startsWith('[')) ||
+        (typeof item.partsUsed === 'object' && !Array.isArray(item.partsUsed));
+      if (needsHeal) {
+        try {
+          await provider.updateDoc('invoice_items', String(item.id), { partsUsed: partsList }, undefined, true);
+        } catch (e) {}
+      }
+    }
+
+    if (!isActuallyPurchase && !isDirectSaleParts) {
+      const subStatusLower = String(item.subStatus || '').toLowerCase().trim();
+      const reasonClean = cleanDisplayText(item.failureReason).toLowerCase();
+
+      const isExplicitRepaired = ['ready', 'repaired', 'delivered', 'completed'].includes(subStatusLower);
+      const isTerminalSubFailure = [
+        'unrepairable', 'refused', 'no_parts', 'customer_refused',
+        'failed', 'parts_not_available', 'cancelled', 'intact'
+      ].includes(subStatusLower);
+      const isTerminalStatusFailure = [
+        'unrepairable', 'refused', 'no_parts', 'parts_not_available',
+        'intact', '55', '45', '70', 'cancelled'
+      ].includes(itemStatusLower);
+      const isTerminalSourceFailure = ['refused', 'unrepairable', 'failed', 'cancelled'].includes(itemSourceLower);
+      const hasMeaningfulFailureReason =
+        !isExplicitRepaired &&
+        !subStatusLower &&
+        Boolean(reasonClean) &&
+        !nonFailureReasonTexts.has(reasonClean) &&
+        (
+          reasonClean.includes('لا يصلح') ||
+          reasonClean.includes('لم يوافق') ||
+          reasonClean.includes('رفض') ||
+          reasonClean.includes('عدم توفر') ||
+          reasonClean.includes('لم تتوفر') ||
+          reasonClean.includes('ملغ') ||
+          reasonClean.includes('انسحاب') ||
+          reasonClean.includes('سليم')
+        );
+
+      const isFailedOrRefused =
+        isTerminalSubFailure ||
+        isTerminalStatusFailure ||
+        isTerminalSourceFailure ||
+        hasMeaningfulFailureReason;
+
+      const isNotYetRepaired = nonDeductedStatuses.has(itemStatusLower);
+
+      if (!isFailedOrRefused && !isNotYetRepaired) {
+        if (partsList.length > 0) {
           for (const p of partsList) {
             if (p.isScrap === true || p.isScrap === 1 || p.isScrap === '1') continue;
+            const rawQty = p.quantity ?? p.count ?? p.qty ?? 1;
+            const partQty = Number(rawQty);
+            if (!isFinite(partQty) || partQty <= 0) continue;
+
+            const partName = cleanDisplayText(p.partName || p.name || p.part || '');
+            const partId = String(p.partId || p.id || '').trim() || undefined;
+            if (!partId && !partName) continue;
+
             maintenancePartsQueue.push({
-              partId: p.partId || p.id,
-              partName: p.partName,
-              qty: Number(p.quantity || 1)
+              partId,
+              partName,
+              qty: partQty
+            });
+          }
+        } else {
+          // Track active repaired maintenance items that indicate parts (hasNoParts===0 or sparePartsCost>0)
+          // yet have empty partsUsed[] so the user is warned if stock counters would drop!
+          const spareCost = Number(item.sparePartsCost || 0);
+          const hasNoPartsExplicitFalse =
+            item.hasNoParts === 0 || item.hasNoParts === false || item.hasNoParts === '0';
+          if (spareCost > 0 || hasNoPartsExplicitFalse) {
+            unlinkedMaintenanceItems.push({
+              itemId: String(item.id || ''),
+              invoiceNumber: String(item.invoiceNumber || ''),
+              deviceName: cleanDisplayText(item.deviceName || item.deviceType || ''),
+              sparePartsCost: spareCost,
+              engineerReport: cleanDisplayText(item.engineerReport || '')
             });
           }
         }
       }
     }
+  }
 
-    // Pass B: Distribute maintenance part deductions across candidate stock items cleanly
-    for (const mp of maintenancePartsQueue) {
-      const candidates = findMatchingStockCandidates(allStocksList, {
-        partId: mp.partId,
-        partName: mp.partName
-      });
-      if (candidates.length === 0) continue;
+  const allocateConsumption = (candidates: any[], totalQty: number, preferredStockId?: string) => {
+    if (totalQty <= 0) return;
 
-      // Sort with non-batch first and available capacity (purchased - used > 0) first
-      const prioritized = [...candidates].sort((a, b) => {
+    const seen = new Set<string>();
+    const ordered: any[] = [];
+    if (preferredStockId && stockMap.has(preferredStockId)) {
+      const pref = stockMap.get(preferredStockId);
+      if (pref) {
+        ordered.push(pref);
+        seen.add(preferredStockId);
+      }
+    }
+
+    const sortedOthers = candidates
+      .filter(c => c?.id && !seen.has(String(c.id)))
+      .sort((a, b) => {
         const stA = statsMap.get(String(a.id)) || { purchased: 0, used: 0 };
         const stB = statsMap.get(String(b.id)) || { purchased: 0, used: 0 };
         const capA = stA.purchased - stA.used;
@@ -1609,65 +2088,170 @@ export async function recalculateInventoryUsedQuantities(): Promise<{ updatedCou
         return capB - capA;
       });
 
-      let remaining = mp.qty;
-      for (const cand of prioritized) {
-        if (remaining <= 0) break;
-        const sId = String(cand.id);
-        const st = ensureStats(sId);
-        const availableCap = st.purchased - st.used;
-        if (availableCap > 0) {
-          const take = Math.min(availableCap, remaining);
-          st.used += take;
-          remaining -= take;
-        }
-      }
+    ordered.push(...sortedOthers);
+    if (ordered.length === 0) return;
 
-      if (remaining > 0) {
-        const primary = prioritized.find(c => isNonBatchStock(c)) || prioritized[0];
-        if (primary?.id) {
-          ensureStats(String(primary.id)).used += remaining;
-        }
+    let remaining = totalQty;
+    for (const cand of ordered) {
+      if (remaining <= 0) break;
+      const sId = String(cand.id);
+      const st = ensureStats(sId);
+      const availableCap = st.purchased - st.used;
+      if (availableCap > 0) {
+        const take = Math.min(availableCap, remaining);
+        st.used += take;
+        remaining -= take;
       }
     }
 
-    // 5. Update stock records (preserving accurate negative deficits when used > purchased!)
-    let updatedCount = 0;
-    for (const stock of allStocksList) {
-      const sId = String(stock.id);
-      const st = statsMap.get(sId) || { purchased: 0, used: 0 };
-
-      const currentUsed = Number(stock.usedQuantity || 0);
-      const currentQty = Number(stock.quantity || 0);
-
-      const targetUsed = st.used;
-      let targetQty = currentQty;
-
-      // Invariant: Available = Purchased - Used (allows negative balance when overspent)
-      if (st.purchased > 0) {
-        targetQty = st.purchased - targetUsed;
-      } else {
-        const totalStock = currentQty + currentUsed;
-        if (totalStock > 0) {
-          targetQty = totalStock - targetUsed;
-        } else {
-          targetQty = 0 - targetUsed;
-        }
+    if (remaining > 0) {
+      const fallbackPrimary =
+        (preferredStockId && stockMap.has(preferredStockId) ? stockMap.get(preferredStockId) : null) ||
+        ordered.find(c => isNonBatchStock(c)) ||
+        ordered[0];
+      if (fallbackPrimary?.id) {
+        ensureStats(String(fallbackPrimary.id)).used += remaining;
       }
+    }
+  };
 
-      if (targetUsed !== currentUsed || targetQty !== currentQty) {
-        const updatePayload = {
+  const resolveStockCandidatesForPart = (partId?: string, partName?: string) => {
+    let candidates = findMatchingStockCandidates(allStocksList, { partId, partName });
+    if (candidates.length === 0 && catalogList.length > 0) {
+      const matchedCat = findMatchingCatalogPart(catalogList, partId, partName);
+      if (matchedCat) {
+        candidates = findMatchingStockCandidates(allStocksList, {
+          partId: matchedCat.id,
+          partName: matchedCat.name
+        });
+      }
+    }
+    return candidates;
+  };
+
+  // Pass B1: Direct part sales
+  for (const ds of directSaleQueue) {
+    const candidates = resolveStockCandidatesForPart(ds.partId, ds.partName);
+    allocateConsumption(candidates, ds.qty, ds.stockId);
+  }
+
+  // Pass B2: Maintenance part deductions
+  for (const mp of maintenancePartsQueue) {
+    const candidates = resolveStockCandidatesForPart(mp.partId, mp.partName);
+    allocateConsumption(candidates, mp.qty);
+  }
+
+  const updates: Array<{ stockId: string; updatePayload: { usedQuantity: number; quantity: number; updatedAt: any } }> = [];
+  const revertedItems: InventoryAuditRevertedStock[] = [];
+  const electronicBefore = { available: 0, used: 0 };
+  const electronicAfter = { available: 0, used: 0 };
+  const accessoryBefore = { available: 0, used: 0 };
+  const accessoryAfter = { available: 0, used: 0 };
+
+  for (const stock of allStocksList) {
+    const sId = String(stock.id);
+    const st = statsMap.get(sId) || { purchased: 0, used: 0 };
+
+    const currentUsed = Number(stock.usedQuantity || 0);
+    const currentQty = Number(stock.quantity || 0);
+
+    const targetUsed = st.used;
+    let targetQty = currentQty;
+
+    if (st.purchased > 0) {
+      targetQty = st.purchased - targetUsed;
+    } else {
+      const totalStock = currentQty + currentUsed;
+      targetQty = totalStock - targetUsed;
+    }
+
+    if (stock.itemType === 'electronic_part') {
+      electronicBefore.available += Math.max(0, currentQty);
+      electronicBefore.used += currentUsed;
+      electronicAfter.available += Math.max(0, targetQty);
+      electronicAfter.used += targetUsed;
+    } else if (stock.itemType === 'accessory_part') {
+      accessoryBefore.available += Math.max(0, currentQty);
+      accessoryBefore.used += currentUsed;
+      accessoryAfter.available += Math.max(0, targetQty);
+      accessoryAfter.used += targetUsed;
+    }
+
+    if (targetUsed < currentUsed) {
+      revertedItems.push({
+        stockId: sId,
+        name: cleanDisplayText(stock.name || ''),
+        itemType: String(stock.itemType || 'electronic_part'),
+        purchased: st.purchased,
+        currentQty,
+        currentUsed,
+        targetQty,
+        targetUsed,
+        usedDelta: targetUsed - currentUsed
+      });
+    }
+
+    if (targetUsed !== currentUsed || targetQty !== currentQty) {
+      updates.push({
+        stockId: sId,
+        updatePayload: {
           usedQuantity: targetUsed,
           quantity: targetQty,
           updatedAt: serverTimestamp()
-        };
-        try {
-          await provider.updateDoc('shop_parts_inventory', sId, updatePayload);
-          await updateDoc(doc(db, 'shop_parts_inventory', sId), updatePayload);
-          updatedCount++;
-        } catch (e) {
-          console.warn(`Failed to update stock ${sId}:`, e);
         }
+      });
+    }
+  }
+
+  return {
+    consolidateRes,
+    updates,
+    preview: {
+      healedHistoricalCount,
+      updatedCount: updates.length + consolidateRes.mergedCount + consolidateRes.syncedCount,
+      revertedItems,
+      unlinkedMaintenanceItems,
+      electronicBefore,
+      electronicAfter,
+      accessoryBefore,
+      accessoryAfter
+    }
+  };
+}
+
+/**
+ * Inspects and previews the effect of recalculating inventory usedQuantity without modifying stock counts.
+ * Heals verified historical partsUsed entries first, then flags any remaining stock deductions that would shrink.
+ */
+export async function previewInventoryUsedAudit(): Promise<InventoryUsedAuditPreview> {
+  const { preview } = await computeInventoryUsedAuditPlan();
+  return preview;
+}
+
+/**
+ * Recalculates 'usedQuantity' and 'quantity' for all items in shop_parts_inventory based on historical invoice_items.
+ * Heals verified historical partsUsed, consolidates duplicates first, recovers cloud partsUsed payloads, and distributes deductions idempotently.
+ */
+export async function recalculateInventoryUsedQuantities(): Promise<{ updatedCount: number }> {
+  try {
+    const provider = ProviderFactory.getProvider();
+    const { consolidateRes, updates } = await computeInventoryUsedAuditPlan();
+
+    let updatedCount = 0;
+    for (const { stockId, updatePayload } of updates) {
+      try {
+        await provider.updateDoc('shop_parts_inventory', stockId, updatePayload, undefined, true);
+        updatedCount++;
+      } catch (e) {
+        console.warn(`Failed to update stock ${stockId}:`, e);
       }
+    }
+
+    if (updatedCount > 0) {
+      try {
+        const resAfter = await localDb.query(`SELECT * FROM shop_parts_inventory`);
+        localDb.notify('shop_parts_inventory', resAfter?.values || []);
+      } catch (e) {}
     }
 
     return { updatedCount: updatedCount + consolidateRes.mergedCount + consolidateRes.syncedCount };
@@ -1676,5 +2260,6 @@ export async function recalculateInventoryUsedQuantities(): Promise<{ updatedCou
     return { updatedCount: 0 };
   }
 }
+
 
 

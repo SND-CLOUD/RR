@@ -3,6 +3,7 @@ import { localDb } from '../lib/local-db';
 import { generateUUID } from './utils';
 import { parseDate } from '../lib/dateUtils';
 import { ProviderFactory } from './ProviderFactory';
+import { normalizePartsUsedList } from '../lib/partsNormalization';
 
 export class LocalProvider implements IDataProvider {
   async getDoc(collectionName: string, id: string): Promise<any> {
@@ -163,7 +164,10 @@ export class LocalProvider implements IDataProvider {
       const finalData: Record<string, any> = {};
       Object.keys(mergedData).forEach(key => {
         if (validColumnsSet.has(key)) {
-          const rawVal = mergedData[key];
+          let rawVal = mergedData[key];
+          if (key === 'partsUsed' && rawVal !== null && rawVal !== undefined) {
+            rawVal = normalizePartsUsedList(rawVal);
+          }
           if (rawVal && typeof rawVal === 'object') {
             if (rawVal.type === 'increment') {
               if (transactionGroupId === 'BYPASS_OUTBOX') {
@@ -248,7 +252,10 @@ export class LocalProvider implements IDataProvider {
         console.warn(`[LocalProvider] Ignoring field "${key}" not found in local table "${collectionName}" during update`);
         return;
       }
-      const val = data[key];
+      let val = data[key];
+      if (key === 'partsUsed' && val !== null && val !== undefined) {
+        val = normalizePartsUsedList(val);
+      }
       if (val && typeof val === 'object') {
         if (val.type === 'increment') {
           increments.push({ key, value: val.value });
@@ -527,17 +534,10 @@ export class LocalProvider implements IDataProvider {
     if (docData.permissions && typeof docData.permissions === 'string') {
       try { docData.permissions = JSON.parse(docData.permissions); } catch (e) {}
     }
-    if (docData.partsUsed && typeof docData.partsUsed === 'string') {
-      try {
-        let parsed = JSON.parse(docData.partsUsed);
-        // Handle double-encoded JSON string
-        if (typeof parsed === 'string' && (parsed.startsWith('[') || parsed.startsWith('{'))) {
-          try { parsed = JSON.parse(parsed); } catch (e) {}
-        }
-        docData.partsUsed = Array.isArray(parsed) ? parsed : [];
-      } catch (e) {
-        docData.partsUsed = [];
-      }
+    if (docData.partsUsed !== undefined && docData.partsUsed !== null && docData.partsUsed !== '') {
+      docData.partsUsed = normalizePartsUsedList(docData.partsUsed);
+    } else if (docData.partsUsed === '') {
+      docData.partsUsed = [];
     }
   }
 
