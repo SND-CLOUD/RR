@@ -1206,70 +1206,83 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                </div>
 
                {/* تقرير الصيانة */}
-               <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2.5 w-full">
-                 <div className="flex flex-row items-center gap-2.5 flex-1">
-                   <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">تقرير الصيانة</label>
-                   <input 
-                     type="text"
-                     value={currentFormRow.reason}
-                     onChange={e => handleUpdateCurrentForm('reason', e.target.value)}
-                     onFocus={(e) => {
-                       e.target.select();
-                       e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+               <div className="flex flex-row items-center gap-2.5 w-full">
+                 <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">تقرير الصيانة</label>
+                 <input 
+                   type="text"
+                   value={currentFormRow.reason}
+                   onChange={e => handleUpdateCurrentForm('reason', e.target.value)}
+                   onFocus={(e) => {
+                     e.target.select();
+                     e.target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                   }}
+                   onClick={(e) => {
+                     e.currentTarget.select();
+                   }}
+                   className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 focus:border-orange-500 outline-none transition-all text-xs text-right text-white box-border"
+                 />
+               </div>
+
+               {/* مربع اختيار بدون قطع محاذي لتسميات الحقول + الحقل الذكي المدمج لقطع الغيار */}
+               <div className={`flex flex-row items-center gap-2.5 w-full ${currentFormRow.outcome !== "repaired" ? "opacity-40 grayscale pointer-events-none" : ""}`}>
+                 <label className="w-24 shrink-0 flex items-center gap-1.5 cursor-pointer select-none">
+                   <input
+                     type="checkbox"
+                     checked={currentFormRow.hasNoParts ?? true}
+                     disabled={currentFormRow.outcome !== "repaired"}
+                     onChange={(e) => {
+                       const checked = e.target.checked;
+                       setCurrentFormRow(prev => ({
+                         ...prev,
+                         hasNoParts: checked,
+                         partsUsed: checked ? [] : prev.partsUsed
+                       }));
                      }}
-                     onClick={(e) => {
-                       e.currentTarget.select();
-                     }}
-                     className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 focus:border-orange-500 outline-none transition-all text-xs text-right text-white box-border"
+                     className="w-4 h-4 rounded text-orange-600 focus:ring-0 cursor-pointer disabled:cursor-not-allowed shrink-0"
                    />
-                 </div>
+                   <span className="text-xs font-bold text-gray-400 whitespace-nowrap">بدون قطع</span>
+                 </label>
 
-                 {/* مربع اختيار بدون قطع + زر عرض / تحديد القطع */}
-                 <div className={`flex items-center gap-2 bg-white/5 border border-white/10 p-1.5 px-3 rounded-xl shrink-0 ${currentFormRow.outcome !== "repaired" ? "opacity-40 grayscale pointer-events-none" : ""}`}>
-                   <label className="flex items-center gap-1.5 cursor-pointer select-none">
-                     <input
-                       type="checkbox"
-                       checked={currentFormRow.hasNoParts ?? true} disabled={currentFormRow.outcome !== "repaired"}
-                       onChange={(e) => {
-                         const checked = e.target.checked;
-                         setCurrentFormRow(prev => ({
-                           ...prev,
-                           hasNoParts: checked,
-                           partsUsed: checked ? [] : prev.partsUsed
-                         }));
-                       }}
-                       className="w-4 h-4 rounded text-orange-600 focus:ring-0 cursor-pointer disabled:cursor-not-allowed"
-                     />
-                     <span className="text-xs font-bold text-gray-300 whitespace-nowrap">بدون قطع</span>
-                   </label>
-
-                   <button
-                     type="button"
-                     disabled={(currentFormRow.hasNoParts ?? true) || currentFormRow.outcome !== "repaired"}
-                     onClick={() => setShowPartsModal(true)}
-                     className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-all flex items-center gap-1.5 border whitespace-nowrap ${((currentFormRow.hasNoParts ?? true) || currentFormRow.outcome !== "repaired") ? "bg-white/5 text-gray-600 border-white/5 cursor-not-allowed opacity-40" : "bg-orange-600/30 hover:bg-orange-600 text-orange-300 hover:text-white border-orange-500/40 cursor-pointer shadow-sm"}`}
-                   >
+                 <button
+                   type="button"
+                   disabled={(currentFormRow.hasNoParts ?? true) || currentFormRow.outcome !== "repaired"}
+                   onClick={() => setShowPartsModal(true)}
+                   title={(currentFormRow.hasNoParts ?? true) ? 'قم بإلغاء تحديد بدون قطع لاختيار قطع الغيار' : 'اضغط لعرض أو تعديل قطع الغيار'}
+                   className={`flex-1 min-w-0 min-h-[40px] rounded-lg px-3 py-2 text-xs flex items-center justify-between gap-2 border transition-all text-right ${
+                     (currentFormRow.hasNoParts ?? true) || currentFormRow.outcome !== "repaired"
+                       ? 'bg-black/30 border-white/5 text-gray-500 cursor-not-allowed opacity-60'
+                       : 'bg-black/40 border-orange-500/40 hover:border-orange-400 hover:bg-orange-500/5 text-white cursor-pointer shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-500/50'
+                   }`}
+                 >
+                   <div className="flex-1 min-w-0 overflow-x-auto whitespace-nowrap scrollbar-thin scrollbar-thumb-white/10 flex items-center">
+                     {(currentFormRow.hasNoParts ?? true) ? (
+                       <span className="text-gray-500">بدون قطع</span>
+                     ) : (!currentFormRow.partsUsed || currentFormRow.partsUsed.length === 0) ? (
+                       <span className="text-orange-400 font-medium">اضغط لاختيار قطع الغيار...</span>
+                     ) : (
+                       currentFormRow.partsUsed.map((p, idx) => (
+                         <span key={idx} className="inline-flex items-center">
+                           {idx > 0 && <span className="mx-1 text-gray-500">/</span>}
+                           <span className="font-mono text-white">{p.partName}-{p.quantity}</span>
+                         </span>
+                       ))
+                     )}
+                   </div>
+                   <span className={`shrink-0 flex items-center gap-1.5 text-[11px] font-bold whitespace-nowrap ${
+                     (currentFormRow.hasNoParts ?? true) || currentFormRow.outcome !== "repaired"
+                       ? 'text-gray-600'
+                       : 'text-orange-400'
+                   }`}>
                      <Cpu size={14} />
-                     <span>عرض / تعديل القطع {(currentFormRow.partsUsed && currentFormRow.partsUsed.length > 0) ? `(${currentFormRow.partsUsed.length})` : ""}</span>
-                   </button>
-                 </div>
-
-                  {/* حقل عرض قطع الغيار المختارة */}
-                  <div className="flex flex-row items-center gap-2.5 w-full">
-                    <label className="text-xs text-gray-400 font-bold whitespace-nowrap w-24 shrink-0">قطع الغيار</label>
-                    <div className="flex-1 bg-black/40 border border-white/10 rounded-lg px-3 py-2 text-xs text-white overflow-x-auto whitespace-nowrap scrollbar-thin scrollbar-thumb-white/10 flex items-center min-h-[36px]">
-                      {(!currentFormRow.partsUsed || currentFormRow.partsUsed.length === 0) ? (
-                        <span className="text-gray-500">بدون قطع</span>
-                      ) : (
-                        currentFormRow.partsUsed.map((p, idx) => (
-                          <span key={idx}>
-                            {idx > 0 && <span className="mx-1 text-gray-600">/</span>}
-                            <span className="font-mono">{p.partName}-{p.quantity}</span>
-                          </span>
-                        ))
-                      )}
-                    </div>
-                  </div>
+                     {!(currentFormRow.hasNoParts ?? true) && (
+                       <span>
+                         {currentFormRow.partsUsed && currentFormRow.partsUsed.length > 0
+                           ? `تعديل (${currentFormRow.partsUsed.length})`
+                           : 'اختيار القطع'}
+                       </span>
+                     )}
+                   </span>
+                 </button>
                </div>
 
                {/* تقرير الفحص والمشكلة */}

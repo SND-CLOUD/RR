@@ -36,8 +36,7 @@ import {
   AlertCircle,
   ArrowDownToLine,
   ArrowUpFromLine,
-  FileText,
-  Layers
+  FileText
 } from 'lucide-react';
 import { collection, query, where, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, onSnapshot, writeBatch, deleteDoc, serverTimestamp } from './firebase';
 import { db } from './firebase';
@@ -95,6 +94,7 @@ export default function App() {
   const [deviceIntakeInitialSubView, setDeviceIntakeInitialSubView] = useState<'hub' | 'entry'>('hub');
   const [otherServicesReturnTab, setOtherServicesReturnTab] = useState<'dashboard' | 'invoices'>('dashboard');
   const [invoicesReturnState, setInvoicesReturnState] = useState<{ showOtherServices: boolean; showManagement: boolean } | null>(null);
+  const [inventoryInitialMode, setInventoryInitialMode] = useState<'hub' | 'parts_stock' | 'catalog' | 'devices_stock'>('hub');
 
   const goToDashboard = () => {
     setActiveTab('dashboard');
@@ -103,6 +103,7 @@ export default function App() {
     setDeviceIntakeInitialSubView('hub');
     setOtherServicesReturnTab('dashboard');
     setInvoicesReturnState(null);
+    setInventoryInitialMode('hub');
     setDashboardResetTrigger(prev => prev + 1);
     window.dispatchEvent(new CustomEvent('reset-dashboard-counter'));
   };
@@ -484,12 +485,9 @@ export default function App() {
       }
 
       if (state.activeTab === 'other-services') {
-        const storedTab = localStorage.getItem('otherServicesTab');
-        if (storedTab && storedTab !== 'hub') {
-          localStorage.setItem('otherServicesTab', 'hub');
-          window.dispatchEvent(new CustomEvent('changeOtherServicesTab', { detail: 'hub' }));
-          return;
-        }
+        setOtherServicesReturnTab('dashboard');
+        setActiveTab('invoices');
+        return;
       }
 
       if (state.activeTab === 'settings' && (window as any).isSettingsDeepView) {
@@ -1482,7 +1480,7 @@ export default function App() {
       case 'maintenance':
         return <Maintenance user={user} onBack={goToDashboard} />;
       case 'inventory':
-        return <Inventory user={user} onBack={goToDashboard} />;
+        return <Inventory user={user} onBack={goToDashboard} initialMode={inventoryInitialMode} />;
       case 'reports':
         return <Reports user={user} onBack={goToDashboard} />;
       case 'vault':
@@ -1621,8 +1619,7 @@ export default function App() {
             <NavItem active={activeTab === 'vault'} onClick={() => { setVaultInitialProps(null); setActiveTab('vault'); }} icon={<CircleDollarSign size={22} />} label="حسابات" />
             <NavItem active={activeTab === 'customers'} onClick={() => { setVaultInitialProps(null); setActiveTab('customers'); }} icon={<Users size={22} />} label="عملاء" />
             <NavItem active={activeTab === 'invoices'} onClick={() => { setVaultInitialProps(null); setInvoicesReturnState(null); setOtherServicesReturnTab('dashboard'); setActiveTab('invoices'); }} icon={<FileText size={22} />} label="فواتير" />
-            <NavItem active={activeTab === 'other-services'} onClick={() => { setVaultInitialProps(null); setOtherServicesReturnTab('dashboard'); setActiveTab('other-services'); }} icon={<Layers size={22} />} label="خدمات اخرى" />
-            <NavItem active={activeTab === 'inventory'} onClick={() => { setVaultInitialProps(null); setActiveTab('inventory'); }} icon={<Package size={22} />} label="تقارير مخزون" />
+            <NavItem active={activeTab === 'inventory'} onClick={() => { setVaultInitialProps(null); setInventoryInitialMode('hub'); setActiveTab('inventory'); }} icon={<Package size={22} />} label="تقارير مخزون" />
           </nav>
 
           <div className="p-4 border-t border-slate-200/80 dark:border-white/5 space-y-2">
@@ -1671,8 +1668,8 @@ export default function App() {
                         } else if (activeTab === 'entry-exit' && entryExitView !== 'hub') {
                           setEntryExitView('hub');
                         } else if (activeTab === 'other-services' && storedOtherTab && storedOtherTab !== 'hub') {
-                          localStorage.setItem('otherServicesTab', 'hub');
-                          window.dispatchEvent(new CustomEvent('changeOtherServicesTab', { detail: 'hub' }));
+                          setOtherServicesReturnTab('dashboard');
+                          setActiveTab('invoices');
                         } else {
                           goToDashboard();
                         }
@@ -1843,6 +1840,7 @@ export default function App() {
                     setDeviceIntakeInitialSubView('hub');
                     setInvoicesReturnState(null);
                     setOtherServicesReturnTab('dashboard');
+                    setInventoryInitialMode('hub');
                     if (tab === 'entry-exit' && subView) {
                       setEntryExitView(subView);
                     }
@@ -1855,12 +1853,16 @@ export default function App() {
                     }
                     setVaultInitialProps(null);
                     setInspectionInitialInvoice(null);
-                    setInvoicesReturnState(null);
-                    setOtherServicesReturnTab('dashboard');
+                    setInventoryInitialMode(target.tab === 'inventory' && target.inventoryMode ? target.inventoryMode : 'hub');
                     setDeviceIntakeInitialSubView(target.tab === 'device-intake' && target.subView === 'entry' ? 'entry' : 'hub');
 
                     if (target.tab === 'other-services') {
-                      localStorage.setItem('otherServicesTab', target.otherServicesTab || 'hub');
+                      localStorage.setItem('otherServicesTab', target.otherServicesTab || 'purchase');
+                      setInvoicesReturnState({ showOtherServices: true, showManagement: false });
+                      setOtherServicesReturnTab('invoices');
+                    } else {
+                      setInvoicesReturnState(null);
+                      setOtherServicesReturnTab('dashboard');
                     }
                     if (target.tab === 'vault') {
                       setVaultInitialProps({

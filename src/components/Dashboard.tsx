@@ -66,6 +66,7 @@ export interface QuickJumpTarget {
   vaultSegment?: 'dashboard' | 'receipt' | 'payment' | 'discounts' | 'transfer' | 'funds' | 'reports';
   vaultShowAddModal?: boolean;
   otherServicesTab?: 'hub' | 'software' | 'maintenance' | 'parts' | 'purchase' | 'catalog' | 'stock';
+  inventoryMode?: 'hub' | 'parts_stock' | 'catalog' | 'devices_stock';
 }
 
 interface QuickJumpItem {
@@ -334,21 +335,21 @@ export default function Dashboard({
       {
         id: 'qj-other-catalog',
         label: 'دليل القطع والملحقات',
-        category: 'فواتير أخرى والمخزون',
-        keywords: ['دليل', 'أصناف', 'قطع', 'ملحقات', 'catalog'],
+        category: 'المخزون',
+        keywords: ['دليل', 'أصناف', 'قطع', 'ملحقات', 'مخزون', 'catalog'],
         icon: <BookOpen size={16} />,
         iconBg: 'bg-blue-500/15 text-blue-600 dark:text-blue-400',
-        target: { tab: 'other-services', otherServicesTab: 'catalog' },
+        target: { tab: 'inventory', inventoryMode: 'catalog' },
         isAllowed: canViewInventory
       },
       {
         id: 'qj-other-stock',
         label: 'مخزون ودفوعات المحل',
-        category: 'فواتير أخرى والمخزون',
+        category: 'المخزون',
         keywords: ['مخزون', 'دفوعات', 'المحل', 'stock'],
         icon: <Package size={16} />,
         iconBg: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400',
-        target: { tab: 'other-services', otherServicesTab: 'stock' },
+        target: { tab: 'inventory', inventoryMode: 'parts_stock' },
         isAllowed: canViewInventory
       },
 

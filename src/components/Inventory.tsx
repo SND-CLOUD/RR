@@ -74,7 +74,15 @@ const STATUS_HIERARCHY: Record<string, number> = {
   '70': 70, 'cancelled': 70
 };
 
-export default function Inventory({ user, onBack }: { user: User, onBack?: () => void }) {
+export default function Inventory({
+  user,
+  onBack,
+  initialMode = 'hub'
+}: {
+  user: User;
+  onBack?: () => void;
+  initialMode?: InventoryMode;
+}) {
   const { t } = useTranslation();
   const { hasPermission } = usePermissions(user);
   const [items, setItems] = useState<InvoiceItem[]>([]);
@@ -84,7 +92,11 @@ export default function Inventory({ user, onBack }: { user: User, onBack?: () =>
   const [loading, setLoading] = useState(true);
 
   // Main screen section mode (hub = two buttons, parts_stock, devices_stock)
-  const [inventoryMode, setInventoryMode] = useState<InventoryMode>('hub');
+  const [inventoryMode, setInventoryMode] = useState<InventoryMode>(initialMode);
+
+  useEffect(() => {
+    setInventoryMode(initialMode);
+  }, [initialMode]);
   
   // Sorting & Filtering controls (matching Customers.tsx mechanism)
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
