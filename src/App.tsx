@@ -63,7 +63,7 @@ import Reports from './components/Reports';
 import Customers from './components/Customers';
 import Settings from './components/Settings';
 import SearchInvoice from './components/SearchInvoice';
-import Invoices from './components/Invoices';
+import InvoicesHub, { OtherServiceInvoiceTarget } from './components/InvoicesHub';
 import DeviceManagement from './components/DeviceManagement';
 import OtherServiceInvoice from './components/OtherServiceInvoice';
 import Login from './components/Login';
@@ -93,12 +93,16 @@ export default function App() {
   const [dashboardResetTrigger, setDashboardResetTrigger] = useState(0);
   const [inspectionInitialInvoice, setInspectionInitialInvoice] = useState<any | null>(null);
   const [deviceIntakeInitialSubView, setDeviceIntakeInitialSubView] = useState<'hub' | 'entry'>('hub');
+  const [otherServicesReturnTab, setOtherServicesReturnTab] = useState<'dashboard' | 'invoices'>('dashboard');
+  const [invoicesReturnState, setInvoicesReturnState] = useState<{ showOtherServices: boolean; showManagement: boolean } | null>(null);
 
   const goToDashboard = () => {
     setActiveTab('dashboard');
     setVaultInitialProps(null);
     setInspectionInitialInvoice(null);
     setDeviceIntakeInitialSubView('hub');
+    setOtherServicesReturnTab('dashboard');
+    setInvoicesReturnState(null);
     setDashboardResetTrigger(prev => prev + 1);
     window.dispatchEvent(new CustomEvent('reset-dashboard-counter'));
   };
@@ -1533,7 +1537,31 @@ export default function App() {
       case 'device-management':
         return <DeviceManagement user={user} onBack={goToDashboard} shopConfig={shopConfig} />;
       case 'invoices':
-        return <Invoices user={user} onBack={goToDashboard} shopConfig={shopConfig} />;
+        return (
+          <InvoicesHub
+            user={user}
+            shopConfig={shopConfig}
+            onBack={goToDashboard}
+            initialState={invoicesReturnState}
+            onOpenDeviceIntake={() => {
+              setInvoicesReturnState(null);
+              setOtherServicesReturnTab('dashboard');
+              setDeviceIntakeInitialSubView('hub');
+              setActiveTab('device-intake');
+            }}
+            onOpenDeviceExit={() => {
+              setInvoicesReturnState(null);
+              setOtherServicesReturnTab('dashboard');
+              setActiveTab('device-exit');
+            }}
+            onOpenOtherService={(serviceType: OtherServiceInvoiceTarget, currentState) => {
+              setInvoicesReturnState(currentState);
+              setOtherServicesReturnTab('invoices');
+              localStorage.setItem('otherServicesTab', serviceType);
+              setActiveTab('other-services');
+            }}
+          />
+        );
       case 'other-services':
         const storedTab = localStorage.getItem('otherServicesTab');
         let type: 'hub' | 'software' | 'maintenance' | 'parts' | 'purchase' | 'catalog' | 'stock' = 'hub';
@@ -1543,7 +1571,23 @@ export default function App() {
         if (storedTab === 'purchase') type = 'purchase';
         if (storedTab === 'catalog') type = 'catalog';
         if (storedTab === 'stock') type = 'stock';
-        return <OtherServiceInvoice type={type} user={user} shopConfig={shopConfig} onBack={goToDashboard} />;
+        const isFromInvoices = otherServicesReturnTab === 'invoices';
+        return (
+          <OtherServiceInvoice
+            type={type}
+            user={user}
+            shopConfig={shopConfig}
+            returnToInvoices={isFromInvoices}
+            onBack={() => {
+              if (isFromInvoices) {
+                setOtherServicesReturnTab('dashboard');
+                setActiveTab('invoices');
+              } else {
+                goToDashboard();
+              }
+            }}
+          />
+        );
       default:
         return null;
     }
@@ -1576,8 +1620,8 @@ export default function App() {
             <NavItem active={activeTab === 'device-exit'} onClick={() => { setVaultInitialProps(null); setActiveTab('device-exit'); }} icon={<ArrowUpFromLine size={22} />} label="خروج" />
             <NavItem active={activeTab === 'vault'} onClick={() => { setVaultInitialProps(null); setActiveTab('vault'); }} icon={<CircleDollarSign size={22} />} label="حسابات" />
             <NavItem active={activeTab === 'customers'} onClick={() => { setVaultInitialProps(null); setActiveTab('customers'); }} icon={<Users size={22} />} label="عملاء" />
-            <NavItem active={activeTab === 'invoices'} onClick={() => { setVaultInitialProps(null); setActiveTab('invoices'); }} icon={<FileText size={22} />} label="فواتير" />
-            <NavItem active={activeTab === 'other-services'} onClick={() => { setVaultInitialProps(null); setActiveTab('other-services'); }} icon={<Layers size={22} />} label="خدمات اخرى" />
+            <NavItem active={activeTab === 'invoices'} onClick={() => { setVaultInitialProps(null); setInvoicesReturnState(null); setOtherServicesReturnTab('dashboard'); setActiveTab('invoices'); }} icon={<FileText size={22} />} label="فواتير" />
+            <NavItem active={activeTab === 'other-services'} onClick={() => { setVaultInitialProps(null); setOtherServicesReturnTab('dashboard'); setActiveTab('other-services'); }} icon={<Layers size={22} />} label="خدمات اخرى" />
             <NavItem active={activeTab === 'inventory'} onClick={() => { setVaultInitialProps(null); setActiveTab('inventory'); }} icon={<Package size={22} />} label="تقارير مخزون" />
           </nav>
 
@@ -1797,6 +1841,8 @@ export default function App() {
                   onNavigate={(tab: any, subView?: any) => {
                     setVaultInitialProps(null);
                     setDeviceIntakeInitialSubView('hub');
+                    setInvoicesReturnState(null);
+                    setOtherServicesReturnTab('dashboard');
                     if (tab === 'entry-exit' && subView) {
                       setEntryExitView(subView);
                     }
@@ -1809,6 +1855,8 @@ export default function App() {
                     }
                     setVaultInitialProps(null);
                     setInspectionInitialInvoice(null);
+                    setInvoicesReturnState(null);
+                    setOtherServicesReturnTab('dashboard');
                     setDeviceIntakeInitialSubView(target.tab === 'device-intake' && target.subView === 'entry' ? 'entry' : 'hub');
 
                     if (target.tab === 'other-services') {

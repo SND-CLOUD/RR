@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { 
   FileText, Search as SearchIcon, Calendar, ArrowRight, Activity, 
@@ -59,6 +59,8 @@ export default function Invoices({
   const [customStartDate, setCustomStartDate] = useState<string>('');
   const [customEndDate, setCustomEndDate] = useState<string>('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'maintenance' | 'other'>('all');
+  const [currentPage, setCurrentPage] = useState<number>(1);
+  const [pageSize, setPageSize] = useState<number>(25);
 
   // Categories and Models from system
   const [deviceCategories, setDeviceCategories] = useState<Array<{ id: string; name: string }>>([]);
@@ -137,25 +139,9 @@ export default function Invoices({
     return isNaN(parsed.getTime()) ? null : parsed;
   };
 
-  // Fetch Invoices and Items from SQLite and sync with Firestore
+  // Subscribe to Invoices and Items once via onSnapshot (backed by localDb cache)
   useEffect(() => {
     let isMounted = true;
-
-    const loadLocalData = async () => {
-      try {
-        const invRes = await localDb.query("SELECT * FROM invoices");
-        if (invRes.values && isMounted) {
-          setInvoices(invRes.values);
-        }
-        const itmRes = await localDb.query("SELECT * FROM invoice_items");
-        if (itmRes.values && isMounted) {
-          setItems(itmRes.values);
-        }
-      } catch (e) {
-        console.warn('Error loading initial local invoices:', e);
-      }
-    };
-    loadLocalData();
 
     const unsubInvoices = onSnapshot(collection(db, 'invoices'), (snapshot) => {
       const liveInvoices = snapshot.docs.map(doc => ({ ...doc.data(), id: doc.id } as Invoice));
@@ -171,68 +157,136 @@ export default function Invoices({
       console.warn('InvoiceItems onSnapshot error:', err);
     });
 
-    const unsubCats = onSnapshot(collection(db, 'device_categories'), (s) => {
-      setDeviceCategories(s.docs.map(d => ({ ...d.data(), id: d.id } as any)));
-    });
-    const unsubModels = onSnapshot(collection(db, 'device_models'), (s) => {
-      setDeviceModels(s.docs.map(d => ({ ...d.data(), id: d.id } as any)));
-    });
-
-    const fetchLocalCats = async () => {
-      try {
-        const localCats = await localDb.query("SELECT * FROM device_categories");
-        if (localCats.values && localCats.values.length > 0) {
-          setDeviceCategories(prev => prev.length > 0 ? prev : localCats.values);
-        }
-        const localMods = await localDb.query("SELECT * FROM device_models");
-        if (localMods.values && localMods.values.length > 0) {
-          setDeviceModels(prev => prev.length > 0 ? prev : localMods.values);
-        }
-      } catch (e) {}
-    };
-    fetchLocalCats();
-
     return () => {
       isMounted = false;
       unsubInvoices();
       unsubItems();
-      unsubCats();
-      unsubModels();
     };
   }, []);
 
-  // Registered helpers for inputs
-  const registeredCategoryNames = Array.from(
-    new Set([
-      ...deviceCategories.map(c => String(c.name || '').trim()).filter(Boolean),
-      ...items.map(i => String(i.deviceType || '').trim()).filter(Boolean)
-    ])
-  );
+  // Lazy-subscribe to Categories and Models only when entering detail_action view
+  useEffect(() => {
+    if (subview !== 'detail_action') return;
+    let isMounted = true;
 
-  const registeredModelNames = Array.from(
-    new Set([
-      ...deviceModels.map(m => String(m.name || '').trim()).filter(Boolean),
-      ...items.map(i => String(i.deviceName || '').trim()).filter(Boolean)
-    ])
-  );
+    const unsubCats = onSnapshot(collection(db, 'device_categories'), (s) => {
+      if (isMounted) setDeviceCategories(s.docs.map(d => ({ ...d.data(), id: d.id } as any)));
+    });
+    const unsubModels = onSnapshot(collection(db, 'device_models'), (s) => {
+      if (isMounted) setDeviceModels(s.docs.map(d => ({ ...d.data(), id: d.id } as any)));
+    });
 
-  const filteredModelNames = String(detailedDeviceType || '').trim()
-    ? Array.from(
-        new Set([
-          ...deviceModels
-            .filter(m => {
-              const catId = String(detailedDeviceType || '').trim().replace(/\//g, '_');
-              return m.categoryId === catId || m.categoryId === String(detailedDeviceType || '').trim();
-            })
-            .map(m => String(m.name || '').trim())
-            .filter(Boolean),
-          ...items
-            .filter(i => String(i.deviceType || '').trim() === String(detailedDeviceType || '').trim())
-            .map(i => String(i.deviceName || '').trim())
-            .filter(Boolean)
-        ])
-      )
-    : registeredModelNames;
+    return () => {
+      isMounted = false;
+      unsubCats();
+      unsubModels();
+    };
+  }, [subview]);
+
+  // Pre-index invoice items once in O(M) for instant O(1) lookup per invoice
+  const { itemsByCleanNo, itemsByInvId, piecesCountByCleanNo, itemById } = useMemo(() => {
+    const byCleanNo = new Map<string, InvoiceItem[]>();
+    const byInvId = new Map<string, InvoiceItem[]>();
+    const piecesByNo = new Map<string, number>();
+    const byId = new Map<string, InvoiceItem>();
+
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (!it) continue;
+      if (it.id) byId.set(it.id, it);
+
+      const cleanNo = String(it.invoiceNumber || '').replace('#', '').trim();
+      if (cleanNo) {
+        let arr = byCleanNo.get(cleanNo);
+        if (!arr) {
+          arr = [];
+          byCleanNo.set(cleanNo, arr);
+        }
+        arr.push(it);
+        piecesByNo.set(cleanNo, (piecesByNo.get(cleanNo) || 0) + (Number(it.quantity) || 1));
+      }
+
+      if (it.invoiceId) {
+        let idArr = byInvId.get(it.invoiceId);
+        if (!idArr) {
+          idArr = [];
+          byInvId.set(it.invoiceId, idArr);
+        }
+        idArr.push(it);
+      }
+    }
+
+    return {
+      itemsByCleanNo: byCleanNo,
+      itemsByInvId: byInvId,
+      piecesCountByCleanNo: piecesByNo,
+      itemById: byId
+    };
+  }, [items]);
+
+  const getItemsByCleanNo = useCallback((invoiceNumber?: string): InvoiceItem[] => {
+    if (!invoiceNumber) return [];
+    const cleanNo = String(invoiceNumber).replace('#', '').trim();
+    return itemsByCleanNo.get(cleanNo) || [];
+  }, [itemsByCleanNo]);
+
+  const getItemsForInvoice = useCallback((inv: Invoice): InvoiceItem[] => {
+    const cleanNo = String(inv.invoiceNumber || '').replace('#', '').trim();
+    const byNo = cleanNo ? (itemsByCleanNo.get(cleanNo) || []) : [];
+    const byId = inv.id ? (itemsByInvId.get(inv.id) || []) : [];
+    if (byId.length === 0) return byNo;
+    if (byNo.length === 0) return byId;
+
+    const merged = [...byNo];
+    const seen = new Set(byNo.map(it => it.id).filter(Boolean));
+    for (let i = 0; i < byId.length; i++) {
+      const it = byId[i];
+      if (!it.id || !seen.has(it.id)) {
+        merged.push(it);
+      }
+    }
+    return merged;
+  }, [itemsByCleanNo, itemsByInvId]);
+
+  // Registered helpers for inputs (computed only when needed in detail_action view)
+  const registeredCategoryNames = useMemo(() => {
+    if (subview !== 'detail_action') return [];
+    return Array.from(
+      new Set([
+        ...deviceCategories.map(c => String(c.name || '').trim()).filter(Boolean),
+        ...items.map(i => String(i.deviceType || '').trim()).filter(Boolean)
+      ])
+    );
+  }, [subview, deviceCategories, items]);
+
+  const registeredModelNames = useMemo(() => {
+    if (subview !== 'detail_action') return [];
+    return Array.from(
+      new Set([
+        ...deviceModels.map(m => String(m.name || '').trim()).filter(Boolean),
+        ...items.map(i => String(i.deviceName || '').trim()).filter(Boolean)
+      ])
+    );
+  }, [subview, deviceModels, items]);
+
+  const filteredModelNames = useMemo(() => {
+    if (subview !== 'detail_action') return [];
+    const targetType = String(detailedDeviceType || '').trim();
+    if (!targetType) return registeredModelNames;
+    const catId = targetType.replace(/\//g, '_');
+    return Array.from(
+      new Set([
+        ...deviceModels
+          .filter(m => m.categoryId === catId || m.categoryId === targetType)
+          .map(m => String(m.name || '').trim())
+          .filter(Boolean),
+        ...items
+          .filter(i => String(i.deviceType || '').trim() === targetType)
+          .map(i => String(i.deviceName || '').trim())
+          .filter(Boolean)
+      ])
+    );
+  }, [subview, detailedDeviceType, deviceModels, items, registeredModelNames]);
 
   // Maintenance statuses (10 - 60)
   const MAINTENANCE_STATUSES = [
@@ -414,8 +468,7 @@ export default function Invoices({
     // 4. Check if marked as other sale (e.g. 'O-' or checkIsSale) but sub-category needs deduction
     const isOtherSale = isSaleInvoice(inv) || checkIsSale(inv) || String(inv.invoiceNumber || '').trim().startsWith('O-');
     if (isOtherSale) {
-      const cleanNo = String(inv.invoiceNumber || '').replace('#', '').trim();
-      const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo);
+      const invItems = getItemsByCleanNo(inv.invoiceNumber);
       const combinedText = [
         inv.notes || '',
         ...invItems.map(it => `${it.deviceName || ''} ${it.deviceType || ''} ${(it as any).category || ''} ${it.faultType || ''}`)
@@ -445,9 +498,8 @@ export default function Invoices({
       return rawStatus;
     }
 
-    // Check items if available
-    const cleanNo = String(inv.invoiceNumber || '').replace('#', '').trim();
-    const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo);
+    // Check items if available (O(1) via Map)
+    const invItems = getItemsByCleanNo(inv.invoiceNumber);
     if (invItems.length > 0) {
       return computeInvoiceStatusFromItems(invItems);
     }
@@ -458,72 +510,117 @@ export default function Invoices({
   const getItemsPiecesCount = (invoiceNumber?: string) => {
     if (!invoiceNumber) return 0;
     const cleanNo = String(invoiceNumber).replace('#', '').trim();
-    return items
-      .filter(it => {
-        const itClean = String(it.invoiceNumber || '').replace('#', '').trim();
-        return itClean === cleanNo;
-      })
-      .reduce((sum, it) => sum + (Number(it.quantity) || 1), 0);
+    return piecesCountByCleanNo.get(cleanNo) || 0;
   };
 
-  // Filtered Invoices
-  const filteredInvoices = invoices.filter(inv => {
-    // Type Filter
-    const isOther = isPurchaseInvoice(inv) || isSaleInvoice(inv) || checkIsPurchase(inv) || checkIsSale(inv);
-    if (typeFilter === 'maintenance' && isOther) return false;
-    if (typeFilter === 'other' && !isOther) return false;
-
-    // Search Query (Smart Search)
-    if (searchQuery.trim()) {
-      const query = searchQuery.trim().toLowerCase().replace('#', '');
-      const invNo = String(inv.invoiceNumber || '').toLowerCase().replace('#', '');
-      const custName = String(inv.customerName || '').toLowerCase();
-      const custPhone = String(inv.customerPhone || '').toLowerCase();
-      if (!invNo.includes(query) && !custName.includes(query) && !custPhone.includes(query)) {
-        return false;
-      }
+  // Pre-compute invoice timestamps once when invoices change so sorting never re-parses dates repeatedly
+  const invoiceTimestamps = useMemo(() => {
+    const map = new Map<Invoice, number | null>();
+    for (let i = 0; i < invoices.length; i++) {
+      const inv = invoices[i];
+      const rawDate = inv.createdAt || inv.date || (inv as any).entryDate;
+      const d = parseDate(rawDate);
+      map.set(inv, d ? d.getTime() : null);
     }
+    return map;
+  }, [invoices]);
 
-    // Time Filter
-    const rawDate = inv.createdAt || inv.date || (inv as any).entryDate;
-    const createdAtDate = parseDate(rawDate);
-    if (!createdAtDate) return true;
+  // Reset pagination to page 1 when search or filters change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchQuery, timeFilter, customStartDate, customEndDate, typeFilter, pageSize]);
 
+  // Filtered & sorted invoices (memoized)
+  const filteredInvoices = useMemo(() => {
+    const queryClean = searchQuery.trim().toLowerCase().replace('#', '');
     const now = new Date();
-    if (timeFilter === 'day') {
-      const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-      return createdAtDate >= todayStart;
-    } else if (timeFilter === 'week') {
-      const sevenDaysAgo = new Date();
-      sevenDaysAgo.setDate(now.getDate() - 7);
-      return createdAtDate >= sevenDaysAgo;
-    } else if (timeFilter === 'month') {
-      const thirtyDaysAgo = new Date();
-      thirtyDaysAgo.setDate(now.getDate() - 30);
-      return createdAtDate >= thirtyDaysAgo;
-    } else if (timeFilter === 'custom') {
-      if (customStartDate && customEndDate) {
-        const start = new Date(customStartDate);
-        start.setHours(0, 0, 0, 0);
-        const end = new Date(customEndDate);
-        end.setHours(23, 59, 59, 999);
-        return createdAtDate >= start && createdAtDate <= end;
-      }
-      return true;
-    }
-    return true;
-  }).sort((a, b) => {
-    const timeA = parseDate(a.createdAt || a.date || (a as any).entryDate)?.getTime() || 0;
-    const timeB = parseDate(b.createdAt || b.date || (b as any).entryDate)?.getTime() || 0;
-    if (timeB !== timeA) return timeB - timeA;
-    return Number(String(b.invoiceNumber || 0).replace('#', '')) - Number(String(a.invoiceNumber || 0).replace('#', ''));
-  });
+    let rangeStartMs: number | null = null;
+    let rangeEndMs: number | null = null;
 
-  // Aggregate stats
-  const totalInvoicesCount = invoices.length;
-  const maintenanceInvoicesCount = invoices.filter(inv => !isPurchaseInvoice(inv) && !isSaleInvoice(inv) && !checkIsPurchase(inv) && !checkIsSale(inv)).length;
-  const otherInvoicesCount = invoices.filter(inv => isPurchaseInvoice(inv) || isSaleInvoice(inv) || checkIsPurchase(inv) || checkIsSale(inv)).length;
-  const deliveredInvoicesCount = invoices.filter(inv => inv.status === '60' || inv.status === 'delivered').length;
+    if (timeFilter === 'day') {
+      rangeStartMs = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+    } else if (timeFilter === 'week') {
+      const d = new Date(now);
+      d.setDate(now.getDate() - 7);
+      rangeStartMs = d.getTime();
+    } else if (timeFilter === 'month') {
+      const d = new Date(now);
+      d.setDate(now.getDate() - 30);
+      rangeStartMs = d.getTime();
+    } else if (timeFilter === 'custom' && customStartDate && customEndDate) {
+      const start = new Date(customStartDate);
+      start.setHours(0, 0, 0, 0);
+      const end = new Date(customEndDate);
+      end.setHours(23, 59, 59, 999);
+      rangeStartMs = start.getTime();
+      rangeEndMs = end.getTime();
+    }
+
+    const filtered = invoices.filter(inv => {
+      // Type Filter
+      if (typeFilter !== 'all') {
+        const isOther = isPurchaseInvoice(inv) || isSaleInvoice(inv) || checkIsPurchase(inv) || checkIsSale(inv);
+        if (typeFilter === 'maintenance' && isOther) return false;
+        if (typeFilter === 'other' && !isOther) return false;
+      }
+
+      // Search Query (Smart Search)
+      if (queryClean) {
+        const invNo = String(inv.invoiceNumber || '').toLowerCase().replace('#', '');
+        const custName = String(inv.customerName || '').toLowerCase();
+        const custPhone = String(inv.customerPhone || '').toLowerCase();
+        if (!invNo.includes(queryClean) && !custName.includes(queryClean) && !custPhone.includes(queryClean)) {
+          return false;
+        }
+      }
+
+      // Time Filter
+      if (rangeStartMs !== null) {
+        const ts = invoiceTimestamps.get(inv) ?? null;
+        if (ts === null) return true;
+        if (ts < rangeStartMs) return false;
+        if (rangeEndMs !== null && ts > rangeEndMs) return false;
+      }
+
+      return true;
+    });
+
+    filtered.sort((a, b) => {
+      const timeA = invoiceTimestamps.get(a) ?? 0;
+      const timeB = invoiceTimestamps.get(b) ?? 0;
+      if (timeB !== timeA) return timeB - timeA;
+      return Number(String(b.invoiceNumber || 0).replace('#', '')) - Number(String(a.invoiceNumber || 0).replace('#', ''));
+    });
+
+    return filtered;
+  }, [invoices, typeFilter, searchQuery, timeFilter, customStartDate, customEndDate, invoiceTimestamps]);
+
+  // Pagination calculations
+  const effectivePageSize = pageSize <= 0 ? Math.max(1, filteredInvoices.length) : pageSize;
+  const totalPages = Math.max(1, Math.ceil(filteredInvoices.length / effectivePageSize));
+  const safeCurrentPage = Math.min(currentPage, totalPages);
+  const paginatedInvoices = useMemo(() => {
+    if (pageSize <= 0) return filteredInvoices;
+    const startIdx = (safeCurrentPage - 1) * pageSize;
+    return filteredInvoices.slice(startIdx, startIdx + pageSize);
+  }, [filteredInvoices, safeCurrentPage, pageSize]);
+
+  // Aggregate stats computed in a single O(N) pass
+  const { totalInvoicesCount, maintenanceInvoicesCount, otherInvoicesCount } = useMemo(() => {
+    let maint = 0;
+    let other = 0;
+    for (let i = 0; i < invoices.length; i++) {
+      const inv = invoices[i];
+      const isOther = isPurchaseInvoice(inv) || isSaleInvoice(inv) || checkIsPurchase(inv) || checkIsSale(inv);
+      if (isOther) other++;
+      else maint++;
+    }
+    return {
+      totalInvoicesCount: invoices.length,
+      maintenanceInvoicesCount: maint,
+      otherInvoicesCount: other
+    };
+  }, [invoices]);
 
   // Reversal check when changing from delivered 60
   const checkReversalNeeded = async (invoiceNum: string, oldStatus: string, newStatus: string, invoiceId?: string) => {
@@ -657,7 +754,7 @@ export default function Invoices({
 
       const batch = writeBatch(db);
       const cleanNo = String(inv.invoiceNumber).replace('#', '').trim();
-      const currentItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo);
+      const currentItems = getItemsByCleanNo(inv.invoiceNumber);
       
       currentItems.forEach(it => {
         if (it.id) {
@@ -724,7 +821,7 @@ export default function Invoices({
       return;
     }
 
-    const found = items.find(it => it.id === val);
+    const found = itemById.get(val);
     if (found) {
       setDetailedDeviceType(found.deviceType || '');
       setDetailedDeviceName(found.deviceName || '');
@@ -778,11 +875,7 @@ export default function Invoices({
     setSaveLoading(true);
 
     try {
-      const cleanInvNo = String(selectedInvoice.invoiceNumber || '').replace('#', '');
-      const originalItems = items.filter(it => {
-        const itClean = String(it.invoiceNumber || '').replace('#', '');
-        return itClean === cleanInvNo || it.invoiceId === selectedInvoice.id;
-      });
+      const originalItems = getItemsForInvoice(selectedInvoice);
 
       const finalItemsToSave: any[] = [];
 
@@ -1190,10 +1283,8 @@ export default function Invoices({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-white/5">
-                  {filteredInvoices.map((inv, idx) => {
-                    const isDetailed = detailedModes[inv.id!] !== false;
+                  {paginatedInvoices.map((inv, idx) => {
                     const currentStatusVal = resolveInvoiceStatus(inv);
-                    const isOther = isPurchaseInvoice(inv) || isSaleInvoice(inv) || checkIsPurchase(inv) || checkIsSale(inv);
 
                     return (
                       <React.Fragment key={inv.id ? `inv-frag-${inv.id}-${idx}` : `inv-frag-idx-${idx}`}>
@@ -1249,8 +1340,7 @@ export default function Invoices({
                                   setSelectedInvoice(inv);
                                   setStagedChanges([]);
                                   setDeletedItemIds([]);
-                                  const cleanNo = String(inv.invoiceNumber).replace('#', '').trim();
-                                  const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo);
+                                  const invItems = getItemsByCleanNo(inv.invoiceNumber);
                                   const resolvedSt = resolveInvoiceStatus(inv);
                                   if (invItems.length > 0) {
                                     handleDetailedSelectChange(invItems[0].id!);
@@ -1284,8 +1374,7 @@ export default function Invoices({
                             <td className="p-4 text-center whitespace-nowrap">
                               <button
                                 onClick={() => {
-                                  const cleanNo = String(inv.invoiceNumber).replace('#', '').trim();
-                                  const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo);
+                                  const invItems = getItemsByCleanNo(inv.invoiceNumber);
                                   setDeleteConfirmData({
                                     invoice: inv,
                                     invoiceNumber: inv.invoiceNumber,
@@ -1311,8 +1400,7 @@ export default function Invoices({
                                   <span>معاينة تفاصيل قطع وبنود الفاتورة #{inv.invoiceNumber}:</span>
                                 </div>
                                 {(() => {
-                                  const cleanNo = String(inv.invoiceNumber || '').replace('#', '').trim();
-                                  const invItems = items.filter(it => String(it.invoiceNumber || '').replace('#', '').trim() === cleanNo || it.invoiceId === inv.id);
+                                  const invItems = getItemsForInvoice(inv);
                                   if (invItems.length === 0) {
                                     return <div className="text-xs text-gray-500 py-2">لا توجد قطع أو بنود مسجلة في هذه الفاتورة.</div>;
                                   }
@@ -1355,6 +1443,65 @@ export default function Invoices({
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination Footer */}
+            {filteredInvoices.length > 0 && (
+              <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-2 text-xs text-gray-400 font-bold">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span>
+                    عرض{' '}
+                    <span className="font-mono text-white">
+                      {pageSize <= 0 ? 1 : (safeCurrentPage - 1) * pageSize + 1}
+                    </span>
+                    {' - '}
+                    <span className="font-mono text-white">
+                      {pageSize <= 0 ? filteredInvoices.length : Math.min(safeCurrentPage * pageSize, filteredInvoices.length)}
+                    </span>
+                    {' من أصل '}
+                    <span className="font-mono text-emerald-400">{formatEnglishNumber(filteredInvoices.length)}</span>
+                    {' فاتورة'}
+                  </span>
+
+                  <div className="flex items-center gap-1.5 mr-2">
+                    <span className="text-gray-500">لكل صفحة:</span>
+                    <select
+                      value={pageSize}
+                      onChange={(e) => setPageSize(Number(e.target.value))}
+                      className="bg-black/50 border border-white/10 rounded-lg px-2 py-1 text-xs font-mono text-white outline-none focus:border-emerald-500 cursor-pointer"
+                    >
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                      <option value={0}>الكل</option>
+                    </select>
+                  </div>
+                </div>
+
+                {totalPages > 1 && pageSize > 0 && (
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                      disabled={safeCurrentPage === 1}
+                      className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white rounded-xl border border-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+                    >
+                      السابق
+                    </button>
+                    <span className="px-2 font-mono text-white">
+                      {safeCurrentPage} / {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                      disabled={safeCurrentPage === totalPages}
+                      className="px-3 py-1.5 bg-white/5 hover:bg-white/10 text-white rounded-xl border border-white/10 disabled:opacity-40 disabled:cursor-not-allowed transition-all cursor-pointer"
+                    >
+                      التالي
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1424,12 +1571,8 @@ export default function Invoices({
                   {canAddInvoices && (
                     <option value="NEW_DEVICE">🆕 إضافة جهاز جديد كلياً (New Device)</option>
                   )}
-                  {items
-                    .filter(it => {
-                      const cleanInv = String(selectedInvoice.invoiceNumber).replace('#', '').trim();
-                      const itClean = String(it.invoiceNumber || '').replace('#', '').trim();
-                      return (itClean === cleanInv || it.invoiceId === selectedInvoice.id) && !deletedItemIds.includes(it.id!);
-                    })
+                  {getItemsForInvoice(selectedInvoice)
+                    .filter(it => !deletedItemIds.includes(it.id!))
                     .map((it, itIdx) => (
                       <option key={it.id ? `dev-${it.id}-${itIdx}` : `dev-idx-${itIdx}`} value={it.id}>
                         🛠️ {it.deviceType} {it.deviceName ? `- ${it.deviceName}` : ''} ({formatEnglishNumber(it.quantity || 1)} حبة)
@@ -1644,11 +1787,7 @@ export default function Invoices({
                     </p>
                   </div>
                   {(() => {
-                    const cleanInvNo = String(selectedInvoice.invoiceNumber || '').replace('#', '');
-                    const origSurviving = items.filter(it => {
-                      const itClean = String(it.invoiceNumber || '').replace('#', '');
-                      return (itClean === cleanInvNo || it.invoiceId === selectedInvoice.id) && !deletedItemIds.includes(it.id!);
-                    });
+                    const origSurviving = getItemsForInvoice(selectedInvoice).filter(it => !deletedItemIds.includes(it.id!));
                     const newItemsCount = stagedChanges.filter(s => s.isNew).length;
                     const totalDevs = origSurviving.length + newItemsCount;
                     return (
@@ -1676,11 +1815,7 @@ export default function Invoices({
                     </thead>
                     <tbody className="divide-y divide-white/5">
                       {(() => {
-                        const cleanInvNo = String(selectedInvoice.invoiceNumber || '').replace('#', '');
-                        const originalItems = items.filter(it => {
-                          const itClean = String(it.invoiceNumber || '').replace('#', '');
-                          return itClean === cleanInvNo || it.invoiceId === selectedInvoice.id;
-                        });
+                        const originalItems = getItemsForInvoice(selectedInvoice);
 
                         const displayList: any[] = [];
 

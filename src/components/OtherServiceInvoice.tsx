@@ -32,12 +32,14 @@ export default function OtherServiceInvoice({
   type: initialType = 'hub',
   onBack,
   shopConfig,
-  user
+  user,
+  returnToInvoices = false
 }: {
   type: 'hub' | 'software' | 'maintenance' | 'parts' | 'purchase' | 'catalog' | 'stock';
   onBack: () => void;
   shopConfig: ShopConfig | null;
   user: User | null;
+  returnToInvoices?: boolean;
 }) {
   const { t } = useTranslation();
   
@@ -180,13 +182,18 @@ export default function OtherServiceInvoice({
   }, [resetAllForms]);
 
   const handleGoBackToMain = useCallback(() => {
+    if (returnToInvoices) {
+      resetAllForms();
+      onBack();
+      return;
+    }
     if (activeTab !== 'hub') {
       handleSwitchTab('hub');
     } else {
       resetAllForms();
       onBack();
     }
-  }, [activeTab, handleSwitchTab, resetAllForms, onBack]);
+  }, [returnToInvoices, activeTab, handleSwitchTab, resetAllForms, onBack]);
 
   useEffect(() => {
     resetAllForms();
@@ -222,13 +229,17 @@ export default function OtherServiceInvoice({
     }
     if (successInfo) {
       resetAllForms();
-      handleSwitchTab('hub');
+      if (returnToInvoices) {
+        onBack();
+      } else {
+        handleSwitchTab('hub');
+      }
       return;
     }
     if (activeTab !== 'hub') {
       handleGoBackToMain();
     }
-  }, [showPreview, showAddCustomerModal, successInfo, activeTab, resetAllForms, handleGoBackToMain, handleSwitchTab]);
+  }, [showPreview, showAddCustomerModal, successInfo, activeTab, returnToInvoices, onBack, resetAllForms, handleGoBackToMain, handleSwitchTab]);
 
   useBackHandler(Boolean(showPreview || showAddCustomerModal || successInfo || activeTab !== 'hub'), handleInternalBack);
 
@@ -939,8 +950,6 @@ export default function OtherServiceInvoice({
       resetPurchaseForm();
       setShowPreview(false);
       setSuccessInfo({ invoiceNumber: newInvoiceNumber });
-      setActiveTab('stock');
-      localStorage.setItem('otherServicesTab', 'stock');
 
       return { id: purInvoiceRef.id, invoiceNumber: newInvoiceNumber, invoiceType: 'purchase' };
     } catch (err: any) {
@@ -1713,7 +1722,7 @@ export default function OtherServiceInvoice({
             onClick={handleGoBackToMain}
             className="p-2.5 bg-white/5 hover:bg-white/10 text-gray-400 hover:text-white rounded-xl transition-all border border-white/5 flex items-center gap-2 cursor-pointer"
           >
-            <span className="text-sm font-bold">العودة للخدمات</span>
+            <span className="text-sm font-bold">{returnToInvoices ? 'العودة للفواتير' : 'العودة للخدمات'}</span>
             <ArrowRight size={20} />
           </button>
         </div>
@@ -1728,7 +1737,7 @@ export default function OtherServiceInvoice({
           <h3 className="text-xl font-black text-white">تم حفظ العملية بنجاح!</h3>
           <p className="text-sm text-emerald-300">رقم الفاتورة: <span className="font-mono font-bold">{successInfo.invoiceNumber}</span></p>
 
-          <div className="flex justify-center gap-3 pt-2">
+          <div className="flex flex-wrap justify-center gap-3 pt-2">
             <button
               type="button"
               onClick={resetAllForms}
@@ -1736,6 +1745,15 @@ export default function OtherServiceInvoice({
             >
               إجراء عملية جديدة
             </button>
+            {returnToInvoices && (
+              <button
+                type="button"
+                onClick={handleGoBackToMain}
+                className="px-6 py-2.5 bg-white/5 hover:bg-white/10 text-gray-200 hover:text-white rounded-xl text-xs font-black transition-all cursor-pointer border border-white/10"
+              >
+                العودة للفواتير
+              </button>
+            )}
           </div>
         </div>
       )}

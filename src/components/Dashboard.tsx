@@ -160,10 +160,6 @@ export default function Dashboard({
   const [showHistory, setShowHistory] = useState(false);
   const [selectedCurrency, setSelectedCurrency] = useState<string | null>(null);
   const [transactions, setTransactions] = useState<VaultTransaction[]>([]);
-  
-  // New Modals State
-  const [showInventoryReportsModal, setShowInventoryReportsModal] = useState(false);
-  const inventoryReportsModalRef = useRef<HTMLDivElement>(null);
 
   // "خذني إلى" Quick Navigation Input State
   const [quickJumpQuery, setQuickJumpQuery] = useState('');
@@ -172,20 +168,6 @@ export default function Dashboard({
   const quickJumpContainerRef = useRef<HTMLDivElement>(null);
   const quickJumpInputRef = useRef<HTMLInputElement>(null);
   const quickJumpListRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (inventoryReportsModalRef.current && !inventoryReportsModalRef.current.contains(event.target as Node)) {
-        setShowInventoryReportsModal(false);
-      }
-    }
-    if (showInventoryReportsModal) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
-  }, [showInventoryReportsModal]);
 
   useEffect(() => {
     function handleQuickJumpOutside(event: MouseEvent | TouchEvent) {
@@ -289,9 +271,9 @@ export default function Dashboard({
       },
       {
         id: 'qj-invoices',
-        label: 'إدارة الفواتير (صيانة ومبيعات)',
+        label: 'الفواتير (إصدار وإدارة الفواتير)',
         category: 'الفواتير',
-        keywords: ['فواتير', 'فاتورة', 'صيانة', 'تعديل', 'invoices'],
+        keywords: ['فواتير', 'فاتورة', 'صيانة', 'خدمات', 'أخرى', 'تعديل', 'invoices'],
         icon: <FileText size={16} />,
         iconBg: 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400',
         target: { tab: 'invoices' },
@@ -309,16 +291,6 @@ export default function Dashboard({
       },
 
       // الفواتير الأخرى والخدمات الإضافية والمشتريات
-      {
-        id: 'qj-other-services-hub',
-        label: 'خدمات أخرى (القائمة الرئيسية)',
-        category: 'فواتير أخرى',
-        keywords: ['خدمات', 'أخرى', 'فواتير', 'other'],
-        icon: <Layers size={16} />,
-        iconBg: 'bg-indigo-500/15 text-indigo-600 dark:text-indigo-400',
-        target: { tab: 'other-services', otherServicesTab: 'hub' },
-        isAllowed: canViewInvoices || canViewInventory
-      },
       {
         id: 'qj-other-software',
         label: 'فاتورة خدمات برمجية (سوفت وير)',
@@ -985,134 +957,47 @@ export default function Dashboard({
 
       {/* Action Grid - 3x2 layout */}
       <div className="grid grid-cols-3 gap-3 md:gap-4 max-w-4xl mx-auto pt-2">
-        {/* Row 1 */}
-        {/* 1. دخول أجهزة (Primary Brand Accent) */}
-        <ActionCard 
-          onClick={() => onNavigate('device-intake')}
-          icon={<ArrowDownToLine size={24} className="md:w-7 md:h-7" />} 
-          label="دخول أجهزة" 
-          iconClass="bg-orange-600 text-white shadow-sm shadow-orange-600/20 theme-preserve-white"
-          cardAccentClass="border-orange-500/30 dark:border-orange-500/25"
-        />
-        {/* 2. قسم الصيانة */}
-        <ActionCard 
-          onClick={() => onNavigate('device-movement')}
-          icon={<SettingsIcon size={24} className="md:w-7 md:h-7" />} 
-          label="قسم الصيانة" 
-          iconClass="bg-orange-500/10 text-orange-600 dark:text-orange-400"
-        />
-        {/* 3. خروج أجهزة */}
-        <ActionCard 
-          onClick={() => onNavigate('device-exit')}
-          icon={<ArrowUpFromLine size={24} className="md:w-7 md:h-7" />} 
-          label="خروج أجهزة" 
-          iconClass="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
-        />
-
-        {/* Row 2 */}
-        {/* 1. الحسابات */}
-        <ActionCard 
-          onClick={() => onNavigate('vault')}
-          icon={<CircleDollarSign size={24} className="md:w-7 md:h-7" />} 
-          label="الحسابات" 
-          iconClass="bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-200"
-        />
-        {/* 2. العملاء */}
+        {/* Row 1: العملاء ، الفواتير ، الصيانة */}
         <ActionCard 
           onClick={() => onNavigate('customers')}
           icon={<Users size={24} className="md:w-7 md:h-7" />} 
           label="العملاء" 
           iconClass="bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-200"
         />
-        {/* 3. أخرى */}
         <ActionCard 
-          onClick={() => setShowInventoryReportsModal(true)}
-          icon={<Layers size={24} className="md:w-7 md:h-7" />} 
-          label="أخرى" 
+          onClick={() => onNavigate('invoices')}
+          icon={<FileText size={24} className="md:w-7 md:h-7" />} 
+          label="الفواتير" 
+          iconClass="bg-orange-600 text-white shadow-sm shadow-orange-600/20 theme-preserve-white"
+          cardAccentClass="border-orange-500/30 dark:border-orange-500/25"
+        />
+        <ActionCard 
+          onClick={() => onNavigate('device-movement')}
+          icon={<Wrench size={24} className="md:w-7 md:h-7" />} 
+          label="الصيانة" 
+          iconClass="bg-orange-500/10 text-orange-600 dark:text-orange-400"
+        />
+
+        {/* Row 2: الحسابات ، المخزون ، التقارير */}
+        <ActionCard 
+          onClick={() => onNavigate('vault')}
+          icon={<CircleDollarSign size={24} className="md:w-7 md:h-7" />} 
+          label="الحسابات" 
+          iconClass="bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-200"
+        />
+        <ActionCard 
+          onClick={() => onNavigate('inventory')}
+          icon={<Package size={24} className="md:w-7 md:h-7" />} 
+          label="المخزون" 
+          iconClass="bg-emerald-500/10 text-emerald-600 dark:text-emerald-400"
+        />
+        <ActionCard 
+          onClick={() => onNavigate('reports')}
+          icon={<BarChart3 size={24} className="md:w-7 md:h-7" />} 
+          label="التقارير" 
           iconClass="bg-slate-100 dark:bg-white/[0.06] text-slate-700 dark:text-slate-200"
         />
       </div>
-
-      {/* Modals */}
-      
-      {/* Other Options Modal: خدمات أخرى + التقارير + المخزون + الفواتير */}
-      {showInventoryReportsModal && (
-        <div 
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/50 dark:bg-black/75"
-        >
-          <div 
-            ref={inventoryReportsModalRef}
-            className="bg-white dark:bg-[#161616] rounded-3xl p-6 w-full max-w-sm border border-slate-200 dark:border-white/10 shadow-2xl relative"
-          >
-            <button 
-              onClick={() => setShowInventoryReportsModal(false)}
-              className="absolute top-4 left-4 p-2 bg-slate-100 dark:bg-white/5 hover:bg-slate-200 dark:hover:bg-white/10 rounded-full text-slate-600 dark:text-gray-300 transition-colors cursor-pointer"
-            >
-              <X size={18} />
-            </button>
-            <h2 className="text-lg font-black text-slate-900 dark:text-white mb-5 font-cairo text-center">خيارات وخدمات أخرى</h2>
-            
-            <div className="space-y-2.5">
-              {/* Option 1: خدمات أخرى */}
-              <button 
-                onClick={() => {
-                  setShowInventoryReportsModal(false);
-                  localStorage.setItem('otherServicesTab', 'hub');
-                  onNavigate('other-services');
-                }}
-                className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-800 dark:text-slate-100 p-3.5 rounded-2xl border border-slate-200/80 dark:border-white/8 hover:border-orange-500/30 transition-all active:scale-98 cursor-pointer"
-              >
-                <span className="font-bold font-cairo text-sm">خدمات أخرى</span>
-                <div className="p-2 rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400">
-                  <Wrench size={18} />
-                </div>
-              </button>
-
-              {/* Option 2: التقارير */}
-              <button 
-                onClick={() => {
-                  setShowInventoryReportsModal(false);
-                  onNavigate('reports');
-                }}
-                className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-800 dark:text-slate-100 p-3.5 rounded-2xl border border-slate-200/80 dark:border-white/8 hover:border-orange-500/30 transition-all active:scale-98 cursor-pointer"
-              >
-                <span className="font-bold font-cairo text-sm">التقارير</span>
-                <div className="p-2 rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400">
-                  <BarChart3 size={18} />
-                </div>
-              </button>
-
-              {/* Option 3: المخزون */}
-              <button 
-                onClick={() => {
-                  setShowInventoryReportsModal(false);
-                  onNavigate('inventory');
-                }}
-                className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-800 dark:text-slate-100 p-3.5 rounded-2xl border border-slate-200/80 dark:border-white/8 hover:border-orange-500/30 transition-all active:scale-98 cursor-pointer"
-              >
-                <span className="font-bold font-cairo text-sm">المخزون</span>
-                <div className="p-2 rounded-xl bg-orange-500/10 text-orange-600 dark:text-orange-400">
-                  <Package size={18} />
-                </div>
-              </button>
-
-              {/* Option 4: الفواتير */}
-              <button 
-                onClick={() => {
-                  setShowInventoryReportsModal(false);
-                  onNavigate('invoices');
-                }}
-                className="w-full flex items-center justify-between bg-slate-50 hover:bg-slate-100 dark:bg-white/[0.04] dark:hover:bg-white/[0.08] text-slate-800 dark:text-slate-100 p-3.5 rounded-2xl border border-slate-200/80 dark:border-white/8 hover:border-orange-500/30 transition-all active:scale-98 cursor-pointer"
-              >
-                <span className="font-bold font-cairo text-sm">الفواتير</span>
-                <div className="p-2 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
-                  <FileText size={18} />
-                </div>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
