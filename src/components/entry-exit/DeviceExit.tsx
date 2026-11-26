@@ -7,7 +7,7 @@ import { collection, onSnapshot, doc, writeBatch, getDoc, setDoc, updateDoc, ser
 import { db } from '../../firebase';
 import { Invoice, InvoiceItem, User, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../../types';
 import { useTranslation } from 'react-i18next';
-import { CheckCircle, Search, Save, X, Info, HardDrive, User as UserIcon, ArrowLeft, ArrowRight, Phone, MapPin, Facebook, Smartphone, ChevronLeft, ChevronRight, SlidersHorizontal, MessageCircle, Wallet, Settings, ArrowUpDown, Scissors, Layers, AlertTriangle } from 'lucide-react';
+import { CheckCircle, Search, Save, X, Info, HardDrive, User as UserIcon, ArrowLeft, ArrowRight, Phone, MapPin, Facebook, Smartphone, ChevronLeft, ChevronRight, SlidersHorizontal, MessageCircle, Wallet, Settings, ArrowUpDown, Scissors, Layers, AlertTriangle, RotateCcw } from 'lucide-react';
 import { localDb } from '../../lib/local-db';
 import { ProviderFactory } from '../../data/ProviderFactory';
 import ReportActions from '../ReportActions';
@@ -276,6 +276,8 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
   const [isPayOnly, setIsPayOnly] = useState<boolean>(false);
   const [showPayOnlyConfirmModal, setShowPayOnlyConfirmModal] = useState<boolean>(false);
   const [prepaymentSuccessMsg, setPrepaymentSuccessMsg] = useState<string | null>(null);
+  const [returnRefundMode, setReturnRefundMode] = useState<'keep_credit' | 'refund_now'>('keep_credit');
+  const [refundFundId, setRefundFundId] = useState<string>('');
 
   const [activePrintData, setActivePrintData] = useState<{
     sessionId?: string;
@@ -296,6 +298,17 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
     paidForCurrent?: number;
     paidForPrevious?: number;
     totalInvoiceCost?: number;
+    refundMode?: 'keep_credit' | 'refund_now';
+    refundAmount?: number;
+    refundFundId?: string;
+    refundSources?: {
+      invoiceId: string;
+      invoiceNumber: string;
+      amount: number;
+      currency: string;
+      prevPaid: number;
+      prevRefunded: number;
+    }[];
   } | null>(null);
   const [isFinalizing, setIsFinalizing] = useState<boolean>(false);
   const isFinalizingRef = useRef<boolean>(false);
@@ -448,9 +461,15 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
     const activeReadyIds = new Set(uniqueList.filter(i => !isDeliveredStatus(i.status)).map(i => i.id!));
     setSelectedItemIds(activeReadyIds);
 
-    // Default paid amount to 0
+    // Default paid amount to 0 & reset return refund options
     setExitPaidAmount(0);
     setExitDiscountAmount(0);
+    setReturnRefundMode('keep_credit');
+    const defaultCash = funds.find(f =>
+      f.type === 'cash' &&
+      normalizeCurrency(f.currency) === normalizeCurrency(invoice.currency || 'USD')
+    ) || funds.find(f => f.type === 'cash') || funds[0];
+    setRefundFundId(defaultCash?.id || '');
   };
 
   const handleToggleItem = (id: string) => {
@@ -852,6 +871,51 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
   const totalCoveredAmount = Number(exitPaidAmount || 0) + Number(exitDiscountAmount || 0);
   const isOverAmount = totalCoveredAmount > (maxAllowedExitAmount + 0.001);
 
+  // Other ready invoices belonging to the same customer for convenient grouped checkout
+  const customerOtherReadyInvoices = useMemo(() => {
+    if (!selectedInvoice) return [];
+    return readyInvoices.filter(inv =>
+      inv.id !== selectedInvoice.id &&
+      (
+        (selectedInvoice.customerId && inv.customerId === selectedInvoice.customerId) ||
+        (selectedInvoice.customerName && inv.customerName === selectedInvoice.customerName)
+      )
+    );
+  }, [selectedInvoice, readyInvoices]);
+
+  // Compute overpaid / failed warranty return surplus available on current or linked old invoices
+  const surplusSources = useMemo(() => {
+    if (!selectedInvoice) return [];
+    const list: { invoice: Invoice; amount: number; isOldLinked: boolean }[] = [];
+    const seenIds = new Set<string>();
+
+    const currentSurplus = Math.max(0, Math.round((previousPaid - totalInvoiceAmount) * 100) / 100);
+    if (currentSurplus > 0.009 && selectedInvoice.id) {
+      list.push({ invoice: selectedInvoice, amount: currentSurplus, isOldLinked: false });
+      seenIds.add(selectedInvoice.id);
+    }
+
+    invoiceItems
+      .filter(it => !isDeliveredStatus(it.status) && selectedItemIds.has(it.id!) && it.isWarrantyReturn && it.returnLinkStatus === 'failed_deducted')
+      .forEach(it => {
+        const oldInv = invoices.find(inv =>
+          (it.linkedOldInvoiceId && inv.id === it.linkedOldInvoiceId) ||
+          (it.linkedOldInvoiceNumber && String(inv.invoiceNumber) === String(it.linkedOldInvoiceNumber))
+        );
+        if (oldInv && oldInv.id && !seenIds.has(oldInv.id)) {
+          const oldSurplus = Math.max(0, Math.round((Number(oldInv.amountPaid || 0) - Number(oldInv.totalCost || 0)) * 100) / 100);
+          if (oldSurplus > 0.009) {
+            list.push({ invoice: oldInv, amount: oldSurplus, isOldLinked: true });
+            seenIds.add(oldInv.id);
+          }
+        }
+      });
+
+    return list;
+  }, [selectedInvoice, previousPaid, totalInvoiceAmount, invoiceItems, selectedItemIds, invoices]);
+
+  const totalAvailableSurplus = surplusSources.reduce((s, x) => s + x.amount, 0);
+
   const invoiceCurrency = selectedInvoice?.currency || 'USD';
   const targetFund = funds.find(f => f.id === modalSelectedFundId);
   const paymentCurrency = targetFund?.currency || 'USD';
@@ -997,7 +1061,20 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
       previousPaid,
       paidForCurrent,
       paidForPrevious,
-      totalInvoiceCost: totalInvoiceAmount
+      totalInvoiceCost: totalInvoiceAmount,
+      refundMode: returnRefundMode,
+      refundAmount: returnRefundMode === 'refund_now' ? totalAvailableSurplus : 0,
+      refundFundId,
+      refundSources: returnRefundMode === 'refund_now'
+        ? surplusSources.map(s => ({
+            invoiceId: s.invoice.id!,
+            invoiceNumber: String(s.invoice.invoiceNumber || ''),
+            amount: s.amount,
+            currency: s.invoice.currency || selectedInvoice.currency || 'USD',
+            prevPaid: Number(s.invoice.amountPaid || 0),
+            prevRefunded: Number(s.invoice.returnRefundedAmount || 0)
+          }))
+        : []
     });
   };
 
@@ -1227,22 +1304,27 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         batch.update(itemRef, { status: '60', deliveredAt: new Date().getTime(), updatedAt: serverTimestamp() });
       });
 
-      // Update amountPaid on the Invoice
+      // Update amountPaid on the Invoice (subtracting any direct cash refund applied to the current invoice itself)
+      const currentInvRefundDeduction = (activePrintData.refundMode === 'refund_now' && activePrintData.refundSources)
+        ? activePrintData.refundSources
+            .filter(s => s.invoiceId === selectedInvoice.id)
+            .reduce((sum, s) => sum + Number(s.amount || 0), 0)
+        : 0;
       const invoiceRef = doc(db, 'invoices', selectedInvoice.id!);
-      const newAmountPaid = Number(selectedInvoice.amountPaid || 0) + Number(activePrintData.paidAmount);
+      const newAmountPaid = Math.max(0, Number(selectedInvoice.amountPaid || 0) + Number(activePrintData.paidAmount) - currentInvRefundDeduction);
       const newDiscount = Number(activePrintData.discountAmount !== undefined ? activePrintData.discountAmount : (selectedInvoice.discount || 0));
       const newTax = Number(selectedInvoice.tax || 0) + Number(activePrintData.taxAmount);
-      
+
       // Check if ALL items of the invoice are now delivered
       const allInvoiceItems = currentItems.filter(i => i.invoiceNumber === selectedInvoice.invoiceNumber);
       const allDelivered = allInvoiceItems.every(i => i.status === '60' || selectedItemIds.has(i.id!));
-      
+
       // Calculate new totalCost of the invoice accurately using billable items only and the updated discount/tax
       const newTotalCost = calculateInvoiceBillableTotal(
         { ...selectedInvoice, discount: newDiscount, tax: newTax },
         allInvoiceItems
       );
-      
+
       const invoiceUpdates: any = {
         totalCost: newTotalCost,
         amountPaid: newAmountPaid,
@@ -1251,11 +1333,16 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
         updatedAt: serverTimestamp(),
         printCount: (selectedInvoice.printCount || 0) + 1
       };
-      
+
+      if (currentInvRefundDeduction > 0) {
+        invoiceUpdates.returnRefundedAmount = Number(selectedInvoice.returnRefundedAmount || 0) + currentInvRefundDeduction;
+        invoiceUpdates.returnCreditAmount = 0;
+      }
+
       if (allDelivered) {
         invoiceUpdates.status = '60'; // fully delivered
       }
-      
+
       batch.update(invoiceRef, invoiceUpdates);
 
       // Save transaction in vault_transactions if paid amount is higher than 0
@@ -1370,6 +1457,85 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
 
             } catch (sqliteErr) {
               console.error("Failed to write standard payment to SQLite/Firestore:", sqliteErr);
+            }
+          }
+        }
+      }
+
+      // Process direct cash refund vouchers for failed warranty return surplus (if requested)
+      if (activePrintData.refundMode === 'refund_now' && Number(activePrintData.refundAmount || 0) > 0 && activePrintData.refundSources && activePrintData.refundSources.length > 0) {
+        const chosenRefundFund = funds.find(f => f.id === activePrintData.refundFundId)
+          || funds.find(f => f.type === 'cash' && normalizeCurrency(f.currency) === normalizeCurrency(selectedInvoice.currency || 'USD'))
+          || funds.find(f => f.type === 'cash')
+          || funds[0];
+
+        if (chosenRefundFund) {
+          let nextRefNum = 0;
+          try {
+            const resRefNum = await localDb.query("SELECT COALESCE(MAX(voucherNumber), 0) as maxNum FROM vault_transactions");
+            nextRefNum = (resRefNum.values?.[0]?.maxNum || 0) + 1;
+          } catch (e) {
+            nextRefNum = 1;
+          }
+
+          for (const src of activePrintData.refundSources) {
+            const txId = `vtx-ref-${src.invoiceId}-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+            const timestampIso = activePrintData.timestamp || new Date().toISOString();
+            const currVoucherNum = nextRefNum++;
+
+            try {
+              await ProviderFactory.getProvider().setDoc('vault_transactions', txId, {
+                id: txId,
+                currency: src.currency,
+                amount: -Math.abs(src.amount),
+                customerName: selectedInvoice.customerName || 'عميل نقدي',
+                invoiceNumber: src.invoiceNumber,
+                invoiceId: src.invoiceId,
+                userName: user?.name || user?.username || 'مدير النظام',
+                userNumber: 1,
+                userId: user?.id || 'admin',
+                timestamp: timestampIso,
+                type: 'payment',
+                notes: `رد فائض مرتجع صيانة للعميل - فاتورة #${src.invoiceNumber} (خروج #${selectedInvoice.invoiceNumber})`,
+                updatedAt: timestampIso,
+                voucherNumber: currVoucherNum,
+                transactionCategory: 'رد مبلغ مرتجع صيانة',
+                fundId: chosenRefundFund.id,
+                fundName: chosenRefundFund.name,
+                customerId: selectedInvoice.customerId || '',
+                isReversed: 0,
+                isReversal: 0,
+                reversalOf: '',
+                paymentType: chosenRefundFund.type === 'bank' ? 2 : 1,
+                liabilityCurrency: src.currency,
+                liabilityAmount: src.amount,
+                receiptCurrency: src.currency,
+                receiptAmount: src.amount,
+                bankDetails: ''
+              });
+
+              await ProviderFactory.getProvider().updateDoc('fin_funds', chosenRefundFund.id, {
+                balance: { type: 'increment', value: -Math.abs(src.amount) }
+              });
+            } catch (refundErr) {
+              console.error("Failed to record refund voucher:", refundErr);
+            }
+
+            if (src.invoiceId !== selectedInvoice.id) {
+              const updatedOldPaid = Math.max(0, src.prevPaid - src.amount);
+              const updatedOldRefunded = src.prevRefunded + src.amount;
+              batch.update(doc(db, 'invoices', src.invoiceId), {
+                amountPaid: updatedOldPaid,
+                returnRefundedAmount: updatedOldRefunded,
+                returnCreditAmount: 0,
+                updatedAt: serverTimestamp()
+              });
+              try {
+                await localDb.run(
+                  "UPDATE invoices SET amountPaid = ? WHERE id = ?",
+                  [updatedOldPaid, src.invoiceId]
+                );
+              } catch (e) {}
             }
           }
         }
@@ -2002,6 +2168,27 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                    <div>{selectedInvoice.customerName}</div>
                    <div dir="ltr" className="text-left font-mono text-orange-500">#{selectedInvoice.invoiceNumber}</div>
                  </div>
+                 {customerOtherReadyInvoices.length > 0 && (
+                   <div className="mt-2 pt-2 border-t border-white/5 flex flex-wrap items-center justify-between gap-2">
+                     <span className="text-[11px] font-bold text-amber-300 flex items-center gap-1.5">
+                       <Layers size={13} className="text-amber-400" />
+                       يوجد لهذا العميل ({customerOtherReadyInvoices.length}) فواتير أخرى جاهزة للخروج:
+                     </span>
+                     <div className="flex flex-wrap items-center gap-1.5">
+                       {customerOtherReadyInvoices.map(otherInv => (
+                         <button
+                           key={otherInv.id || otherInv.invoiceNumber}
+                           type="button"
+                           onClick={() => openInvoice(otherInv)}
+                           className="px-2 py-0.5 rounded-lg bg-amber-500/15 hover:bg-amber-500 text-amber-300 hover:text-black border border-amber-500/30 text-[10px] font-mono font-bold transition-all cursor-pointer"
+                           title={`الانتقال إلى الفاتورة #${otherInv.invoiceNumber}`}
+                         >
+                           #{otherInv.invoiceNumber}
+                         </button>
+                       ))}
+                     </div>
+                   </div>
+                 )}
               </div>
 
               {/* جدول الأجهزة المعروض أفقيا */}
@@ -2161,10 +2348,24 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
 
                             {/* 2. النوع/الجهاز */}
                             <td className="px-2 py-1 text-right text-white font-bold text-[11px] whitespace-nowrap">
-                              {item.deviceType || '-'} {item.deviceName ? ` / ${item.deviceName}` : ''}
-                              {isDelivered && (
-                                <span className="text-[10px] text-gray-400 mr-1.5 font-normal">(تم تسليمه مسبقاً)</span>
-                              )}
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span>{item.deviceType || '-'} {item.deviceName ? ` / ${item.deviceName}` : ''}</span>
+                                {item.isWarrantyReturn && item.returnLinkStatus === 'failed_deducted' && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[9px] font-bold">
+                                    <RotateCcw size={9} />
+                                    مرتجع فاشل {item.linkedOldInvoiceNumber ? `(خصم من #${item.linkedOldInvoiceNumber})` : ''}
+                                  </span>
+                                )}
+                                {item.isWarrantyReturn && item.returnLinkStatus !== 'failed_deducted' && (
+                                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[9px] font-bold">
+                                    <RotateCcw size={9} />
+                                    مرتجع مجاني
+                                  </span>
+                                )}
+                                {isDelivered && (
+                                  <span className="text-[10px] text-gray-400 font-normal">(تم تسليمه مسبقاً)</span>
+                                )}
+                              </div>
                             </td>
 
                             {/* 3. العدد */}
@@ -2493,6 +2694,59 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                       </button>
                     </div>
                   )}
+
+                  {/* Overpaid / Failed Warranty Return Surplus Settlement Panel */}
+                  {totalAvailableSurplus > 0.009 && !isPayOnly && (
+                    <div className="mt-2 p-2.5 bg-purple-500/10 border border-purple-500/30 rounded-xl space-y-2 text-right w-full">
+                      <div className="flex flex-wrap items-center justify-between gap-2">
+                        <span className="text-xs font-black text-purple-200 flex items-center gap-1.5">
+                          <RotateCcw size={14} className="text-purple-400" />
+                          فائض مرتجع / رصيد دائن للعميل:
+                          <span className="font-mono text-emerald-300 text-sm">
+                            {totalAvailableSurplus.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 2 })} {selectedInvoice.currency || 'USD'}
+                          </span>
+                        </span>
+                        <span className="text-[10px] text-purple-200/80 font-mono">
+                          ({surplusSources.map(s => `#${s.invoice.invoiceNumber}: ${s.amount}`).join(' + ')})
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-3 text-[11px]">
+                        <label className="flex items-center gap-1.5 cursor-pointer text-gray-200 font-bold">
+                          <input
+                            type="radio"
+                            name="returnRefundMode"
+                            checked={returnRefundMode === 'keep_credit'}
+                            onChange={() => setReturnRefundMode('keep_credit')}
+                            className="text-purple-500 focus:ring-0"
+                          />
+                          <span>إبقاء كرصيد دائن في حساب العميل</span>
+                        </label>
+                        <label className="flex items-center gap-1.5 cursor-pointer text-amber-300 font-bold">
+                          <input
+                            type="radio"
+                            name="returnRefundMode"
+                            checked={returnRefundMode === 'refund_now'}
+                            onChange={() => setReturnRefundMode('refund_now')}
+                            className="text-amber-500 focus:ring-0"
+                          />
+                          <span>رد المبلغ للعميل الآن (سند صرف مرتجع)</span>
+                        </label>
+                        {returnRefundMode === 'refund_now' && funds.length > 0 && (
+                          <select
+                            value={refundFundId}
+                            onChange={e => setRefundFundId(e.target.value)}
+                            className="bg-black/50 border border-amber-500/40 rounded-lg px-2 py-1 text-[11px] font-bold text-white outline-none"
+                          >
+                            {funds.map(f => (
+                              <option key={f.id} value={f.id}>
+                                {f.name} ({f.currency})
+                              </option>
+                            ))}
+                          </select>
+                        )}
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 {/* Action Button & Metadata */}
@@ -2734,7 +2988,19 @@ export default function DeviceExit({ user, onBack }: { user: User, onBack: () =>
                 return (
                   <tr key={`exit-inv-${invoice.id ?? invoice.invoiceNumber ?? 'noid'}-${idx}`} className="hover:bg-white/5 transition-colors cursor-pointer group text-[11px] sm:text-xs md:text-sm" onClick={() => openInvoice(invoice)}>
                     {visibleColumns.invoiceNumber && <td className="px-2 sm:px-4 py-3 font-mono font-bold text-orange-500">{invoice.invoiceNumber}</td>}
-                    {visibleColumns.customerName && <td className="px-2 sm:px-4 py-3 font-bold text-white max-w-[160px] sm:max-w-[280px] truncate" title={invoice.customerName}>{invoice.customerName}</td>}
+                    {visibleColumns.customerName && (
+                      <td className="px-2 sm:px-4 py-3 font-bold text-white max-w-[160px] sm:max-w-[280px] truncate" title={invoice.customerName}>
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate">{invoice.customerName}</span>
+                          {exitReadyItems.some(it => it.isWarrantyReturn) && (
+                            <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[9px] font-bold shrink-0">
+                              <RotateCcw size={9} />
+                              مرتجع
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    )}
                     {visibleColumns.totalDevices && <td className="px-1 sm:px-3 py-3 font-mono text-center font-bold text-gray-500">{totalDevices}</td>}
                     {visibleColumns.exitReadyCount && <td className="px-1 sm:px-3 py-3 font-mono text-center font-bold text-orange-400">{exitReadyCount}</td>}
                     {visibleColumns.unrepairableCount && <td className="px-1 sm:px-3 py-3 font-mono text-center text-red-500 font-bold">{unrepairableCount > 0 ? unrepairableCount : '-'}</td>}

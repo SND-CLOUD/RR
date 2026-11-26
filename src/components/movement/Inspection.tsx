@@ -7,7 +7,7 @@ import { db } from '../../firebase';
 import { Invoice, InvoiceItem, User, Customer, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../../types';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useTranslation } from 'react-i18next';
-import { Search, ArrowLeft, ArrowUpRight, ArrowRight, LogOut, Search as SearchIcon, ClipboardCheck, HardDrive, User as UserIcon, Settings, Plus, Save, Loader2, DollarSign, X, Check, AlertTriangle, Printer, Phone, Smartphone, MessageCircle, MapPin, Facebook, Cpu } from 'lucide-react';
+import { Search, ArrowLeft, ArrowUpRight, ArrowRight, LogOut, Search as SearchIcon, ClipboardCheck, HardDrive, User as UserIcon, Settings, Plus, Save, Loader2, DollarSign, X, Check, AlertTriangle, Printer, Phone, Smartphone, MessageCircle, MapPin, Facebook, Cpu, RotateCcw } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ElectronicPartsSelectionModal } from '../ElectronicPartsSelectionModal';
 import { DevicePartUsageItem } from '../../types';
@@ -79,7 +79,26 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
   
   // Form State
   const [engineerName, setEngineerName] = useState('');
-  const [actionItems, setActionItems] = useState<{ id: string, count: number, report: string, unitCost: number, cost: number, decision: 'repairing' | 'intact' | 'unrepairable', isWarrantyReturn?: boolean }[]>([]);
+  const [actionItems, setActionItems] = useState<{
+    id: string;
+    count: number;
+    report: string;
+    unitCost: number;
+    cost: number;
+    decision: 'repairing' | 'intact' | 'unrepairable';
+    isWarrantyReturn?: boolean;
+    returnAction?: 'normal' | 'approved_linked';
+    linkedOldInvoiceId?: string;
+    linkedOldInvoiceNumber?: string;
+    linkedOldItemId?: string;
+    linkedOldUnitCost?: number;
+    linkedOldCost?: number;
+    linkedOldPartsUsed?: DevicePartUsageItem[];
+    linkedOldEngineerReport?: string;
+    linkedOldTechnician?: string;
+    hasNoParts?: boolean;
+    partsUsed?: DevicePartUsageItem[];
+  }[]>([]);
   const [currentOutput, setCurrentOutput] = useState<any>(null);
 
   // Double Purpose tabs
@@ -308,6 +327,15 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
     cost: number,
     decision: 'repairing' | 'intact' | 'unrepairable',
     isWarrantyReturn?: boolean,
+    returnAction?: 'normal' | 'approved_linked',
+    linkedOldInvoiceId?: string,
+    linkedOldInvoiceNumber?: string,
+    linkedOldItemId?: string,
+    linkedOldUnitCost?: number,
+    linkedOldCost?: number,
+    linkedOldPartsUsed?: DevicePartUsageItem[],
+    linkedOldEngineerReport?: string,
+    linkedOldTechnician?: string,
     hasNoParts?: boolean,
     partsUsed?: DevicePartUsageItem[]
   }>({
@@ -320,9 +348,57 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
     cost: 0,
     decision: 'repairing',
     isWarrantyReturn: false,
+    returnAction: 'normal',
+    linkedOldInvoiceId: '',
+    linkedOldInvoiceNumber: '',
+    linkedOldItemId: '',
+    linkedOldUnitCost: 0,
+    linkedOldCost: 0,
+    linkedOldPartsUsed: [],
+    linkedOldEngineerReport: '',
+    linkedOldTechnician: '',
     hasNoParts: true,
     partsUsed: []
   });
+
+  const getCustomerDeliveredItemsForReturn = (inv: Invoice | null) => {
+    if (!inv) return [];
+    const targetCustId = String(inv.customerId || '').trim();
+    const targetCustName = String(inv.customerName || '').trim().toLowerCase();
+
+    const customerInvMap = new Map<string, Invoice>();
+    invoices.forEach(candidateInv => {
+      if (candidateInv.id === inv.id) return;
+      if (isPurchaseInvoice(candidateInv) || isSaleInvoice(candidateInv)) return;
+      const cId = String(candidateInv.customerId || '').trim();
+      const cName = String(candidateInv.customerName || '').trim().toLowerCase();
+      const match = targetCustId ? cId === targetCustId : (targetCustName && cName === targetCustName);
+      if (match) {
+        if (candidateInv.id) customerInvMap.set(candidateInv.id, candidateInv);
+        if (candidateInv.invoiceNumber) customerInvMap.set(String(candidateInv.invoiceNumber).replace('#', '').trim(), candidateInv);
+      }
+    });
+
+    return items
+      .filter(it => {
+        if (!isShopMaintenanceItem(it)) return false;
+        const st = String(it.status || '').toLowerCase().trim();
+        if (st !== '60' && st !== 'delivered') return false;
+        if (Number(it.quantity || 0) <= 0) return false;
+        const sub = String(it.subStatus || '').toLowerCase().trim();
+        if (['unrepairable', 'refused', 'cancelled', 'intact'].includes(sub)) return false;
+        const itInvId = String(it.invoiceId || '').trim();
+        const itInvNum = String(it.invoiceNumber || '').replace('#', '').trim();
+        return (itInvId && customerInvMap.has(itInvId)) || (itInvNum && customerInvMap.has(itInvNum));
+      })
+      .map(it => {
+        const itInvId = String(it.invoiceId || '').trim();
+        const itInvNum = String(it.invoiceNumber || '').replace('#', '').trim();
+        const parentInv = customerInvMap.get(itInvId) || customerInvMap.get(itInvNum);
+        return { item: it, invoice: parentInv };
+      })
+      .sort((a, b) => Number(b.invoice?.invoiceNumber || b.item.invoiceNumber || 0) - Number(a.invoice?.invoiceNumber || a.item.invoiceNumber || 0));
+  };
 
   const setSyncedCurrentActionItem = (item: any) => {
     const reportVal = item.report || '';
@@ -338,6 +414,15 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
       technical,
       outcome,
       isWarrantyReturn: item.isWarrantyReturn !== undefined ? !!item.isWarrantyReturn : false,
+      returnAction: item.returnAction || (item.isWarrantyReturn ? 'approved_linked' : 'normal'),
+      linkedOldInvoiceId: item.linkedOldInvoiceId || '',
+      linkedOldInvoiceNumber: item.linkedOldInvoiceNumber || '',
+      linkedOldItemId: item.linkedOldItemId || '',
+      linkedOldUnitCost: Number(item.linkedOldUnitCost || 0),
+      linkedOldCost: Number(item.linkedOldCost || 0),
+      linkedOldPartsUsed: item.linkedOldPartsUsed || [],
+      linkedOldEngineerReport: item.linkedOldEngineerReport || '',
+      linkedOldTechnician: item.linkedOldTechnician || '',
       hasNoParts: item.hasNoParts !== undefined ? item.hasNoParts : ((item.partsUsed && item.partsUsed.length > 0) ? false : true),
       partsUsed: item.partsUsed || []
     });
@@ -353,6 +438,15 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         unitCost: actionItem.unitCost,
         cost: actionItem.cost,
         isWarrantyReturn: actionItem.isWarrantyReturn,
+        returnAction: actionItem.returnAction || (actionItem.isWarrantyReturn ? 'approved_linked' : 'normal'),
+        linkedOldInvoiceId: actionItem.linkedOldInvoiceId || '',
+        linkedOldInvoiceNumber: actionItem.linkedOldInvoiceNumber || '',
+        linkedOldItemId: actionItem.linkedOldItemId || '',
+        linkedOldUnitCost: actionItem.linkedOldUnitCost || 0,
+        linkedOldCost: actionItem.linkedOldCost || 0,
+        linkedOldPartsUsed: actionItem.linkedOldPartsUsed || [],
+        linkedOldEngineerReport: actionItem.linkedOldEngineerReport || '',
+        linkedOldTechnician: actionItem.linkedOldTechnician || '',
         hasNoParts: actionItem.hasNoParts,
         partsUsed: actionItem.partsUsed
       };
@@ -360,7 +454,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
     // Second, check the original items or invoiceItems list
     const originalItem = items.find(i => i.id === itemId) || invoiceItems.find(i => i.id === itemId);
     if (originalItem) {
-      const isWarranty = isWarrantyReturnItem(originalItem);
+      const isWarranty = !!originalItem.isWarrantyReturn || originalItem.returnLinkStatus === 'approved_linked' || isWarrantyReturnItem(originalItem);
       const initialDecision = (originalItem.subStatus === 'intact' || originalItem.subStatus === 'unrepairable' || originalItem.subStatus === 'repairing') 
         ? originalItem.subStatus 
         : 'repairing';
@@ -370,6 +464,15 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         unitCost: isWarranty ? 0 : (originalItem.cost || 0),
         cost: isWarranty ? 0 : (originalItem.cost || 0),
         isWarrantyReturn: isWarranty,
+        returnAction: isWarranty ? 'approved_linked' : 'normal',
+        linkedOldInvoiceId: originalItem.linkedOldInvoiceId || '',
+        linkedOldInvoiceNumber: originalItem.linkedOldInvoiceNumber || '',
+        linkedOldItemId: originalItem.linkedOldItemId || '',
+        linkedOldUnitCost: originalItem.linkedOldUnitCost || 0,
+        linkedOldCost: originalItem.linkedOldCost || 0,
+        linkedOldPartsUsed: originalItem.linkedOldPartsUsed || [],
+        linkedOldEngineerReport: originalItem.linkedOldEngineerReport || '',
+        linkedOldTechnician: originalItem.linkedOldTechnician || '',
         hasNoParts: originalItem.hasNoParts !== undefined ? originalItem.hasNoParts : (originalItem.partsUsed && originalItem.partsUsed.length > 0 ? false : true),
         partsUsed: originalItem.partsUsed || []
       };
@@ -395,7 +498,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
 
     if (avItems.length > 0) {
       const firstItem = avItems[0];
-      const isWarranty = isWarrantyReturnItem(firstItem);
+      const isWarranty = !!firstItem.isWarrantyReturn || firstItem.returnLinkStatus === 'approved_linked' || isWarrantyReturnItem(firstItem);
       if (invoice.status === '22') {
         // Phase 2: pre-fill first item's report & decision from Phase 1 inputs!
         const initialDecision = (firstItem.subStatus === 'intact' || firstItem.subStatus === 'unrepairable' || firstItem.subStatus === 'repairing') 
@@ -408,7 +511,16 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
           unitCost: isWarranty ? 0 : (firstItem.cost || 0),
           cost: isWarranty ? 0 : ((firstItem.cost || 0) * firstItem.quantity),
           decision: initialDecision as 'repairing' | 'intact' | 'unrepairable',
-          isWarrantyReturn: isWarranty
+          isWarrantyReturn: isWarranty,
+          returnAction: isWarranty ? 'approved_linked' : 'normal',
+          linkedOldInvoiceId: firstItem.linkedOldInvoiceId || '',
+          linkedOldInvoiceNumber: firstItem.linkedOldInvoiceNumber || '',
+          linkedOldItemId: firstItem.linkedOldItemId || '',
+          linkedOldUnitCost: firstItem.linkedOldUnitCost || 0,
+          linkedOldCost: firstItem.linkedOldCost || 0,
+          linkedOldPartsUsed: firstItem.linkedOldPartsUsed || [],
+          linkedOldEngineerReport: firstItem.linkedOldEngineerReport || '',
+          linkedOldTechnician: firstItem.linkedOldTechnician || ''
         });
       } else {
         // Phase 1 or normal: Reset and initialize one entry form
@@ -419,7 +531,8 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
           unitCost: 0,
           cost: 0,
           decision: 'repairing',
-          isWarrantyReturn: isWarranty
+          isWarrantyReturn: isWarranty,
+          returnAction: isWarranty ? 'approved_linked' : 'normal'
         });
       }
     }
@@ -436,8 +549,17 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
       // Show total available quantity of the selected device by default
       item.count = maxCount;
       const foundOriginal = items.find(i => i.id === value) || invoiceItems.find(i => i.id === value);
-      const isWarranty = isWarrantyReturnItem(foundOriginal);
+      const isWarranty = !!foundOriginal?.isWarrantyReturn || foundOriginal?.returnLinkStatus === 'approved_linked' || isWarrantyReturnItem(foundOriginal);
       item.isWarrantyReturn = isWarranty;
+      item.returnAction = isWarranty ? 'approved_linked' : 'normal';
+      item.linkedOldInvoiceId = foundOriginal?.linkedOldInvoiceId || '';
+      item.linkedOldInvoiceNumber = foundOriginal?.linkedOldInvoiceNumber || '';
+      item.linkedOldItemId = foundOriginal?.linkedOldItemId || '';
+      item.linkedOldUnitCost = foundOriginal?.linkedOldUnitCost || 0;
+      item.linkedOldCost = foundOriginal?.linkedOldCost || 0;
+      item.linkedOldPartsUsed = foundOriginal?.linkedOldPartsUsed || [];
+      item.linkedOldEngineerReport = foundOriginal?.linkedOldEngineerReport || '';
+      item.linkedOldTechnician = foundOriginal?.linkedOldTechnician || '';
 
       if (selectedInvoice && selectedInvoice.status === '22') {
         const latestData = getLatestItemData(value, actionItems);
@@ -459,10 +581,38 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         item.cost = 0;
       }
     }
+    if (field === 'returnAction') {
+      if (value === 'approved_linked') {
+        item.isWarrantyReturn = true;
+        item.decision = 'repairing';
+        item.unitCost = 0;
+        item.cost = 0;
+        item.technical = 'مرتجع صيانة (تحت الضمان/المراجعة)';
+        item.outcome = 'فحص وإصلاح مجاني في قسم الصيانة';
+        item.report = 'مرتجع صيانة (تحت الضمان/المراجعة) | فحص وإصلاح مجاني في قسم الصيانة';
+      } else {
+        item.isWarrantyReturn = false;
+        item.linkedOldInvoiceId = '';
+        item.linkedOldInvoiceNumber = '';
+        item.linkedOldItemId = '';
+        item.linkedOldUnitCost = 0;
+        item.linkedOldCost = 0;
+        item.linkedOldPartsUsed = [];
+        item.linkedOldEngineerReport = '';
+        item.linkedOldTechnician = '';
+        if (item.decision === 'repairing') {
+          item.technical = 'الجهاز بحاجة إلى صيانة';
+          item.outcome = 'تشغيل كامل للجهاز';
+          item.report = 'الجهاز بحاجة إلى صيانة | تشغيل كامل للجهاز';
+        }
+      }
+    }
     if (field === 'decision') {
       if (value !== 'repairing') {
          item.unitCost = 0;
          item.cost = 0;
+         item.isWarrantyReturn = false;
+         item.returnAction = 'normal';
       }
       if (value === 'repairing') {
         item.technical = 'الجهاز بحاجة إلى صيانة';
@@ -734,6 +884,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
       const rowCount = Number(row.count) || 1;
       const currentRem = remainingQtyMap.get(orig.id!) || 0;
       
+      const isConfirmedReturn = !!row.isWarrantyReturn || row.returnAction === 'approved_linked';
       // Add the inspected portion
       result.push({
         id: `inspected-${index}`,
@@ -741,10 +892,12 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         deviceName: orig.deviceName,
         quantity: rowCount,
         engineerReport: row.report,
-        cost: row.decision === 'repairing' ? (Number(row.cost) || 0) : 0,
-        unitCost: row.decision === 'repairing' ? (Number(row.unitCost) || 0) : 0,
-        subStatus: row.decision === 'intact' ? 'intact' : row.decision === 'unrepairable' ? 'unrepairable' : 'maintenance',
-        status: row.decision === 'intact' ? '50' : row.decision === 'unrepairable' ? '50' : '30',
+        cost: (row.decision === 'repairing' && !isConfirmedReturn) ? (Number(row.cost) || 0) : 0,
+        unitCost: (row.decision === 'repairing' && !isConfirmedReturn) ? (Number(row.unitCost) || 0) : 0,
+        subStatus: row.decision === 'intact' ? 'intact' : row.decision === 'unrepairable' ? 'unrepairable' : (isConfirmedReturn ? 'repairing' : 'maintenance'),
+        status: row.decision === 'intact' ? '50' : row.decision === 'unrepairable' ? '50' : (isConfirmedReturn ? '40' : '30'),
+        isWarrantyReturn: isConfirmedReturn,
+        linkedOldInvoiceNumber: row.linkedOldInvoiceNumber || '',
         partsUsed: (row as any).partsUsed
       });
 
@@ -892,9 +1045,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
   const saveInspectionData = async (actionType: 'none' | 'print' | 'whatsapp') => {
     if (!selectedInvoice || actionItems.length === 0 || !engineerName) return;
     
-    // Validation: if repairing, cost must be > 0.
+    // Validation: if repairing (and NOT an engineer-confirmed return), cost must be > 0.
     const isPhase1 = selectedInvoice.status === '21';
-    const hasInvalidCost = !isPhase1 && actionItems.some(row => row.decision === 'repairing' && (Number(row.cost) <= 0 || isNaN(Number(row.cost))));
+    const hasInvalidCost = !isPhase1 && actionItems.some(row => row.decision === 'repairing' && !row.isWarrantyReturn && row.returnAction !== 'approved_linked' && (Number(row.cost) <= 0 || isNaN(Number(row.cost))));
     if (hasInvalidCost) {
       alert('يجب إدخال تكلفة صيانة أكبر من الصفر للأجهزة التي تحتاج إلى صيانة.');
       return;
@@ -922,26 +1075,58 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         const originalItem = items.find(i => i.id === row.id) || invoiceItems.find(i => i.id === row.id);
         if (!originalItem) continue;
 
-        const resolvedCost = row.decision === 'repairing' ? (Number(row.cost) || 0) : 0;
+        const isConfirmedReturn = row.decision === 'repairing' && (!!row.isWarrantyReturn || row.returnAction === 'approved_linked');
+        const resolvedCost = (row.decision === 'repairing' && !isConfirmedReturn) ? (Number(row.cost) || 0) : 0;
 
+        // Confirmed free returns skip Approval ('30') and go straight to Maintenance ('40')
         const updatedStatus = isPhase1 
           ? '22' 
-          : (row.decision === 'intact' ? '50' : row.decision === 'unrepairable' ? '50' : '30');
+          : (row.decision === 'intact' ? '50' : row.decision === 'unrepairable' ? '50' : isConfirmedReturn ? '40' : '30');
 
         const itemSubStatus = isPhase1 
-          ? row.decision 
-          : (row.decision === 'intact' ? 'intact' : row.decision === 'unrepairable' ? 'unrepairable' : 'maintenance');
+          ? (isConfirmedReturn ? 'repairing' : row.decision)
+          : (row.decision === 'intact' ? 'intact' : row.decision === 'unrepairable' ? 'unrepairable' : isConfirmedReturn ? 'repairing' : 'maintenance');
 
         const rowCount = Number(row.count) || 1;
         let rem = itemRemaining.get(originalItem.id!) || 0;
 
         const resolvedEntryDate = resolveEntryDateString(originalItem, selectedInvoice);
+        const linkedUnitCost = Number(row.linkedOldUnitCost || 0);
+        const computedLinkedOldCost = linkedUnitCost > 0 ? linkedUnitCost * rowCount : Number(row.linkedOldCost || 0);
+
+        const returnFields = isConfirmedReturn
+          ? {
+              isReturnPending: false,
+              isWarrantyReturn: true,
+              returnLinkStatus: 'approved_linked',
+              linkedOldInvoiceId: row.linkedOldInvoiceId || '',
+              linkedOldInvoiceNumber: row.linkedOldInvoiceNumber || '',
+              linkedOldItemId: row.linkedOldItemId || '',
+              linkedOldUnitCost: linkedUnitCost,
+              linkedOldCost: computedLinkedOldCost,
+              linkedOldPartsUsed: row.linkedOldPartsUsed || [],
+              linkedOldEngineerReport: row.linkedOldEngineerReport || '',
+              linkedOldTechnician: row.linkedOldTechnician || '',
+              returnOldSettledZeroed: false
+            }
+          : {
+              isReturnPending: false,
+              isWarrantyReturn: false,
+              returnLinkStatus: originalItem.isReturnPending ? 'rejected_new' : (originalItem.returnLinkStatus || 'none'),
+              linkedOldInvoiceId: '',
+              linkedOldInvoiceNumber: '',
+              linkedOldItemId: '',
+              linkedOldUnitCost: 0,
+              linkedOldCost: 0,
+              linkedOldPartsUsed: []
+            };
 
         if (rem > rowCount) {
           // split
           const splitItemRef = doc(collection(db, 'invoice_items'));
           batch.set(splitItemRef, {
             ...originalItem,
+            ...returnFields,
             id: splitItemRef.id,
             entryDate: resolvedEntryDate,
             quantity: rowCount,
@@ -950,6 +1135,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
             source: 'inspection',
             engineerReport: row.report,
             cost: resolvedCost,
+            unitCost: (row.decision === 'repairing' && !isConfirmedReturn && rowCount > 0) ? resolvedCost / rowCount : 0,
             technician: engineerName,
             hasNoParts: (row as any).hasNoParts !== undefined ? (row as any).hasNoParts : (((row as any).partsUsed && (row as any).partsUsed.length > 0) ? false : true),
             partsUsed: (row as any).partsUsed || [],
@@ -966,16 +1152,18 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
             entryDate: resolvedEntryDate,
             updatedAt: serverTimestamp()
           });
-          if (row.decision === 'repairing') totalCostAdjustment += Number(row.cost) || 0;
+          if (row.decision === 'repairing' && !isConfirmedReturn) totalCostAdjustment += Number(row.cost) || 0;
         } else {
           // update fully
           batch.update(doc(db, 'invoice_items', originalItem.id!), {
+            ...returnFields,
             status: updatedStatus,
             subStatus: itemSubStatus,
             source: 'inspection',
             quantity: rem,
             engineerReport: row.report,
             cost: resolvedCost,
+            unitCost: (row.decision === 'repairing' && !isConfirmedReturn && rem > 0) ? resolvedCost / rem : 0,
             technician: engineerName,
             hasNoParts: (row as any).hasNoParts !== undefined ? (row as any).hasNoParts : (((row as any).partsUsed && (row as any).partsUsed.length > 0) ? false : true),
             partsUsed: (row as any).partsUsed || [],
@@ -983,7 +1171,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
             entryDate: resolvedEntryDate,
             updatedAt: serverTimestamp()
           });
-          if (row.decision === 'repairing') totalCostAdjustment += Number(row.cost) || 0;
+          if (row.decision === 'repairing' && !isConfirmedReturn) totalCostAdjustment += Number(row.cost) || 0;
         }
       }
 
@@ -993,9 +1181,10 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
         if (!row.id || Number(row.count) <= 0) continue;
         const originalItem = items.find(i => i.id === row.id) || invoiceItems.find(i => i.id === row.id);
         if (!originalItem) continue;
+        const isConfirmedReturn = row.decision === 'repairing' && (!!row.isWarrantyReturn || row.returnAction === 'approved_linked');
         const updatedStatus = isPhase1 
           ? '22' 
-          : (row.decision === 'intact' ? '50' : row.decision === 'unrepairable' ? '50' : '30');
+          : (row.decision === 'intact' ? '50' : row.decision === 'unrepairable' ? '50' : isConfirmedReturn ? '40' : '30');
         finalItemStatuses.push(updatedStatus);
       }
       
@@ -1432,10 +1621,11 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                               Number(currentActionItem.count) <= 0 || 
                               (currentActionItem.id ? Number(currentActionItem.count) > getAvailableQuantity(currentActionItem.id, -1) : true);
 
+    const isConfirmedReturnForm = currentActionItem.decision === 'repairing' && (!!currentActionItem.isWarrantyReturn || currentActionItem.returnAction === 'approved_linked');
     const isSaveDisabled = !currentActionItem.id || 
                            isQuantityInvalid || 
                            !String(currentActionItem.report || '').trim() || 
-                           (selectedInvoice.status !== '21' && currentActionItem.decision === 'repairing' && (Number(currentActionItem.unitCost) <= 0 || isNaN(Number(currentActionItem.unitCost))));
+                           (selectedInvoice.status !== '21' && currentActionItem.decision === 'repairing' && !isConfirmedReturnForm && (Number(currentActionItem.unitCost) <= 0 || isNaN(Number(currentActionItem.unitCost))));
 
     return (
       <div className="w-full max-w-full overflow-x-hidden space-y-0 pb-32 md:pb-8" dir="rtl">
@@ -1571,17 +1761,156 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
               {currentActionItem.id && (() => {
                  const selectedItem = items.find(i => i.id === currentActionItem.id) || invoiceItems.find(i => i.id === currentActionItem.id);
                  if (!selectedItem) return null;
+                 const deliveredHistory = getCustomerDeliveredItemsForReturn(selectedInvoice);
+                 const isPendingReturn = !!selectedItem.isReturnPending;
+                 const isReturnActive = currentActionItem.decision === 'repairing' && (!!currentActionItem.isWarrantyReturn || currentActionItem.returnAction === 'approved_linked');
                  return (
-                   <div className="flex flex-col gap-2 bg-black/20 p-3 border border-white/5 rounded-xl">
-                     <div className="flex items-start gap-2">
-                       <span className="text-[10px] text-gray-500 uppercase font-black ml-2 w-20 shrink-0">شكوى العميل:</span>
-                       <span className="text-sm font-bold text-white leading-relaxed">{selectedItem.customerProblem || selectedItem.faultType || 'صيانة'}</span>
+                   <>
+                     <div className="flex flex-col gap-2 bg-black/20 p-3 border border-white/5 rounded-xl">
+                       <div className="flex items-start gap-2">
+                         <span className="text-[10px] text-gray-500 uppercase font-black ml-2 w-20 shrink-0">شكوى العميل:</span>
+                         <span className="text-sm font-bold text-white leading-relaxed">{selectedItem.customerProblem || selectedItem.faultType || 'صيانة'}</span>
+                       </div>
+                       <div className="flex items-start gap-2 pt-2 border-t border-white/5">
+                         <span className="text-[10px] text-gray-500 uppercase font-black ml-2 w-20 shrink-0">ملاحظات:</span>
+                         <span className="text-sm font-bold text-gray-300 leading-relaxed">{selectedItem.deviceNotes || 'لا يوجد'}</span>
+                       </div>
                      </div>
-                     <div className="flex items-start gap-2 pt-2 border-t border-white/5">
-                       <span className="text-[10px] text-gray-500 uppercase font-black ml-2 w-20 shrink-0">ملاحظات:</span>
-                       <span className="text-sm font-bold text-gray-300 leading-relaxed">{selectedItem.deviceNotes || 'لا يوجد'}</span>
-                     </div>
-                   </div>
+
+                     {/* بوابة اعتماد المرتجع */}
+                     {(isPendingReturn || deliveredHistory.length > 0 || isReturnActive) && currentActionItem.decision === 'repairing' && (
+                       <div className={`p-3.5 rounded-2xl border space-y-3 transition-all ${
+                         isPendingReturn && !isReturnActive
+                           ? 'bg-amber-500/10 border-amber-500/40'
+                           : isReturnActive
+                           ? 'bg-cyan-500/10 border-cyan-500/40'
+                           : 'bg-black/25 border-white/10'
+                       }`}>
+                         <div className="flex flex-wrap items-center justify-between gap-2">
+                           <div className="flex items-center gap-2">
+                             <RotateCcw size={16} className={isReturnActive ? 'text-cyan-400' : 'text-amber-400'} />
+                             <span className="text-xs font-black text-white">
+                               {isPendingReturn ? 'هذا الجهاز مُعلّم من الاستقبال كمرتجع صيانة (تحت المراجعة)' : 'مراجعة حالة الضمان / المرتجع'}
+                             </span>
+                           </div>
+                           {isPendingReturn && (
+                             <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                               مرتجع محتمل
+                             </span>
+                           )}
+                         </div>
+
+                         <div className="flex flex-col sm:flex-row gap-2">
+                           <button
+                             type="button"
+                             onClick={() => handleUpdateCurrentField('returnAction', 'normal')}
+                             className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                               !isReturnActive
+                                 ? 'bg-orange-600 text-white border-orange-500 shadow-md'
+                                 : 'bg-black/40 text-gray-300 border-white/10 hover:bg-white/5'
+                             }`}
+                           >
+                             عطل جديد مدفوع (إلغاء صفة المرتجع)
+                           </button>
+                           <button
+                             type="button"
+                             onClick={() => handleUpdateCurrentField('returnAction', 'approved_linked')}
+                             className={`flex-1 py-2 px-3 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
+                               isReturnActive
+                                 ? 'bg-cyan-600 text-white border-cyan-400 shadow-md'
+                                 : 'bg-black/40 text-cyan-300 border-cyan-500/30 hover:bg-cyan-500/10'
+                             }`}
+                           >
+                             اعتماد كمرتجع مجاني (تحويل مباشر للصيانة)
+                           </button>
+                         </div>
+
+                         {isReturnActive && (
+                           <div className="space-y-2 pt-2 border-t border-cyan-500/20">
+                             <label className="text-[11px] font-bold text-cyan-300 block">
+                               ربط الجهاز بسجل تسليم سابق لهذا العميل (لحساب القطع السابقة أو الخصم عند الفشل):
+                             </label>
+                             <select
+                               value={currentActionItem.linkedOldItemId || ''}
+                               onChange={(e) => {
+                                 const val = e.target.value;
+                                 if (!val) {
+                                   setSyncedCurrentActionItem({
+                                     ...currentActionItem,
+                                     isWarrantyReturn: true,
+                                     returnAction: 'approved_linked',
+                                     linkedOldInvoiceId: '',
+                                     linkedOldInvoiceNumber: '',
+                                     linkedOldItemId: '',
+                                     linkedOldUnitCost: 0,
+                                     linkedOldCost: 0,
+                                     linkedOldPartsUsed: [],
+                                     linkedOldEngineerReport: '',
+                                     linkedOldTechnician: ''
+                                   });
+                                   return;
+                                 }
+                                 const match = deliveredHistory.find(h => h.item.id === val);
+                                 if (match) {
+                                   const oldIt = match.item;
+                                   const oldInv = match.invoice;
+                                   const oldQty = Math.max(1, Number(oldIt.quantity || 1));
+                                   const oldCost = Number(oldIt.cost || 0);
+                                   const oldUnit = Number(oldIt.unitCost || (oldCost / oldQty) || 0);
+                                   setSyncedCurrentActionItem({
+                                     ...currentActionItem,
+                                     isWarrantyReturn: true,
+                                     returnAction: 'approved_linked',
+                                     linkedOldInvoiceId: oldInv?.id || oldIt.invoiceId || '',
+                                     linkedOldInvoiceNumber: String(oldInv?.invoiceNumber || oldIt.invoiceNumber || ''),
+                                     linkedOldItemId: oldIt.id || '',
+                                     linkedOldUnitCost: oldUnit,
+                                     linkedOldCost: oldUnit * (Number(currentActionItem.count) || 1),
+                                     linkedOldPartsUsed: oldIt.partsUsed || [],
+                                     linkedOldEngineerReport: oldIt.engineerReport || '',
+                                     linkedOldTechnician: oldIt.technician || ''
+                                   });
+                                 }
+                               }}
+                               className="w-full bg-black/50 border border-cyan-500/30 rounded-xl px-3 py-2 text-xs font-bold text-white outline-none focus:border-cyan-400"
+                             >
+                               <option value="">-- مرتجع مجاني بدون ربط بفاتورة سابقة محددة --</option>
+                               {deliveredHistory.map(({ item: oldIt, invoice: oldInv }) => {
+                                 const invNo = oldInv?.invoiceNumber || oldIt.invoiceNumber || '---';
+                                 const qty = Number(oldIt.quantity || 1);
+                                 const costVal = Number(oldIt.cost || 0);
+                                 const curVal = oldInv?.currency || selectedInvoice.currency || 'USD';
+                                 const d = oldIt.deliveredAt ? parseDate(oldIt.deliveredAt) : (oldInv?.createdAt ? parseDate(oldInv.createdAt) : null);
+                                 const dateStr = d ? d.toISOString().slice(0, 10) : '';
+                                 return (
+                                   <option key={oldIt.id} value={oldIt.id}>
+                                     فاتورة #{invNo} {dateStr ? `(${dateStr})` : ''} | {oldIt.deviceType} - {oldIt.deviceName} | الكمية: {qty} | التكلفة: {costVal} {curVal}
+                                   </option>
+                                 );
+                               })}
+                             </select>
+
+                             {currentActionItem.linkedOldItemId && (
+                               <div className="bg-black/40 border border-cyan-500/20 rounded-xl p-2.5 text-[11px] text-gray-300 space-y-1">
+                                 <div className="flex flex-wrap gap-x-4 gap-y-1">
+                                   <span>الفاتورة السابقة: <strong className="text-cyan-300 font-mono">#{currentActionItem.linkedOldInvoiceNumber}</strong></span>
+                                   <span>التكلفة للوحدة سابقاً: <strong className="text-emerald-300 font-mono">{Number(currentActionItem.linkedOldUnitCost || 0).toLocaleString('en-US')} {selectedInvoice.currency || 'USD'}</strong></span>
+                                   {currentActionItem.linkedOldTechnician && (
+                                     <span>الفني السابق: <strong className="text-white">{currentActionItem.linkedOldTechnician}</strong></span>
+                                   )}
+                                 </div>
+                                 {currentActionItem.linkedOldPartsUsed && currentActionItem.linkedOldPartsUsed.length > 0 && (
+                                   <div className="text-amber-300">
+                                     القطع المركبة سابقاً: {currentActionItem.linkedOldPartsUsed.map(p => `${p.partName} (${p.quantity})`).join(' ، ')}
+                                   </div>
+                                 )}
+                               </div>
+                             )}
+                           </div>
+                         )}
+                       </div>
+                     )}
+                   </>
                  );
               })()}
 
@@ -1610,6 +1939,12 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                    </div>
                  </div>
 
+                 {isConfirmedReturnForm ? (
+                   <div className={`flex items-center gap-2 px-3 py-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 text-xs font-black ${selectedInvoice?.status === '21' ? 'hidden' : 'flex'}`}>
+                     <RotateCcw size={14} />
+                     <span>مرتجع مجاني (0 {selectedInvoice?.currency || 'USD'}) — تحويل مباشر للصيانة</span>
+                   </div>
+                 ) : (
                  <div className={`flex-row items-center gap-4 transition-opacity ${currentActionItem.decision !== 'repairing' ? 'opacity-50 pointer-events-none' : ''} w-full ${selectedInvoice?.status === '21' ? 'hidden' : 'flex'} md:w-auto`}>
                    <div className="flex items-center gap-2 flex-1 md:flex-none">
                      <label className="text-xs text-gray-500 whitespace-nowrap">التكلفة للوحدة</label>
@@ -1643,6 +1978,7 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                       />
                     </div>
                  </div>
+                 )}
                </div>
                 <div className="space-y-4 w-full">
                   <div className="flex items-center gap-3 w-full">
@@ -1845,9 +2181,19 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                          </td>
                          <td className="px-4 py-3 text-gray-300 text-center whitespace-nowrap">{item.count}</td>
                          <td className="px-4 py-3 text-center whitespace-nowrap">
-                           {item.decision === 'repairing' && <span className="text-orange-500 bg-orange-500/10 px-2 py-1 rounded text-[10px] font-bold">صيانة</span>}
-                           {item.decision === 'intact' && <span className="text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded text-[10px] font-bold">سليم</span>}
-                           {item.decision === 'unrepairable' && <span className="text-red-500 bg-red-500/10 px-2 py-1 rounded text-[10px] font-bold">لا يصلح</span>}
+                           <div className="flex items-center justify-center gap-1 flex-wrap">
+                             {item.decision === 'repairing' && (
+                               (item.isWarrantyReturn || item.returnAction === 'approved_linked') ? (
+                                 <span className="text-cyan-300 bg-cyan-500/15 border border-cyan-500/30 px-2 py-1 rounded text-[10px] font-bold">
+                                   مرتجع مجاني {item.linkedOldInvoiceNumber ? `(#${item.linkedOldInvoiceNumber})` : ''}
+                                 </span>
+                               ) : (
+                                 <span className="text-orange-500 bg-orange-500/10 px-2 py-1 rounded text-[10px] font-bold">صيانة</span>
+                               )
+                             )}
+                             {item.decision === 'intact' && <span className="text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded text-[10px] font-bold">سليم</span>}
+                             {item.decision === 'unrepairable' && <span className="text-red-500 bg-red-500/10 px-2 py-1 rounded text-[10px] font-bold">لا يصلح</span>}
+                           </div>
                          </td>
                          <td className="px-4 py-3 text-gray-300 max-w-[250px] truncate whitespace-nowrap text-right" title={item.report}>
                             {(() => {
@@ -1862,7 +2208,9 @@ export default function Inspection({ user, onBack, initialInvoice }: { user: Use
                           </td>
                          {selectedInvoice?.status !== '21' && (
                            <td className="px-4 py-3 text-purple-400 font-bold text-center whitespace-nowrap font-mono">
-                             {item.cost > 0 ? `${item.cost.toLocaleString('en-US')} ${selectedInvoice.currency || 'USD'}` : '-'}
+                             {(item.isWarrantyReturn || item.returnAction === 'approved_linked')
+                               ? <span className="text-cyan-400 text-xs">مرتجع (0)</span>
+                               : (item.cost > 0 ? `${item.cost.toLocaleString('en-US')} ${selectedInvoice.currency || 'USD'}` : '-')}
                            </td>
                          )}
                          <td className="px-4 py-3 pl-6 flex items-center justify-center gap-2 whitespace-nowrap">

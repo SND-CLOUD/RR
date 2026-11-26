@@ -1294,7 +1294,17 @@ export default function Invoices({
                           </td>
 
                           <td className="p-4 font-bold text-rose-300 whitespace-nowrap">
-                            {String(inv.customerName || 'عميل نقدي').substring(0, 32)}
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span>{String(inv.customerName || 'عميل نقدي').substring(0, 32)}</span>
+                              {(Number(inv.amountPaid || 0) > Number(inv.totalCost || 0) + 0.01 || inv.hasReturnDeduction) && (
+                                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30 text-[9px] font-bold">
+                                  <RotateCcw size={9} />
+                                  {Number(inv.amountPaid || 0) > Number(inv.totalCost || 0) + 0.01
+                                    ? `فائض مرتجع للعميل (${formatEnglishNumber(Math.round((Number(inv.amountPaid || 0) - Number(inv.totalCost || 0)) * 100) / 100)})`
+                                    : 'معدل بمرتجع'}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="p-4 text-center whitespace-nowrap">
                             <div className="flex items-center justify-center gap-2">
@@ -1408,9 +1418,31 @@ export default function Invoices({
                                     <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                                       {invItems.map((item, itemIdx) => (
                                         <div key={item.id ? `sub-it-${item.id}-${itemIdx}` : `sub-it-${itemIdx}`} className="p-3 bg-[#131313] border border-white/5 rounded-2xl text-xs space-y-2 shadow-inner">
-                                          <div className="flex items-center justify-between">
-                                            <span className="font-bold text-white">{item.deviceType} {item.deviceName ? `- ${item.deviceName}` : ''}</span>
-                                            <span className="font-mono text-emerald-400 font-bold">{formatEnglishNumber(item.cost || item.unitCost || 0)} {inv.currency || 'USD'}</span>
+                                          <div className="flex items-center justify-between gap-2">
+                                            <div className="flex items-center gap-1.5 flex-wrap">
+                                              <span className="font-bold text-white">{item.deviceType} {item.deviceName ? `- ${item.deviceName}` : ''}</span>
+                                              {item.isWarrantyReturn && item.returnLinkStatus === 'failed_deducted' && (
+                                                <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[9px] font-bold">
+                                                  مرتجع فاشل {item.linkedOldInvoiceNumber ? `(خصم من #${item.linkedOldInvoiceNumber})` : ''}
+                                                </span>
+                                              )}
+                                              {item.isWarrantyReturn && item.returnLinkStatus !== 'failed_deducted' && (
+                                                <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30 text-[9px] font-bold">
+                                                  مرتجع مجاني
+                                                </span>
+                                              )}
+                                              {!item.isWarrantyReturn && item.isReturnPending && (
+                                                <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[9px] font-bold">
+                                                  مرتجع محتمل
+                                                </span>
+                                              )}
+                                              {item.returnDeductedByReturnInvoice && (
+                                                <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[9px] font-bold">
+                                                  خُصم بمرتجع #{item.returnDeductedByReturnInvoice}
+                                                </span>
+                                              )}
+                                            </div>
+                                            <span className="font-mono text-emerald-400 font-bold shrink-0">{formatEnglishNumber(item.cost || item.unitCost || 0)} {inv.currency || 'USD'}</span>
                                           </div>
                                           <div className="flex items-center justify-between text-[11px] text-gray-400">
                                             <span>العطل: {item.faultType || '-'}</span>
@@ -1835,7 +1867,12 @@ export default function Invoices({
                               quantity: staged.quantity,
                               unitCost: staged.unitCost,
                               cost: staged.quantity * staged.unitCost,
-                              status: staged.status
+                              status: staged.status,
+                              isReturnPending: orig.isReturnPending,
+                              isWarrantyReturn: orig.isWarrantyReturn,
+                              returnLinkStatus: orig.returnLinkStatus,
+                              linkedOldInvoiceNumber: orig.linkedOldInvoiceNumber,
+                              returnDeductedByReturnInvoice: orig.returnDeductedByReturnInvoice
                             });
                           } else {
                             displayList.push({
@@ -1848,7 +1885,12 @@ export default function Invoices({
                               quantity: Number(orig.quantity) || 1,
                               unitCost: Number(orig.unitCost) || Number(orig.cost) || 0,
                               cost: (Number(orig.quantity) || 1) * (Number(orig.unitCost) || Number(orig.cost) || 0),
-                              status: orig.status || '10'
+                              status: orig.status || '10',
+                              isReturnPending: orig.isReturnPending,
+                              isWarrantyReturn: orig.isWarrantyReturn,
+                              returnLinkStatus: orig.returnLinkStatus,
+                              linkedOldInvoiceNumber: orig.linkedOldInvoiceNumber,
+                              returnDeductedByReturnInvoice: orig.returnDeductedByReturnInvoice
                             });
                           }
                         });
@@ -1873,7 +1915,29 @@ export default function Invoices({
                         return displayList.map((item, index) => (
                           <tr key={index} className={`transition-colors ${item.isDeleted ? 'bg-rose-950/25 opacity-60' : 'hover:bg-white/[0.02]'}`}>
                             <td className="p-3">
-                              <div className={`font-bold text-white ${item.isDeleted ? 'line-through text-rose-300' : ''}`}>{item.deviceType}</div>
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <div className={`font-bold text-white ${item.isDeleted ? 'line-through text-rose-300' : ''}`}>{item.deviceType}</div>
+                                {item.isWarrantyReturn && item.returnLinkStatus === 'failed_deducted' && (
+                                  <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[9px] font-bold">
+                                    مرتجع فاشل {item.linkedOldInvoiceNumber ? `(#${item.linkedOldInvoiceNumber})` : ''}
+                                  </span>
+                                )}
+                                {item.isWarrantyReturn && item.returnLinkStatus !== 'failed_deducted' && (
+                                  <span className="px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30 text-[9px] font-bold">
+                                    مرتجع مجاني
+                                  </span>
+                                )}
+                                {!item.isWarrantyReturn && item.isReturnPending && (
+                                  <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30 text-[9px] font-bold">
+                                    مرتجع محتمل
+                                  </span>
+                                )}
+                                {item.returnDeductedByReturnInvoice && (
+                                  <span className="px-1.5 py-0.5 rounded bg-rose-500/15 text-rose-300 border border-rose-500/30 text-[9px] font-bold">
+                                    خُصم بمرتجع #{item.returnDeductedByReturnInvoice}
+                                  </span>
+                                )}
+                              </div>
                               {item.deviceName && <div className="text-[10px] text-gray-400">{item.deviceName}</div>}
                             </td>
                             <td className="p-3 text-gray-300">{item.faultType || '-'}</td>

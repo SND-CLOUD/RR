@@ -8,7 +8,7 @@ import { db } from '../../firebase';
 import { Invoice, InvoiceItem, User, Customer, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../../types';
 import { usePermissions } from '../../hooks/usePermissions';
 import { useTranslation } from 'react-i18next';
-import { Search, ArrowLeft, ArrowUpRight, ArrowRight, Search as SearchIcon, User as UserIcon, ArrowDownCircle, Wrench, Plus, Save, Loader2, Info, X, Printer, MessageCircle, MapPin, Facebook, Phone, Smartphone, Edit2, Trash2, Cpu } from 'lucide-react';
+import { Search, ArrowLeft, ArrowUpRight, ArrowRight, Search as SearchIcon, User as UserIcon, ArrowDownCircle, Wrench, Plus, Save, Loader2, Info, X, Printer, MessageCircle, MapPin, Facebook, Phone, Smartphone, Edit2, Trash2, Cpu, RotateCcw } from 'lucide-react';
 import { ElectronicPartsSelectionModal } from '../ElectronicPartsSelectionModal';
 import { DevicePartUsageItem, ShopPartItem } from '../../types';
 import BankAccountsFooter from '../BankAccountsFooter';
@@ -380,14 +380,33 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
       
       let deductedCost = 0;
 
-      // Calculate remaining quantites properly for multiple splits of the same id
+      // Track live stock balances so both new parts deductions AND old warranty parts restorations run cleanly in one pass
+      const virtualStockMap = new Map<string, { qty: number; used: number; stock: ShopPartItem }>();
+      shopPartsList.forEach(s => {
+        if (s.id) {
+          virtualStockMap.set(s.id, {
+            qty: Number(s.quantity || 0),
+            used: Number(s.usedQuantity || 0),
+            stock: s
+          });
+        }
+      });
+      const modifiedStockIds = new Set<string>();
+      const newNegativeStocksByKey = new Map<string, { ref: any; data: ShopPartItem }>();
+
+      // Track live old items & invoices for failed warranty return settlements
+      const oldItemRemainingMap = new Map<string, { item: InvoiceItem; remQty: number; remCost: number }>();
+      const oldInvoiceItemsOverlay = new Map<string, InvoiceItem[]>();
+      const modifiedOldInvoiceIds = new Set<string>();
+
+      // Calculate remaining quantities properly for multiple splits of the same id
       const itemRemaining = new Map<string, number>();
       for (const row of actionItems) {
         if (!row.id || Number(row.count) <= 0) continue;
         const oItem = invoiceItems.find(i => i.id === row.id);
         if (!oItem) continue;
         if (!itemRemaining.has(oItem.id!)) {
-           itemRemaining.set(oItem.id!, Number(oItem.quantity) || 0);
+          itemRemaining.set(oItem.id!, Number(oItem.quantity) || 0);
         }
       }
 
@@ -400,21 +419,193 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
         const isFailedOrRefused = row.outcome === 'failed' || row.outcome === 'refused';
         const rowCount = Number(row.count) || 1;
         const subStatus = row.outcome === 'failed' ? 'unrepairable' : row.outcome === 'refused' ? 'refused' : 'ready';
-        
+        const isWarrantyRet = Boolean(originalItem.isWarrantyReturn);
+
         let rem = itemRemaining.get(originalItem.id!) || 0;
-        
-        let unitCost = originalItem.quantity > 0 ? (Number(originalItem.cost || 0) / originalItem.quantity) : 0;
-        const rawItemCost = unitCost * rowCount;
-        let splitItemCost = isFailedOrRefused ? 0 : rawItemCost;
-        let splitEstimatedCost = rawItemCost;
+        const origTotalQty = Number(originalItem.quantity || 1);
+
+        let unitCost = isWarrantyRet ? 0 : (originalItem.quantity > 0 ? (Number(originalItem.cost || 0) / originalItem.quantity) : 0);
+        const rawItemCost = isWarrantyRet ? 0 : (unitCost * rowCount);
+        let splitItemCost = (isFailedOrRefused || isWarrantyRet) ? 0 : rawItemCost;
+        let splitEstimatedCost = isWarrantyRet ? 0 : rawItemCost;
 
         const resolvedEntryDate = resolveEntryDateString(originalItem, selectedInvoice);
+
+        // Settle linked old invoice & restore old parts if warranty return fails repair
+        let rowReturnOldSettled = Boolean(originalItem.returnOldSettledZeroed);
+        let rowReturnDeductedAmount = Number(originalItem.returnDeductedAmount || 0);
+        const nextReturnLinkStatus = isWarrantyRet
+          ? (row.outcome === 'repaired' ? 'repaired_free' : row.outcome === 'failed' ? 'failed_deducted' : (originalItem.returnLinkStatus || 'approved_linked'))
+          : originalItem.returnLinkStatus;
+
+        if (isWarrantyRet && row.outcome === 'failed' && !originalItem.returnOldSettledZeroed) {
+          // 1. Restore old repair parts back to shop_parts_inventory (non-scrap only)
+          const oldParts = originalItem.linkedOldPartsUsed || [];
+          const qtyRatio = origTotalQty > 0 ? Math.min(1, rowCount / origTotalQty) : 1;
+          for (const op of oldParts) {
+            if (op.isScrap) continue;
+            const rawRestoreQty = (Number(op.quantity) || 1) * qtyRatio;
+            const restoreQty = Math.round(rawRestoreQty * 100) / 100;
+            if (restoreQty <= 0) continue;
+            const cleanName = cleanDisplayText(op.partName);
+            if (!cleanName) continue;
+            const resolvedPartId = op.partId || sanitizePartDocId(cleanName);
+            const liveStocks = Array.from(virtualStockMap.values()).map(v => ({
+              ...v.stock,
+              quantity: v.qty,
+              usedQuantity: v.used
+            }));
+            const candidates = findMatchingStockCandidates(liveStocks, {
+              partId: resolvedPartId,
+              partName: cleanName
+            });
+            if (candidates.length > 0) {
+              const primaryCand = candidates.find(c => isNonBatchStock(c)) || candidates[0];
+              const entry = virtualStockMap.get(primaryCand.id!);
+              if (entry) {
+                entry.qty += restoreQty;
+                entry.used = Math.max(0, entry.used - restoreQty);
+                modifiedStockIds.add(primaryCand.id!);
+              }
+            }
+          }
+
+          // 2. Zero out linked old delivered item (keeping status '60') & recalculate linked old invoice totalCost (without deleting receipts)
+          const oldItemRef = originalItem.linkedOldItemId
+            ? items.find(it => it.id === originalItem.linkedOldItemId)
+            : undefined;
+          const oldInv = invoices.find(inv =>
+            (originalItem.linkedOldInvoiceId && inv.id === originalItem.linkedOldInvoiceId) ||
+            (originalItem.linkedOldInvoiceNumber && String(inv.invoiceNumber) === String(originalItem.linkedOldInvoiceNumber))
+          );
+
+          if (oldItemRef && oldItemRef.id) {
+            if (!oldItemRemainingMap.has(oldItemRef.id)) {
+              oldItemRemainingMap.set(oldItemRef.id, {
+                item: oldItemRef,
+                remQty: Number(oldItemRef.quantity || 1),
+                remCost: Number(oldItemRef.cost || 0)
+              });
+            }
+            const oldTrack = oldItemRemainingMap.get(oldItemRef.id)!;
+            if (oldTrack.remQty > 0) {
+              const deductQty = Math.min(rowCount, oldTrack.remQty);
+              const oldUnitCost = oldTrack.remQty > 0 ? (oldTrack.remCost / oldTrack.remQty) : Number(oldItemRef.unitCost || 0);
+              const deductedCostVal = Math.round((oldUnitCost * deductQty) * 100) / 100;
+              rowReturnDeductedAmount += deductedCostVal;
+              const failNote = `مرتجع صيانة — لم يتم الإصلاح (${row.reason || 'لا يصلح'}) - فاتورة #${selectedInvoice.invoiceNumber}`;
+
+              if (oldInv && oldInv.id && !oldInvoiceItemsOverlay.has(oldInv.id)) {
+                const baseOldItems = items.filter(it =>
+                  (oldInv.id && it.invoiceId === oldInv.id) ||
+                  String(it.invoiceNumber) === String(oldInv.invoiceNumber)
+                );
+                oldInvoiceItemsOverlay.set(oldInv.id, baseOldItems.map(bi => ({ ...bi })));
+              }
+
+              if (oldTrack.remQty > deductQty) {
+                const newArchivedRef = doc(collection(db, 'invoice_items'));
+                const archivedDoc: any = {
+                  ...oldItemRef,
+                  id: newArchivedRef.id,
+                  quantity: deductQty,
+                  status: '60',
+                  subStatus: 'unrepairable',
+                  cost: 0,
+                  unitCost: 0,
+                  estimatedCost: deductedCostVal,
+                  partsUsed: [],
+                  sparePartsCost: 0,
+                  failureReason: failNote,
+                  returnDeductedByReturnInvoice: selectedInvoice.invoiceNumber,
+                  updatedAt: serverTimestamp()
+                };
+                batch.set(newArchivedRef, archivedDoc);
+
+                const nextOldRemQty = oldTrack.remQty - deductQty;
+                const nextOldRemCost = Math.max(0, Math.round((oldUnitCost * nextOldRemQty) * 100) / 100);
+                oldTrack.remQty = nextOldRemQty;
+                oldTrack.remCost = nextOldRemCost;
+
+                batch.update(doc(db, 'invoice_items', oldItemRef.id), {
+                  quantity: nextOldRemQty,
+                  cost: nextOldRemCost,
+                  updatedAt: serverTimestamp()
+                });
+
+                if (oldInv && oldInv.id) {
+                  const list = oldInvoiceItemsOverlay.get(oldInv.id) || [];
+                  const targetIdx = list.findIndex(x => x.id === oldItemRef.id);
+                  if (targetIdx !== -1) {
+                    list[targetIdx] = { ...list[targetIdx], quantity: nextOldRemQty, cost: nextOldRemCost };
+                  }
+                  list.push(archivedDoc);
+                  oldInvoiceItemsOverlay.set(oldInv.id, list);
+                  modifiedOldInvoiceIds.add(oldInv.id);
+                }
+              } else {
+                oldTrack.remQty = 0;
+                oldTrack.remCost = 0;
+
+                batch.update(doc(db, 'invoice_items', oldItemRef.id), {
+                  status: '60',
+                  subStatus: 'unrepairable',
+                  cost: 0,
+                  unitCost: 0,
+                  estimatedCost: Number(oldItemRef.cost || deductedCostVal),
+                  partsUsed: [],
+                  sparePartsCost: 0,
+                  failureReason: failNote,
+                  returnDeductedByReturnInvoice: selectedInvoice.invoiceNumber,
+                  updatedAt: serverTimestamp()
+                });
+
+                if (oldInv && oldInv.id) {
+                  const list = oldInvoiceItemsOverlay.get(oldInv.id) || [];
+                  const targetIdx = list.findIndex(x => x.id === oldItemRef.id);
+                  if (targetIdx !== -1) {
+                    list[targetIdx] = {
+                      ...list[targetIdx],
+                      status: '60',
+                      subStatus: 'unrepairable',
+                      cost: 0,
+                      unitCost: 0,
+                      partsUsed: [],
+                      sparePartsCost: 0
+                    };
+                  }
+                  oldInvoiceItemsOverlay.set(oldInv.id, list);
+                  modifiedOldInvoiceIds.add(oldInv.id);
+                }
+              }
+            }
+          }
+          rowReturnOldSettled = true;
+        }
+
+        const warrantyPayload: Record<string, any> = isWarrantyRet
+          ? {
+              isWarrantyReturn: true,
+              ...(nextReturnLinkStatus ? { returnLinkStatus: nextReturnLinkStatus } : {}),
+              ...(originalItem.linkedOldInvoiceId ? { linkedOldInvoiceId: originalItem.linkedOldInvoiceId } : {}),
+              ...(originalItem.linkedOldInvoiceNumber ? { linkedOldInvoiceNumber: originalItem.linkedOldInvoiceNumber } : {}),
+              ...(originalItem.linkedOldItemId ? { linkedOldItemId: originalItem.linkedOldItemId } : {}),
+              ...(originalItem.linkedOldCost !== undefined ? { linkedOldCost: originalItem.linkedOldCost } : {}),
+              ...(originalItem.linkedOldUnitCost !== undefined ? { linkedOldUnitCost: originalItem.linkedOldUnitCost } : {}),
+              ...(originalItem.linkedOldPartsUsed ? { linkedOldPartsUsed: originalItem.linkedOldPartsUsed } : {}),
+              ...(originalItem.linkedOldEngineerReport ? { linkedOldEngineerReport: originalItem.linkedOldEngineerReport } : {}),
+              ...(originalItem.linkedOldTechnician ? { linkedOldTechnician: originalItem.linkedOldTechnician } : {}),
+              ...(rowReturnOldSettled ? { returnOldSettledZeroed: true } : {}),
+              ...(rowReturnDeductedAmount > 0 ? { returnDeductedAmount: rowReturnDeductedAmount } : {})
+            }
+          : {};
 
         if (rem > rowCount) {
           // split
           const splitItemRef = doc(collection(db, 'invoice_items'));
           batch.set(splitItemRef, {
             ...originalItem,
+            ...warrantyPayload,
             id: splitItemRef.id,
             entryDate: resolvedEntryDate,
             quantity: rowCount,
@@ -422,7 +613,7 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
             subStatus,
             source: 'maintenance',
             cost: splitItemCost,
-            unitCost: isFailedOrRefused ? 0 : unitCost,
+            unitCost: (isFailedOrRefused || isWarrantyRet) ? 0 : unitCost,
             estimatedCost: splitEstimatedCost,
             failureReason: isFailedOrRefused ? row.reason : null,
             engineerReport: originalItem.engineerReport,
@@ -433,25 +624,26 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
             createdAt: originalItem.createdAt || serverTimestamp(),
             updatedAt: serverTimestamp()
           });
-          
+
           rem -= rowCount;
           itemRemaining.set(originalItem.id!, rem);
-          
+
           batch.update(doc(db, 'invoice_items', originalItem.id!), {
             quantity: rem,
-            cost: (unitCost * rem),
+            cost: isWarrantyRet ? 0 : (unitCost * rem),
             entryDate: resolvedEntryDate,
             updatedAt: serverTimestamp()
           });
         } else {
           // update fully
           batch.update(doc(db, 'invoice_items', originalItem.id!), {
+            ...warrantyPayload,
             status: updatedStatus,
             subStatus,
             source: 'maintenance',
             quantity: rem,
             cost: splitItemCost,
-            unitCost: isFailedOrRefused ? 0 : unitCost,
+            unitCost: (isFailedOrRefused || isWarrantyRet) ? 0 : unitCost,
             estimatedCost: splitEstimatedCost,
             failureReason: isFailedOrRefused ? row.reason : null,
             engineerReport: originalItem.engineerReport,
@@ -466,21 +658,23 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
         }
       }
 
-      // Deduct electronic parts from shop_parts_inventory for repaired devices
-      // Track live virtual balances so multiple rows/parts in one maintenance batch allocate across positive rows sequentially
-      const virtualStockMap = new Map<string, { qty: number; used: number; stock: ShopPartItem }>();
-      shopPartsList.forEach(s => {
-        if (s.id) {
-          virtualStockMap.set(s.id, {
-            qty: Number(s.quantity || 0),
-            used: Number(s.usedQuantity || 0),
-            stock: s
+      // Apply recalculated totals to any old invoices affected by failed warranty returns (never deleting old receipts)
+      for (const oldInvId of modifiedOldInvoiceIds) {
+        const oldInv = invoices.find(v => v.id === oldInvId);
+        const updatedList = oldInvoiceItemsOverlay.get(oldInvId);
+        if (oldInv && updatedList) {
+          const newOldTotalCost = calculateInvoiceBillableTotal(oldInv, updatedList);
+          const surplusCredit = Math.max(0, Number(oldInv.amountPaid || 0) - newOldTotalCost);
+          batch.update(doc(db, 'invoices', oldInvId), {
+            totalCost: newOldTotalCost,
+            hasReturnDeduction: true,
+            returnCreditAmount: surplusCredit,
+            updatedAt: serverTimestamp()
           });
         }
-      });
-      const modifiedStockIds = new Set<string>();
-      const newNegativeStocksByKey = new Map<string, { ref: any; data: ShopPartItem }>();
+      }
 
+      // Deduct NEW electronic parts from shop_parts_inventory for repaired devices
       for (const row of actionItems) {
         if (!row.id || Number(row.count) <= 0 || row.outcome !== 'repaired') continue;
         const parts = (row as any).partsUsed || [];
@@ -612,13 +806,14 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
         if (!origItem) continue;
 
         const isFailOrRef = row.outcome === 'failed' || row.outcome === 'refused';
+        const isWarrantyRet = Boolean(origItem.isWarrantyReturn);
         const rCount = Number(row.count) || 1;
-        const uCost = origItem.quantity > 0 ? (Number(origItem.cost || 0) / origItem.quantity) : 0;
+        const uCost = isWarrantyRet ? 0 : (origItem.quantity > 0 ? (Number(origItem.cost || 0) / origItem.quantity) : 0);
         const rRemaining = itemRemaining.get(origItem.id!) || 0;
 
         finalItemsSnapshot.push({
           ...origItem,
-          cost: isFailOrRef ? 0 : (uCost * rCount),
+          cost: (isFailOrRef || isWarrantyRet) ? 0 : (uCost * rCount),
           subStatus: row.outcome === 'failed' ? 'unrepairable' : row.outcome === 'refused' ? 'refused' : 'ready',
           status: '50',
           failureReason: isFailOrRef ? row.reason : null
@@ -630,7 +825,7 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
             finalItemsSnapshot.push({
               ...origItem,
               quantity: rRemaining,
-              cost: uCost * rRemaining
+              cost: isWarrantyRet ? 0 : (uCost * rRemaining)
             });
           }
         }
@@ -773,7 +968,10 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                 technicalNotes: item.reason || dbItem?.engineerReport || '-',
                 status: item.outcome === 'repaired' ? '50' : item.outcome === 'failed' ? '55' : item.outcome === 'refused' ? '70' : '40',
                 quantity: item.count,
-                partsUsed: item.partsUsed
+                partsUsed: item.partsUsed,
+                isWarrantyReturn: dbItem?.isWarrantyReturn,
+                returnLinkStatus: dbItem?.isWarrantyReturn ? (item.outcome === 'repaired' ? 'repaired_free' : item.outcome === 'failed' ? 'failed_deducted' : dbItem?.returnLinkStatus) : dbItem?.returnLinkStatus,
+                linkedOldInvoiceNumber: dbItem?.linkedOldInvoiceNumber
               };
             }),
             templateType: 'maintenance'
@@ -1317,6 +1515,61 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                           })()}
                         </div>
                       </div>
+                      {/* بطاقة بيانات المرتجع المجاني المربوط */}
+                      {selectedItem.isWarrantyReturn && (
+                        <div className="flex flex-row items-start gap-2.5 w-full">
+                          <label className="text-xs text-purple-300 font-bold whitespace-nowrap w-24 shrink-0 pt-2">سجل المرتجع</label>
+                          <div className="flex-1 bg-purple-500/10 border border-purple-500/30 rounded-xl p-3 space-y-2 text-right">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <span className="inline-flex items-center gap-1.5 text-[11px] font-black text-purple-200">
+                                <RotateCcw size={13} className="text-purple-400" />
+                                مرتجع صيانة مجاني (تكلفة الصيانة على العميل = 0)
+                              </span>
+                              {selectedItem.linkedOldInvoiceNumber && (
+                                <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded bg-purple-500/20 text-purple-200 border border-purple-400/30">
+                                  مرتبط بفاتورة #{selectedItem.linkedOldInvoiceNumber}
+                                </span>
+                              )}
+                            </div>
+
+                            {selectedItem.linkedOldInvoiceNumber ? (
+                              <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-[11px] text-gray-300 border-t border-purple-500/20 pt-2">
+                                <div>
+                                  <span className="text-gray-400">التكلفة السابقة: </span>
+                                  <span className="font-mono font-bold text-amber-300">
+                                    {Number(selectedItem.linkedOldCost || 0).toLocaleString('en-US')} {selectedInvoice?.currency || 'USD'}
+                                  </span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">الفني السابق: </span>
+                                  <span className="font-bold text-white">{selectedItem.linkedOldTechnician || 'غير محدد'}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-400">القطع السابقة: </span>
+                                  <span className="font-bold text-cyan-300">
+                                    {selectedItem.linkedOldPartsUsed && selectedItem.linkedOldPartsUsed.length > 0
+                                      ? selectedItem.linkedOldPartsUsed.map(p => `${p.partName} (${p.quantity})`).join('، ')
+                                      : 'بدون قطع'}
+                                  </span>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="text-[11px] text-gray-300 border-t border-purple-500/20 pt-1.5">
+                                مرتجع مجاني حر غير مرتبط بفاتورة سابقة محددة.
+                              </div>
+                            )}
+
+                            <div className="text-[10px] text-purple-200/80 leading-relaxed">
+                              • عند اختيار <strong>«تم الإصلاح»</strong>: يخرج الجهاز مجاناً، وتُخصم فقط القطع الجديدة المضافة هنا من المخزن (القطع السابقة لا تُخصم مرة أخرى).
+                              {selectedItem.linkedOldInvoiceNumber && (
+                                <>
+                                  <br />• عند اختيار <strong>«لم يتم الإصلاح»</strong>: تُعاد القطع السابقة للمخزن تلقائياً ويُخصم مبلغ الصيانة السابق من الفاتورة القديمة كرصيد للعميل دون حذف سندات القبض.
+                                </>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
                  );
                })()}
@@ -1375,7 +1628,15 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                           </td>
                           <td className="py-2 px-3 whitespace-nowrap text-[11px]">
                               <div className="flex flex-col gap-0.5">
-                                <span className="font-bold">{it?.deviceName || '-'}</span>
+                                <div className="flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-bold">{it?.deviceName || '-'}</span>
+                                  {it?.isWarrantyReturn && (
+                                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-500/30 text-[9px] font-bold">
+                                      <RotateCcw size={9} />
+                                      مرتجع مجاني
+                                    </span>
+                                  )}
+                                </div>
                                 {row.partsUsed && row.partsUsed.length > 0 && (
                                   <span className="text-[9px] text-gray-500 font-medium whitespace-normal">
                                     {row.partsUsed.map((p: any) => `${p.partName} ${p.quantity}`).join(' / ')}
@@ -1493,7 +1754,17 @@ export default function Maintenance({ user, onBack, initialInvoice }: { user: Us
                 <tr key={invoice.id ? `maint-inv-${invoice.id}-${idx}` : `maint-inv-idx-${idx}`} className="hover:bg-white/5 transition-colors">
                   <td className="px-2 py-2 font-mono text-white text-center whitespace-nowrap">{invoice.invoiceNumber}</td>
                   <td className="px-2 py-2 font-mono text-gray-400 text-center whitespace-nowrap">{getCustomerNumber(invoice.customerId)}</td>
-                  <td className="px-2 py-2 font-bold truncate">{invoice.customerName || getCustomerName(invoice.customerId)}</td>
+                  <td className="px-2 py-2 font-bold truncate">
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <span>{invoice.customerName || getCustomerName(invoice.customerId)}</span>
+                      {items.some(it => it.invoiceNumber === invoice.invoiceNumber && MAINTENANCE_ELIGIBLE_STATUSES.includes(it.status) && it.isWarrantyReturn) && (
+                        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-purple-500/15 text-purple-300 border border-purple-500/30 text-[9px] font-bold">
+                          <RotateCcw size={9} />
+                          مرتجع صيانة
+                        </span>
+                      )}
+                    </div>
+                  </td>
                   <td className="px-2 py-2 font-mono text-orange-400 font-bold text-center whitespace-nowrap">{getInspectedCount(invoice.invoiceNumber)}</td>
                   <td className="px-2 py-2 text-center whitespace-nowrap">
                     <button 

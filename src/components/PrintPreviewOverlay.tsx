@@ -1893,6 +1893,9 @@ export default function PrintPreviewOverlay({
                         <div className="py-1.5 px-3 border-l border-black text-right w-48 flex items-center justify-start shrink-0" dir="ltr">
                           <span className="break-words w-full text-right" dir="rtl">
                             {it.deviceType || '-'} - <span className="text-gray-500 text-[10px]">{it.deviceName || '-'}</span>
+                            {(it.isReturnPending || it.isWarrantyReturn) && (
+                              <span className="block text-[9px] font-black text-purple-800 mt-0.5">(مرتجع صيانة — تحت المراجعة)</span>
+                            )}
                           </span>
                         </div>
                         <div className="py-1.5 px-3 border-l border-black text-right flex-1 flex items-center justify-start">
@@ -2074,10 +2077,20 @@ export default function PrintPreviewOverlay({
                                       const { outcome } = parseEngineerReport(it.technicalNotes || it.engineerReport || '');
                                       const extraInfo = outcome || (statusLabel !== 'جاهز' && it.failureReason && it.failureReason !== statusLabel ? it.failureReason : '');
                                       return (
-                                        <span className="leading-snug break-words">
-                                          <span className="font-black">{statusLabel}</span>
-                                          {extraInfo ? ` - ${extraInfo}` : ''}
-                                        </span>
+                                        <>
+                                          <span className="leading-snug break-words">
+                                            <span className="font-black">{statusLabel}</span>
+                                            {extraInfo ? ` - ${extraInfo}` : ''}
+                                          </span>
+                                          {it.isWarrantyReturn && it.returnLinkStatus === 'failed_deducted' && (
+                                            <span className="text-[9px] font-black text-rose-800">
+                                              (مرتجع فاشل{it.linkedOldInvoiceNumber ? ` - خصم من #${it.linkedOldInvoiceNumber}` : ''})
+                                            </span>
+                                          )}
+                                          {it.isWarrantyReturn && it.returnLinkStatus !== 'failed_deducted' && (
+                                            <span className="text-[9px] font-black text-purple-800">(مرتجع مجاني)</span>
+                                          )}
+                                        </>
                                       );
                                     })()}
                                   </div>
@@ -2335,6 +2348,13 @@ export default function PrintPreviewOverlay({
                               <td className="py-1 px-2 border-l border-black text-right">
                                 <div className="max-w-[280px] text-emerald-800 leading-normal flex flex-col justify-center" dir="rtl">
                                   <span className="font-bold">{displayStatusReport}</span>
+                                  {it.isWarrantyReturn ? (
+                                    <span className="text-[9px] font-black text-purple-800 mt-0.5">
+                                      (مرتجع مجاني{it.linkedOldInvoiceNumber ? ` - مرتبط بفاتورة #${it.linkedOldInvoiceNumber}` : ''})
+                                    </span>
+                                  ) : it.isReturnPending ? (
+                                    <span className="text-[9px] font-black text-amber-800 mt-0.5">(مرتجع - تحت المراجعة)</span>
+                                  ) : null}
                                   {it.partsUsed && it.partsUsed.length > 0 && (
                                     <span className="text-[9px] text-gray-600 font-medium mt-0.5 border-t border-gray-100 pt-0.5">
                                       {it.partsUsed.map((p: any) => `${p.partName} ${p.quantity}`).join(' / ')}
@@ -2866,6 +2886,16 @@ export default function PrintPreviewOverlay({
                               <td className="py-1 px-2 border-l border-black text-right">
                                 <div className="max-w-[180px] leading-normal flex flex-col justify-center" dir="rtl">
                                   <span className="font-bold">{displayInspection}</span>
+                                  {it.isWarrantyReturn && it.returnLinkStatus === 'failed_deducted' && (
+                                    <span className="text-[9px] font-black text-rose-800 mt-0.5">
+                                      (مرتجع فاشل{it.linkedOldInvoiceNumber ? ` - خُصم من #${it.linkedOldInvoiceNumber}` : ''})
+                                    </span>
+                                  )}
+                                  {it.isWarrantyReturn && it.returnLinkStatus !== 'failed_deducted' && (
+                                    <span className="text-[9px] font-black text-purple-800 mt-0.5">
+                                      (مرتجع مجاني{it.linkedOldInvoiceNumber ? ` - #${it.linkedOldInvoiceNumber}` : ''})
+                                    </span>
+                                  )}
                                   {it.partsUsed && it.partsUsed.length > 0 && (
                                     <span className="text-[9px] text-gray-600 font-medium mt-0.5 border-t border-gray-100 pt-0.5">
                                       {it.partsUsed.map((p: any) => `${p.partName} ${p.quantity}`).join(' / ')}

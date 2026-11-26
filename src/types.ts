@@ -67,6 +67,9 @@ export interface Invoice {
   createdAt: any;
   updatedAt: any;
   printCount?: number;
+  hasReturnDeduction?: boolean;
+  returnCreditAmount?: number;
+  returnRefundedAmount?: number;
 }
 
 export interface InvoiceItem {
@@ -108,8 +111,21 @@ export interface InvoiceItem {
   updatedBy?: string; 
   customerName?: string;
   customerId?: string;
+  isReturnPending?: boolean;
   isWarrantyReturn?: boolean | number;
+  returnLinkStatus?: 'none' | 'pending' | 'approved_linked' | 'rejected_new' | 'repaired_free' | 'failed_deducted' | string;
   previousInvoiceNumber?: string;
+  linkedOldInvoiceId?: string;
+  linkedOldInvoiceNumber?: string;
+  linkedOldItemId?: string;
+  linkedOldCost?: number;
+  linkedOldUnitCost?: number;
+  linkedOldPartsUsed?: DevicePartUsageItem[];
+  linkedOldEngineerReport?: string;
+  linkedOldTechnician?: string;
+  returnOldSettledZeroed?: boolean;
+  returnDeductedAmount?: number;
+  returnDeductedByReturnInvoice?: string;
   sparePartsCost?: number; // تكلفة قطع الغيار المستخدمة للجهاز (افتراضياً 0)
   hasNoParts?: boolean; // هل الجهاز بدون قطع غيار (مفعل افتراضياً في الفحص)
   partsUsed?: DevicePartUsageItem[]; // قائمة قطع الغيار الإلكترونية المحددة للجهاز

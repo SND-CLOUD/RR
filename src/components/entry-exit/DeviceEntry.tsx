@@ -77,7 +77,7 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
   const [currency, setCurrency] = useState<'USD' | 'SAR' | 'YER'>('USD');
   const [items, setItems] = useState<(Partial<InvoiceItem> & { unitCost?: number | '' })[]>([]);
   
-  const initialDeviceState = { deviceType: '', deviceName: '', quantity: 1, faultType: 'صيانة', deviceNotes: 'بدون ملحقات', technicalNotes: '', status: '10', cost: 0, technician: '' };
+  const initialDeviceState = { deviceType: '', deviceName: '', quantity: 1, faultType: 'صيانة', deviceNotes: 'بدون ملحقات', technicalNotes: '', status: '10', cost: 0, technician: '', isReturnPending: false };
   const [currentDevice, setCurrentDevice] = useState<Partial<InvoiceItem> & { unitCost?: number | '' }>(initialDeviceState);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [showColumnSettings, setShowColumnSettings] = useState(false);
@@ -425,6 +425,8 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
           cost: 0,
           status: '10',
           technician: '',
+          isReturnPending: !!item.isReturnPending,
+          returnLinkStatus: item.isReturnPending ? 'pending' : 'none',
           entryDate: nowIso,
           createdAt: serverTimestamp(),
           updatedAt: serverTimestamp(),
@@ -543,7 +545,7 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
               message += `- *رقم الفاتورة:* ${finalAssignedInvoiceNumber}\n\n`;
               message += `*الأجهزة المستلمة:*\n`;
               items.forEach((item, index) => {
-                message += `\n_${index + 1}. *${item.deviceType} - ${item.deviceName || ''}*_\n`;
+                message += `\n_${index + 1}. *${item.deviceType} - ${item.deviceName || ''}*${item.isReturnPending ? ' *(مرتجع)*' : ''}_\n`;
                 message += `   • المشكلة: ${item.faultType || '-'}\n`;
               });
               message += `\nيسعدنا خدمتكم دائمًا. شكرًا لتعاملكم معنا!`;
@@ -1064,7 +1066,7 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
                        />
                     </div>
 
-                    <div className="flex items-center gap-3 lg:col-span-3">
+                    <div className="flex items-center gap-3 lg:col-span-2">
                        <label className="text-xs text-gray-500 uppercase font-black tracking-widest text-right w-20 shrink-0">تفاصيل</label>
                        <input 
                          value={currentDevice.deviceNotes || ''}
@@ -1077,6 +1079,25 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
                          placeholder="مثال: ريموت كنترول، كابل طاقة، خدوش في الشاشة"
                        />
                      </div>
+
+                    <div className="flex items-center justify-start lg:col-span-1">
+                      <label
+                        className={`flex items-center gap-2 px-3 py-2 rounded-xl border text-xs font-bold cursor-pointer select-none transition-all w-full ${
+                          currentDevice.isReturnPending
+                            ? 'bg-amber-500/15 border-amber-500/60 text-amber-300 shadow-sm'
+                            : 'bg-black/40 border-white/10 text-gray-300 hover:border-white/25'
+                        }`}
+                        title="تمييز الجهاز كمرتجع محتمل ليتم فحصه واعتماده من المهندس لاحقاً"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={!!currentDevice.isReturnPending}
+                          onChange={(e) => setCurrentDevice({ ...currentDevice, isReturnPending: e.target.checked })}
+                          className="w-4 h-4 rounded accent-amber-500 cursor-pointer shrink-0"
+                        />
+                        <span className="whitespace-nowrap">مرتجع صيانة (تحت المراجعة)</span>
+                      </label>
+                    </div>
 
                     <div className="col-span-1 md:col-span-2 lg:col-span-3 flex flex-row justify-end gap-3 mt-2 border-t border-white/5 pt-3">
                        <button
@@ -1205,7 +1226,16 @@ export default function DeviceEntry({ onBack, user }: { onBack: () => void, user
                             {items.map((item, index) => (
                               <tr key={index} className="hover:bg-white/5 transition-colors group bg-black/20">
                                 <td className="py-3 px-4 text-sm font-black text-gray-600 text-center">{index + 1}</td>
-                                {visibleColumns.deviceType && <td className="py-3 px-4 text-sm font-bold text-white whitespace-nowrap"><div className="px-2 py-1 bg-white/5 rounded-lg border border-white/5 inline-block">{item.deviceType || '-'}</div></td>}
+                                {visibleColumns.deviceType && (
+                                  <td className="py-3 px-4 text-sm font-bold text-white whitespace-nowrap">
+                                    <div className="flex items-center gap-1.5">
+                                      <div className="px-2 py-1 bg-white/5 rounded-lg border border-white/5 inline-block">{item.deviceType || '-'}</div>
+                                      {item.isReturnPending && (
+                                        <span className="px-2 py-0.5 rounded-md bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[10px] font-black">مرتجع</span>
+                                      )}
+                                    </div>
+                                  </td>
+                                )}
                                 {visibleColumns.deviceName && (
                                   <td className="py-3 px-4 text-sm text-gray-300 whitespace-nowrap">
                                     <div className="flex items-center gap-1.5">

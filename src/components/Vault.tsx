@@ -2585,13 +2585,16 @@ export default function Vault({
     tx.transactionCategory === 'رصيد افتتاحي' ||
     (tx.notes && tx.notes.includes('رصيد افتتاحي'));
 
+  const isCustomerRefund = (tx: VaultTransaction) =>
+    tx.transactionCategory === 'رد مبلغ مرتجع صيانة';
+
   // All active valid receipts and payments for display in tabs
   const receiptTransactions = transactions.filter(tx => (tx.type === 'receipt' || tx.type === 'deposit' || tx.type === 'invoice_payment') && isValidTx(tx));
   const paymentTransactions = transactions.filter(tx => (tx.type === 'payment' || tx.type === 'disbursement' || tx.type === 'expense') && isValidTx(tx));
 
-  // Operational revenues and expenses strictly for Profit & Loss (excludes capital opening balances and internal asset transfers)
+  // Operational revenues and expenses strictly for Profit & Loss (excludes capital opening balances, customer refund settlements, and internal transfers)
   const operationalRevenueTransactions = receiptTransactions.filter(tx => !isInternalTransfer(tx) && !isOpeningBalance(tx));
-  const operationalExpenseTransactions = paymentTransactions.filter(tx => !isInternalTransfer(tx));
+  const operationalExpenseTransactions = paymentTransactions.filter(tx => !isInternalTransfer(tx) && !isCustomerRefund(tx));
 
   // Calculates sums of values dynamically grouped by normalized currency code/symbol
   const computeCurrencyTotals = (txs: VaultTransaction[]) => {
