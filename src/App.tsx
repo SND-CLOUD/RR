@@ -36,12 +36,14 @@ import {
   AlertCircle,
   ArrowDownToLine,
   ArrowUpFromLine,
-  FileText
+  FileText,
+  Percent,
+  Loader2
 } from 'lucide-react';
 import { collection, query, where, getDocs, addDoc, doc, getDoc, setDoc, updateDoc, onSnapshot, writeBatch, deleteDoc, serverTimestamp } from './firebase';
 import { db } from './firebase';
 import { User, ShopConfig, isPurchaseInvoice } from './types';
-import { getItemBillableCost, isItemRefusedOrFailed } from './lib/billableService';
+import { getItemBillableCost, isItemRefusedOrFailed, calculateInvoiceBillableTotal } from './lib/billableService';
 import { openWhatsApp, sendUniversalReminder } from './lib/shareHelper';
 import { ProviderFactory } from './data/ProviderFactory';
 import { localDb } from './lib/local-db';
@@ -143,6 +145,18 @@ export default function App() {
   const [settleInvoice, setSettleInvoice] = useState<any | null>(null);
   const [settleAmount, setSettleAmount] = useState<string>('');
   const [isSettling, setIsSettling] = useState(false);
+
+  // Alert Quick Discount Modal state (additive, behaves identically to invoice discounts)
+  const [alertDiscountTarget, setAlertDiscountTarget] = useState<{
+    alert: any;
+    eligibleInvoices: { invoice: any; items: any[]; availableCapacity: number; unpaid: number }[];
+    maxAllowedDiscount: number;
+    primaryInvoiceNumber: string;
+  } | null>(null);
+  const [alertDiscountInput, setAlertDiscountInput] = useState<string>('');
+  const [alertDiscountError, setAlertDiscountError] = useState<string | null>(null);
+  const [isApplyingAlertDiscount, setIsApplyingAlertDiscount] = useState(false);
+
   const [isSyncingAll, setIsSyncingAll] = useState(false);
   const [isAutoDownloading, setIsAutoDownloading] = useState(false);
   const [syncMode, setSyncMode] = useState<'quick' | 'advanced' | null>(null);
@@ -428,7 +442,8 @@ export default function App() {
     showDataAuditModal,
     showSetup,
     user,
-    settleInvoice
+    settleInvoice,
+    alertDiscountTarget
   });
 
   useEffect(() => {
@@ -440,9 +455,10 @@ export default function App() {
       showDataAuditModal,
       showSetup,
       user,
-      settleInvoice
+      settleInvoice,
+      alertDiscountTarget
     };
-  }, [activeTab, movementView, entryExitView, showAllAlertsModal, showDataAuditModal, showSetup, user, settleInvoice]);
+  }, [activeTab, movementView, entryExitView, showAllAlertsModal, showDataAuditModal, showSetup, user, settleInvoice, alertDiscountTarget]);
 
   useEffect(() => {
     const handleBackButton = async ({ canGoBack }: { canGoBack: boolean }) => {
@@ -459,6 +475,12 @@ export default function App() {
           sessionStorage.removeItem('snd_user');
           CapacitorApp.exitApp();
         }
+        return;
+      }
+
+      if (state.alertDiscountTarget) {
+        setAlertDiscountTarget(null);
+        setAlertDiscountError(null);
         return;
       }
 
@@ -753,6 +775,7 @@ export default function App() {
             companyName: cust.companyName || '',
             hasWhatsapp: cust.hasWhatsapp !== undefined ? cust.hasWhatsapp : true,
             createdAt: cust.createdAt || (latestInv ? latestInv.createdAt : null),
+            latestInvoiceId: latestInv?.id || '',
             latestInvoiceNumber: latestInv?.invoiceNumber || '',
             allInvoiceNumbers: customerInvs.map(inv => String(inv.invoiceNumber || '')).filter(Boolean),
             remainingAmount: outstandingBalance,
@@ -1145,6 +1168,240 @@ export default function App() {
       alert('حدث خطأ أثناء عملية السداد والخصم.');
     } finally {
       setIsSettling(false);
+    }
+  };
+
+  const roundAlertDiscount = (val: number): number => {
+    if (!Number.isFinite(val) || isNaN(val)) return 0;
+    return Math.round(val * 10000) / 10000;
+  };
+
+  const sanitizeAlertDiscountInput = (raw: string): string => {
+    const normalized = raw
+      .replace(/[٠-٩]/g, d => '٠١٢٣٤٥٦٧٨٩'.indexOf(d).toString())
+      .replace(/,/g, '.')
+      .replace(/[^0-9.]/g, '');
+    const firstDot = normalized.indexOf('.');
+    if (firstDot === -1) return normalized;
+    return normalized.slice(0, firstDot + 1) + normalized.slice(firstDot + 1).replace(/\./g, '');
+  };
+
+  const handleOpenAlertDiscount = (alertItem: any) => {
+    if (!alertItem) return;
+    const custId = String(alertItem.customerId || '').trim();
+    const custName = String(alertItem.customerName || '').trim();
+
+    const matchedInvsMap = new Map<string, any>();
+    invoicesList.forEach(inv => {
+      if (!inv) return;
+      const matchesById = Boolean(custId && inv.customerId && String(inv.customerId).trim() === custId);
+      const matchesByName = Boolean(!inv.customerId && custName && String(inv.customerName || '').trim() === custName);
+      if (!matchesById && !matchesByName) return;
+
+      const explicitType = inv.invoiceType || inv.templateType || inv.type || '';
+      let isPur = isPurchaseInvoice(inv) || explicitType === 'purchase' || String(explicitType).startsWith('purchase') || inv.type === 'purchase' || String(inv.invoiceNumber || '').startsWith('PUR-') || String(inv.invoiceNumber || '').startsWith('DIS-');
+      if (inv.notes && (inv.notes.includes('شراء') || inv.notes.includes('مورد') || inv.notes.includes('مشتريات'))) {
+        isPur = true;
+      }
+      if (isPur) return;
+      matchedInvsMap.set(String(inv.id || inv.invoiceNumber), inv);
+    });
+
+    const eligibleInvoices = Array.from(matchedInvsMap.values())
+      .map(inv => {
+        const cleanInvNo = String(inv.invoiceNumber || '').replace('#', '').trim();
+        const invItems = itemsList.filter(it =>
+          (inv.id && it.invoiceId && String(it.invoiceId) === String(inv.id)) ||
+          (cleanInvNo && String(it.invoiceNumber || '').replace('#', '').trim() === cleanInvNo)
+        );
+        const invActualCost = Math.max(0, roundAlertDiscount(getInvoiceActualCost(invItems, inv)));
+
+        let linkedPaid = 0;
+        transactionsList.forEach(tx => {
+          if (tx.isReversed || tx.isReversal || tx.status === 'reversed' || tx.status === 'reversal') return;
+          if (tx.type !== 'receipt' && tx.type !== 'invoice_payment') return;
+          const txInvNo = String(tx.invoiceNumber || '').replace('#', '').trim();
+          const matchInv = (tx.invoiceId && inv.id && String(tx.invoiceId) === String(inv.id)) || (cleanInvNo && txInvNo === cleanInvNo);
+          if (!matchInv) return;
+          const lAmt = (tx.liabilityAmount !== undefined && tx.liabilityAmount !== null && !isNaN(Number(tx.liabilityAmount)))
+            ? Number(tx.liabilityAmount)
+            : Math.abs(Number(tx.amount || 0));
+          linkedPaid += lAmt;
+        });
+
+        const effectivePaid = Math.max(Number(inv.amountPaid || 0), linkedPaid);
+        const unpaid = Math.max(0, roundAlertDiscount(invActualCost - effectivePaid));
+        const ts = parseDate(inv.createdAt || inv.entryDate || inv.date)?.getTime() || 0;
+
+        return {
+          invoice: inv,
+          items: invItems,
+          availableCapacity: invActualCost,
+          unpaid,
+          ts
+        };
+      })
+      .filter(entry => entry.availableCapacity > 0.0001)
+      .sort((a, b) => {
+        const aHasUnpaid = a.unpaid > 0.005 ? 1 : 0;
+        const bHasUnpaid = b.unpaid > 0.005 ? 1 : 0;
+        if (bHasUnpaid !== aHasUnpaid) return bHasUnpaid - aHasUnpaid;
+        return b.ts - a.ts;
+      })
+      .map(({ invoice, items, availableCapacity, unpaid }) => ({ invoice, items, availableCapacity, unpaid }));
+
+    const totalCapacity = roundAlertDiscount(eligibleInvoices.reduce((s, e) => s + e.availableCapacity, 0));
+    const remainingDebt = roundAlertDiscount(Math.max(0, Number(alertItem.remainingAmount || 0)));
+    const maxAllowedDiscount = roundAlertDiscount(Math.min(remainingDebt, totalCapacity));
+    const primaryInvoiceNumber = eligibleInvoices[0]?.invoice?.invoiceNumber
+      ? String(eligibleInvoices[0].invoice.invoiceNumber).replace('#', '').trim()
+      : String(alertItem.latestInvoiceNumber || '').replace('#', '').trim();
+
+    setAlertDiscountTarget({
+      alert: alertItem,
+      eligibleInvoices,
+      maxAllowedDiscount,
+      primaryInvoiceNumber
+    });
+    setAlertDiscountInput(maxAllowedDiscount > 0 ? String(maxAllowedDiscount) : '');
+    setAlertDiscountError(
+      eligibleInvoices.length === 0
+        ? 'لا توجد فاتورة قابلة للخصم لهذا العميل (المتبقي ناتج عن سند صرف بدون فاتورة).'
+        : null
+    );
+  };
+
+  const handleConfirmAlertDiscount = async () => {
+    if (!alertDiscountTarget || isApplyingAlertDiscount) return;
+    const trimmed = alertDiscountInput.trim();
+    if (!trimmed || trimmed === '.') {
+      setAlertDiscountError('يرجى إدخال قيمة رقمية صالحة.');
+      return;
+    }
+
+    const parsed = Number(trimmed);
+    if (isNaN(parsed) || !isFinite(parsed) || parsed <= 0) {
+      setAlertDiscountError('يجب أن تكون قيمة الخصم أكبر من الصفر.');
+      return;
+    }
+
+    if (alertDiscountTarget.eligibleInvoices.length === 0 || alertDiscountTarget.maxAllowedDiscount <= 0) {
+      setAlertDiscountError('لا توجد فاتورة قابلة للخصم لهذا العميل.');
+      return;
+    }
+
+    if (parsed > alertDiscountTarget.maxAllowedDiscount + 0.001) {
+      setAlertDiscountError(`لا يمكن أن يتجاوز الخصم المبلغ المتبقي القابل للخصم (${alertDiscountTarget.maxAllowedDiscount} ${alertDiscountTarget.alert.currency || 'USD'}).`);
+      return;
+    }
+
+    const discountToApply = Math.min(roundAlertDiscount(parsed), alertDiscountTarget.maxAllowedDiscount);
+    if (isNaN(discountToApply) || !isFinite(discountToApply) || discountToApply <= 0) {
+      setAlertDiscountError('قيمة الخصم غير صالحة.');
+      return;
+    }
+
+    setIsApplyingAlertDiscount(true);
+    setAlertDiscountError(null);
+
+    try {
+      let remainingToApply = discountToApply;
+      const updatedInvoicesMap = new Map<string, { discount: number; totalCost: number }>();
+      const mode = ProviderFactory.getMode();
+
+      for (const entry of alertDiscountTarget.eligibleInvoices) {
+        if (remainingToApply <= 0.00005) break;
+        const inv = entry.invoice;
+        if (!inv?.id) continue;
+
+        const applyAmt = roundAlertDiscount(Math.min(remainingToApply, entry.availableCapacity));
+        if (applyAmt <= 0) continue;
+
+        const prevDiscount = Number(inv.discount !== undefined ? inv.discount : (inv as any).discountAmount || 0);
+        const newDiscount = roundAlertDiscount(prevDiscount + applyAmt);
+
+        const explicitType = String(inv.invoiceType || inv.templateType || inv.type || '').toLowerCase();
+        const isSaleLike = explicitType.startsWith('sale_') || String(inv.invoiceNumber || '').startsWith('O-');
+
+        let newTotalCost = 0;
+        if (isSaleLike) {
+          const baseTotal = Number(inv.totalCost !== undefined ? inv.totalCost : entry.availableCapacity);
+          newTotalCost = Math.max(0, roundAlertDiscount(baseTotal - applyAmt));
+        } else {
+          newTotalCost = entry.items.length > 0
+            ? calculateInvoiceBillableTotal({ ...inv, discount: newDiscount, tax: Number(inv.tax || 0) }, entry.items)
+            : Math.max(0, roundAlertDiscount(Number(inv.totalCost || entry.availableCapacity) - applyAmt));
+        }
+
+        const nowIso = new Date().toISOString();
+        try {
+          await ProviderFactory.getProvider().updateDoc('invoices', inv.id, {
+            discount: newDiscount,
+            totalCost: newTotalCost,
+            updatedAt: nowIso
+          });
+        } catch (provErr) {
+          console.warn('Alert discount Provider update failed:', provErr);
+        }
+
+        if (mode !== 'LOCAL') {
+          try {
+            const invRef = doc(db, 'invoices', inv.id);
+            await updateDoc(invRef, {
+              discount: newDiscount,
+              discountAmount: newDiscount,
+              totalCost: newTotalCost,
+              updatedAt: serverTimestamp()
+            });
+          } catch (fsErr) {
+            console.warn('Alert discount Firestore update failed:', fsErr);
+          }
+        }
+
+        try {
+          await localDb.run(
+            'UPDATE invoices SET discount = ?, totalCost = ?, updatedAt = ? WHERE id = ?',
+            [newDiscount, newTotalCost, nowIso, inv.id]
+          );
+        } catch (sqlErr) {
+          console.warn('Alert discount SQLite update failed:', sqlErr);
+        }
+
+        updatedInvoicesMap.set(String(inv.id), { discount: newDiscount, totalCost: newTotalCost });
+        remainingToApply = roundAlertDiscount(remainingToApply - applyAmt);
+      }
+
+      if (updatedInvoicesMap.size > 0) {
+        setInvoicesList(prev =>
+          prev.map(inv => {
+            const upd = inv?.id ? updatedInvoicesMap.get(String(inv.id)) : undefined;
+            if (!upd) return inv;
+            return {
+              ...inv,
+              discount: upd.discount,
+              discountAmount: upd.discount,
+              totalCost: upd.totalCost
+            };
+          })
+        );
+      }
+
+      const appliedCustName = alertDiscountTarget.alert.customerName || '';
+      const appliedCurr = alertDiscountTarget.alert.currency || 'USD';
+      setAlertDiscountTarget(null);
+      setAlertDiscountInput('');
+      setAlertDiscountError(null);
+
+      setSyncToast({
+        message: `تم اعتماد خصم مسموح به (${discountToApply} ${appliedCurr}) للعميل ${appliedCustName} وتحديث الحساب وسجل الخصومات بنجاح`,
+        type: 'success'
+      });
+      scheduleSyncToastClear(4500);
+    } catch (err: any) {
+      console.error('Failed to apply alert discount:', err);
+      setAlertDiscountError(err?.message || 'حدث خطأ أثناء اعتماد الخصم.');
+    } finally {
+      setIsApplyingAlertDiscount(false);
     }
   };
 
@@ -2281,6 +2538,17 @@ export default function App() {
                                       <span>تسديد دفعة</span>
                                     </button>
 
+                                    {/* زر خصم */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenAlertDiscount(a)}
+                                      className="px-2.5 py-1.5 bg-purple-500/10 hover:bg-purple-600 text-purple-400 hover:text-white rounded-xl text-xs font-black transition-all cursor-pointer border border-purple-500/20 shadow-sm flex items-center gap-1"
+                                      title="اعتماد خصم مسموح به وتصفية المتبقي"
+                                    >
+                                      <Percent size={13} />
+                                      <span>خصم</span>
+                                    </button>
+
                                     {/* زر استعراض */}
                                     <button
                                       type="button"
@@ -2455,6 +2723,154 @@ export default function App() {
         </div>
       )}
     </AnimatePresence>
+
+    {/* Alert Quick Discount Modal */}
+    {alertDiscountTarget && (() => {
+      const trimmedVal = alertDiscountInput.trim();
+      const parsedVal = Number(trimmedVal);
+      const isValidNumber =
+        trimmedVal !== '' &&
+        trimmedVal !== '.' &&
+        !isNaN(parsedVal) &&
+        isFinite(parsedVal) &&
+        parsedVal > 0;
+      const exceedsMax =
+        isValidNumber && parsedVal > alertDiscountTarget.maxAllowedDiscount + 0.001;
+      const canConfirm =
+        !isApplyingAlertDiscount &&
+        isValidNumber &&
+        !exceedsMax &&
+        alertDiscountTarget.eligibleInvoices.length > 0 &&
+        alertDiscountTarget.maxAllowedDiscount > 0;
+
+      const curr = alertDiscountTarget.alert.currency || 'USD';
+
+      return (
+        <div
+          className="fixed inset-0 z-[125] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
+          dir="rtl"
+          onClick={() => {
+            if (!isApplyingAlertDiscount) {
+              setAlertDiscountTarget(null);
+              setAlertDiscountError(null);
+            }
+          }}
+        >
+          <div
+            className="bg-white dark:bg-[#181818] border border-slate-200 dark:border-white/10 rounded-2xl w-full max-w-sm p-5 shadow-2xl space-y-4 font-cairo"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between border-b border-slate-200 dark:border-white/10 pb-3">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 bg-purple-500/10 border border-purple-500/20 text-purple-400 rounded-xl">
+                  <Percent size={17} />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black text-slate-900 dark:text-white">اعتماد خصم مسموح به</h3>
+                  <p className="text-[10px] text-slate-500 dark:text-gray-400">يُسجل في سجل الخصومات ويُخفض من المتبقي</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={isApplyingAlertDiscount}
+                onClick={() => {
+                  setAlertDiscountTarget(null);
+                  setAlertDiscountError(null);
+                }}
+                className="p-1.5 rounded-lg text-gray-400 hover:text-white hover:bg-white/10 transition-colors cursor-pointer"
+                title="إلغاء"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="bg-slate-100 dark:bg-black/30 border border-slate-200 dark:border-white/5 rounded-xl p-3 space-y-1.5 text-xs">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-slate-500 dark:text-gray-400">العميل:</span>
+                <span className="font-bold text-slate-900 dark:text-white truncate">
+                  {alertDiscountTarget.alert.customerName}
+                  {alertDiscountTarget.alert.customerNumber ? ` (#${alertDiscountTarget.alert.customerNumber})` : ''}
+                </span>
+              </div>
+              {alertDiscountTarget.primaryInvoiceNumber && (
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-slate-500 dark:text-gray-400">رقم الفاتورة:</span>
+                  <span className="font-mono font-bold text-amber-500">
+                    #{alertDiscountTarget.primaryInvoiceNumber}
+                    {alertDiscountTarget.eligibleInvoices.length > 1 ? ` (+${alertDiscountTarget.eligibleInvoices.length - 1})` : ''}
+                  </span>
+                </div>
+              )}
+              <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-200 dark:border-white/5">
+                <span className="text-slate-500 dark:text-gray-400">المتبقي على العميل:</span>
+                <span className="font-mono font-black text-amber-500" dir="ltr">
+                  {Number(alertDiscountTarget.alert.remainingAmount || 0).toLocaleString('en-US')} {curr}
+                </span>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <label className="block text-[11px] font-bold text-slate-600 dark:text-gray-300">
+                قيمة الخصم ({curr}):
+              </label>
+              <input
+                type="text"
+                inputMode="decimal"
+                dir="ltr"
+                lang="en"
+                autoFocus
+                disabled={isApplyingAlertDiscount || alertDiscountTarget.eligibleInvoices.length === 0}
+                value={alertDiscountInput}
+                onFocus={(e) => e.target.select()}
+                onChange={(e) => {
+                  const cleaned = sanitizeAlertDiscountInput(e.target.value);
+                  setAlertDiscountInput(cleaned);
+                  setAlertDiscountError(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && canConfirm) {
+                    handleConfirmAlertDiscount();
+                  }
+                }}
+                placeholder="0.00"
+                className="w-full bg-white dark:bg-[#111111] border border-slate-300 dark:border-white/15 focus:border-purple-500 rounded-xl px-3.5 py-2.5 text-base font-mono font-black text-purple-600 dark:text-purple-400 text-center outline-none transition-all disabled:opacity-50"
+              />
+              {exceedsMax && (
+                <p className="text-[11px] font-bold text-rose-500">
+                  القيمة المدخلة تتجاوز الحد القابل للخصم ({alertDiscountTarget.maxAllowedDiscount} {curr}).
+                </p>
+              )}
+              {alertDiscountError && (
+                <p className="text-[11px] font-bold text-rose-500">{alertDiscountError}</p>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2.5 pt-1">
+              <button
+                type="button"
+                disabled={!canConfirm}
+                onClick={handleConfirmAlertDiscount}
+                className="flex-1 py-2.5 bg-purple-600 hover:bg-purple-500 disabled:bg-gray-600/40 disabled:text-gray-400 disabled:cursor-not-allowed text-white rounded-xl text-xs font-black transition-all flex items-center justify-center gap-1.5 cursor-pointer shadow-lg shadow-purple-600/20"
+              >
+                {isApplyingAlertDiscount ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle size={14} />}
+                <span>موافق</span>
+              </button>
+              <button
+                type="button"
+                disabled={isApplyingAlertDiscount}
+                onClick={() => {
+                  setAlertDiscountTarget(null);
+                  setAlertDiscountError(null);
+                }}
+                className="flex-1 py-2.5 bg-slate-200 dark:bg-white/5 hover:bg-slate-300 dark:hover:bg-white/10 text-slate-700 dark:text-gray-300 rounded-xl text-xs font-bold transition-all cursor-pointer"
+              >
+                إلغاء
+              </button>
+            </div>
+          </div>
+        </div>
+      );
+    })()}
 
     {/* Customer Statement / Document Print Preview Overlay */}
     {previewData && (
