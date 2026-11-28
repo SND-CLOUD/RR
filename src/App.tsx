@@ -1737,7 +1737,23 @@ export default function App() {
       case 'entry-exit':
         return <EntryExit onBack={goToDashboard} user={user} view={entryExitView} setView={setEntryExitView} />;
       case 'device-movement':
-        return <DeviceMovement onBack={goToDashboard} user={user} view={movementView} setView={setMovementView} />;
+        return (
+          <DeviceMovement
+            onBack={goToDashboard}
+            user={user}
+            view={movementView}
+            setView={setMovementView}
+            onOpenIntake={() => {
+              setVaultInitialProps(null);
+              setDeviceIntakeInitialSubView('hub');
+              setActiveTab('device-intake');
+            }}
+            onOpenExit={() => {
+              setVaultInitialProps(null);
+              setActiveTab('device-exit');
+            }}
+          />
+        );
       case 'approval':
         return <ApprovalAndParts user={user} onBack={goToDashboard} />;
       case 'inspection':
@@ -1745,7 +1761,7 @@ export default function App() {
       case 'maintenance':
         return <Maintenance user={user} onBack={goToDashboard} />;
       case 'inventory':
-        return <Inventory user={user} onBack={goToDashboard} initialMode={inventoryInitialMode} />;
+        return <Inventory user={user} onBack={goToDashboard} initialMode={inventoryInitialMode} shopConfig={shopConfig} />;
       case 'reports':
         return <Reports user={user} onBack={goToDashboard} />;
       case 'vault':

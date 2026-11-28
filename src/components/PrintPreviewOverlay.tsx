@@ -920,6 +920,38 @@ export default function PrintPreviewOverlay({
       };
     }
 
+    if (h === 'الكمية' || h === 'العدد') {
+      return {
+        headerClass: 'w-12 shrink-0 text-center',
+        cellClass: 'w-12 shrink-0 text-center font-mono font-black text-gray-900',
+        style: { width: '48px', flexShrink: 0 }
+      };
+    }
+
+    if (h === 'المهندس' || h === 'الفني') {
+      return {
+        headerClass: 'w-20 shrink-0 text-center',
+        cellClass: 'w-20 shrink-0 text-center font-bold text-[9px] text-gray-800',
+        style: { width: '82px', flexShrink: 0 }
+      };
+    }
+
+    if (h.includes('تاريخ الدخول') || h.includes('المدة')) {
+      return {
+        headerClass: 'w-24 shrink-0 text-center',
+        cellClass: 'w-24 shrink-0 text-center font-mono text-[8.5px] text-gray-700 whitespace-normal leading-tight',
+        style: { width: '96px', flexShrink: 0 }
+      };
+    }
+
+    if (h === 'الحالة' || h === 'الحالة التشغيلية') {
+      return {
+        headerClass: 'w-24 shrink-0 text-center',
+        cellClass: 'w-24 shrink-0 text-center font-bold text-[8.5px] text-gray-900 whitespace-normal leading-tight',
+        style: { width: '96px', flexShrink: 0 }
+      };
+    }
+
     // Default (e.g. البيان والتفاصيل / تفاصيل / الوصف): flex: 1 taking all available space!
     return {
       headerClass: 'flex-1 text-right px-2.5 min-w-[140px]',

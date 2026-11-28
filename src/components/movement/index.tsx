@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { Settings as SettingsIcon, Wrench, ClipboardCheck, ArrowLeft, Clock, ChevronLeft } from 'lucide-react';
+import { Settings as SettingsIcon, Wrench, ClipboardCheck, ArrowLeft, Clock, ChevronLeft, ArrowDownToLine, ArrowUpFromLine } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { User, InvoiceItem, isShopMaintenanceItem } from '../../types';
+import { User, Invoice, InvoiceItem, isShopMaintenanceItem, isPurchaseInvoice, isSaleInvoice } from '../../types';
 import Inspection from './Inspection';
 import Maintenance from './Maintenance';
 import ApprovalAndParts from './ApprovalAndParts';
@@ -13,56 +13,114 @@ export default function DeviceMovement({
   user, 
   onBack, 
   view, 
-  setView 
+  setView,
+  onOpenIntake,
+  onOpenExit
 }: { 
   user: User; 
   onBack: () => void; 
   view: 'hub' | 'inspection' | 'maintenance' | 'approval'; 
-  setView: (v: 'hub' | 'inspection' | 'maintenance' | 'approval') => void; 
+  setView: (v: 'hub' | 'inspection' | 'maintenance' | 'approval') => void;
+  onOpenIntake?: () => void;
+  onOpenExit?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   
   const [inspectionCount, setInspectionCount] = useState(0);
   const [approvalCount, setApprovalCount] = useState(0);
   const [maintenanceCount, setMaintenanceCount] = useState(0);
+  const [intakeCount, setIntakeCount] = useState(0);
+  const [exitCount, setExitCount] = useState(0);
+  const [invoices, setInvoices] = useState<Invoice[]>([]);
+  const [items, setItems] = useState<InvoiceItem[]>([]);
 
   useEffect(() => {
-    const q = query(collection(db, 'invoice_items'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      let insCount = 0;
-      let appCount = 0;
-      let maintCount = 0;
-
-      snapshot.forEach(doc => {
-        const item = doc.data() as InvoiceItem;
-        if (!isShopMaintenanceItem(item)) return;
-
-        const status = item.status;
-        const qty = Number(item.quantity) || 1;
-
-        // 1. Inspection: '10', 'new', '20', '21', '22', '25', 'testing', 'inspected'
-        if (['10', 'new', '20', '21', '22', '25', 'testing', 'inspected'].includes(status)) {
-          insCount += qty;
-        }
-        // 2. Approval & Parts: '30', 'awaiting_approval', '35', 'awaiting_parts'
-        else if (status === '30' || status === 'awaiting_approval' || status === '35' || status === 'awaiting_parts') {
-          appCount += qty;
-        }
-        // 3. Maintenance: '40', 'repairing'
-        else if (status === '40' || status === 'repairing') {
-          maintCount += qty;
-        }
-      });
-
-      setInspectionCount(insCount);
-      setApprovalCount(appCount);
-      setMaintenanceCount(maintCount);
+    const unsubInvoices = onSnapshot(query(collection(db, 'invoices')), (snapshot) => {
+      setInvoices(snapshot.docs.map(d => ({ ...d.data(), id: d.id } as Invoice)));
+    });
+    const unsubItems = onSnapshot(query(collection(db, 'invoice_items')), (snapshot) => {
+      setItems(snapshot.docs.map(d => ({ ...d.data(), id: d.id } as InvoiceItem)));
     });
 
-    return () => unsubscribe();
+    return () => {
+      unsubInvoices();
+      unsubItems();
+    };
   }, []);
 
+  useEffect(() => {
+    const invoiceMap = new Map<string, Invoice>();
+    invoices.forEach(inv => {
+      if (inv.id) invoiceMap.set(String(inv.id), inv);
+      if (inv.invoiceNumber) {
+        const rawNo = String(inv.invoiceNumber);
+        const cleanNo = rawNo.replace('#', '').trim();
+        invoiceMap.set(rawNo, inv);
+        invoiceMap.set(cleanNo, inv);
+      }
+    });
+
+    let insCount = 0;
+    let appCount = 0;
+    let maintCount = 0;
+    let inCount = 0;
+    let outCount = 0;
+
+    items.forEach(item => {
+      const cleanNo = String(item.invoiceNumber || '').replace('#', '').trim();
+      const inv = (item.invoiceId && invoiceMap.get(String(item.invoiceId))) ||
+                  (cleanNo && invoiceMap.get(cleanNo)) ||
+                  null;
+
+      const qty = Number(item.quantity) || 1;
+      const status = item.status;
+      const st = String(status || '').toLowerCase().trim();
+
+      // Intake & Exit counts match DeviceIntakeHub (status 10) and DeviceExitHub (ready for delivery)
+      if (!(inv && (isPurchaseInvoice(inv) || isSaleInvoice(inv))) && isShopMaintenanceItem(item, inv)) {
+        if (st === '10' || st === 'new') {
+          inCount += qty;
+        }
+        if (['ready', 'unrepairable', 'intact', 'refused', '50', '70', 'cancelled'].includes(st)) {
+          outCount += qty;
+        }
+      }
+
+      if (!isShopMaintenanceItem(item)) return;
+
+      // 1. Inspection: '10', 'new', '20', '21', '22', '25', 'testing', 'inspected'
+      if (['10', 'new', '20', '21', '22', '25', 'testing', 'inspected'].includes(status)) {
+        insCount += qty;
+      }
+      // 2. Approval & Parts: '30', 'awaiting_approval', '35', 'awaiting_parts'
+      else if (status === '30' || status === 'awaiting_approval' || status === '35' || status === 'awaiting_parts') {
+        appCount += qty;
+      }
+      // 3. Maintenance: '40', 'repairing'
+      else if (status === '40' || status === 'repairing') {
+        maintCount += qty;
+      }
+    });
+
+    setInspectionCount(insCount);
+    setApprovalCount(appCount);
+    setMaintenanceCount(maintCount);
+    setIntakeCount(inCount);
+    setExitCount(outCount);
+  }, [invoices, items]);
+
   const categories = [
+    {
+      id: 'intake',
+      title: 'استلام أجهزة جديدة',
+      arabicTitle: 'دخول أجهزة',
+      desc: 'استقبال الأجهزة الواردة الجديدة وتسجيل فواتير الدخول وتحويلها للفحص.',
+      count: intakeCount,
+      icon: ArrowDownToLine,
+      color: 'text-orange-400',
+      bg: 'bg-orange-500/10',
+      onClick: () => onOpenIntake?.()
+    },
     { 
       id: 'inspection', 
       title: t('movement.inspection', 'Inspection Action'), 
@@ -71,7 +129,8 @@ export default function DeviceMovement({
       count: inspectionCount,
       icon: ClipboardCheck, 
       color: 'text-purple-400', 
-      bg: 'bg-purple-500/10' 
+      bg: 'bg-purple-500/10',
+      onClick: () => setView('inspection')
     },
     { 
       id: 'approval', 
@@ -81,7 +140,8 @@ export default function DeviceMovement({
       count: approvalCount,
       icon: Clock, 
       color: 'text-amber-400', 
-      bg: 'bg-amber-500/10' 
+      bg: 'bg-amber-500/10',
+      onClick: () => setView('approval')
     },
     { 
       id: 'maintenance', 
@@ -91,7 +151,19 @@ export default function DeviceMovement({
       count: maintenanceCount,
       icon: Wrench, 
       color: 'text-blue-400', 
-      bg: 'bg-blue-500/10' 
+      bg: 'bg-blue-500/10',
+      onClick: () => setView('maintenance')
+    },
+    {
+      id: 'exit',
+      title: 'تسليم الأجهزة الجاهزة',
+      arabicTitle: 'خروج أجهزة',
+      desc: 'مراجعة الأجهزة الجاهزة للتسليم وإصدار فواتير الخروج وتحصيل المستحقات.',
+      count: exitCount,
+      icon: ArrowUpFromLine,
+      color: 'text-emerald-400',
+      bg: 'bg-emerald-500/10',
+      onClick: () => onOpenExit?.()
     }
   ];
 
@@ -162,7 +234,7 @@ export default function DeviceMovement({
               key={cat.id ? `mv-cat-${cat.id}-${idx}` : `mv-cat-idx-${idx}`}
               whileHover={{ scale: 1.01, y: -1 }}
               whileTap={{ scale: 0.99 }}
-              onClick={() => setView(cat.id as any)}
+              onClick={cat.onClick}
               className="w-full flex items-center justify-between p-4 sm:p-5 bg-[#1a1a1a] hover:bg-[#222222] rounded-3xl border border-white/5 hover:border-white/10 transition-all text-right group shadow-lg cursor-pointer"
             >
               <div className="flex items-center gap-4">
